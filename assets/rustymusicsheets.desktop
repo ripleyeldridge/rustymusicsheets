@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=RustyMusicSheets
+Comment=Sheet music library and performance reader
+Exec=rustymusicsheets
+Icon=rustymusicsheets
+Terminal=false
+Categories=AudioVideo;Music;
+Keywords=Sheet;Music;PDF;Scores;Setlist;
+StartupNotify=true
