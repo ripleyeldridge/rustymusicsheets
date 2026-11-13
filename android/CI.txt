@@ -1,0 +1,178 @@
+Android M0 development CI
+=========================
+
+Scope and security
+------------------
+.github/workflows/android.yml checks pull requests (including forks), main
+pushes and manual dispatches. Linux tests/lints must pass before the Android
+build. It builds a development ARM64 APK, NOT a production release.
+Pull requests also run the separate isolated API 35 x86_64 smoke job.
+Manual dispatch exposes run_emulator (false by default) to request that job
+outside a PR. Neither the host checks nor the ARM64 job
+depends on emulator availability. The emulator job uses the same read-only
+permissions and no secrets; there is no privileged PR execution path.
+
+Only contents:read is granted; checkout does not persist Git credentials.
+No repository secrets, production signing keys, deployment environments,
+release/tag writes, package publishing or OIDC tokens are requested. Do not
+switch this workflow to pull_request_target or run it on a privileged
+self-hosted runner. Untrusted PR source necessarily executes build scripts.
+No shared Cargo/build cache is read or written by these jobs.
+
+cargo-apk may generate a disposable debug keystore in the hosted runner's
+home directory. Only the explicit dist/android-ci directory is uploaded;
+neither the home directory nor signing material is included. Never add a
+keystore/password to this artifact. Each run may have a different debug key:
+do not use these APKs to update a valuable existing private music library.
+Do not uninstall a real installation to work around a signature mismatch.
+
+Toolchain and clean-run setup
+----------------------------
+- GitHub-hosted ubuntu-24.04 (runner image revision is recorded).
+- Rust 1.86.0, with host rustfmt/Clippy and aarch64-linux-android target.
+- Temurin JDK 21; setup-java records the resolved patch/build version.
+- Android command-line tools 12266719.
+- SDK platforms android-35 AND android-36, build-tools 36.0.0.
+- NDK r28c / 28.2.13676358 and platform-tools.
+- cargo-apk 0.10.0, installed with its own --locked dependency graph.
+
+API 35 is required for cargo-apk 0.10 discovery; it does not lower the
+application's target API 36 or change its minimum API 26. The existing
+android-env.sh helper selects the NDK and JDK for build-android.sh.
+
+The setup action automatically accepts Android SDK licenses in the ephemeral
+runner, without logging license contents. Maintainers must review/authorize
+the applicable Google Android SDK/NDK terms before enabling this workflow.
+Local builders install the same packages and accept licenses separately
+with sdkmanager --licenses; see android/README.txt.
+
+All actions use exact commits, resolved from upstream GitHub Git ref APIs
+(annotated tags peeled when necessary) during preparation:
+  actions/checkout v4.2.2
+    11bd71901bbe5b1630ceea73d27597364c9af683
+  actions/setup-java v4.7.1
+    c5195efecf7bdfc987ee8bae7a71cb8b11521c00
+  android-actions/setup-android v3.2.2
+    9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+  actions/upload-artifact v4.6.2
+    ea165f8d65b6e75b540449e92b4886f43607fa02
+  ReactiveCircus/android-emulator-runner v2.34.0 (optional emulator job)
+    1dcd0090116d15e7c562f8db72807de5e036a4ed
+Verification endpoint pattern:
+  https://api.github.com/repos/OWNER/REPO/git/ref/tags/TAG
+Re-resolve and review upstream code when updating pins; never guess a SHA.
+
+This is a repeatable setup, not a bit-for-bit reproducible-build claim.
+APT packages, the hosted runner image, JDK 21 patch selection and
+platform-tools can evolve; the installed Android package inventory and
+actual JDK/Rust versions are retained. Ephemeral debug signatures can differ.
+Source Cargo.lock is never regenerated or updated; all application Cargo
+commands use --locked where supported, and the build wrapper and workflow
+check it remains unchanged.
+
+Checks and retained evidence
+----------------------------
+The host job installs eframe's Linux build dependencies plus Poppler,
+Tesseract, English OCR data, ImageMagick and dbus-daemon. It runs the existing README
+commands: cargo fmt --check, cargo test --locked,
+cargo clippy --locked --all-targets -- -D warnings, and
+cargo build --locked --release. Tests generate their own fixtures; Linux
+power tests start isolated session-bus daemons, not the user's real session.
+It also runs the integrated stdlib Python tooling tests:
+  python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+The lead's scripts/tests files must be integrated alongside this workflow.
+
+The Android job invokes scripts/build-android.sh and then
+scripts/verify-android-apk.py with the selected SDK/NDK. The verifier checks
+APK signature validity, manifest/package/API/debug flags, supported MIME
+filters, absence of broad storage permissions, ARM64/native entry exports,
+ZIP integrity, ZIP alignment and 16 KiB-compatible ELF load segments.
+Signature validity does not establish a trusted production signer.
+
+Only successful verified builds upload a 7-day Actions artifact containing:
+  RustyMusicSheets-arm64-debug.apk
+  SHA256SUMS, verification.txt, provenance.json
+  rustc.txt, cargo.txt, cargo-apk.txt, java.txt, android-packages.txt
+  Cargo.lock, LICENSE, CI.txt
+From the extracted artifact directory, run sha256sum --check SHA256SUMS.
+provenance.json records source commit, workflow/run identity, tool versions,
+and hashes of the source lockfile, workflow, build/verification scripts and
+APK. It is an unsigned diagnostic build record, not a cryptographically
+authenticated SLSA/GitHub attestation. No attestation write permission is
+granted and nothing is published as a GitHub Release.
+
+Dependency and redistribution notices
+-------------------------------------
+The application is MIT-licensed (see LICENSE). Rust crates and bundled
+native dependencies, including SQLite, retain their own licenses; the
+retained lockfile identifies their resolved versions, not a complete notice
+bundle. The SDK/NDK, Temurin, Poppler, Tesseract and host tools retain their
+respective terms; development tools are installed on runners, not bundled
+as APK tooling. Complete transitive native/crate/data license auditing and
+required redistribution notices remain a distribution gate, not a claim
+established by this CI workflow.
+
+Optional isolated emulator coverage
+------------------------------------
+Pull requests run this job; outside a PR, choose workflow_dispatch with
+run_emulator=true. New workflow-dispatch definitions must first exist on the
+default branch; PR checks do not require promoting this work to a release.
+It requires the integration lead's M0 scripts and android/test-harness files
+alongside this workflow. They must be integrated together: they are not in
+the original def8341 baseline. Exact reviewed interfaces:
+  RMS_ANDROID_TARGET=x86_64-linux-android ./scripts/build-android.sh
+  python3 scripts/generate-android-fixtures.py --output target/android-tests/fixtures
+  python3 scripts/build-android-smoke.py --apk target/debug/apk/RustyMusicSheets.apk --fixtures target/android-tests/fixtures --output target/android-tests/apks --abi x86_64
+  python3 scripts/verify-android-apk.py --abi x86_64 --package org.ripleyeldridge.rustymusicsheets.smoketest target/android-tests/apks/smoke-app.apk
+  python3 scripts/android-smoke.py --serial emulator-5554 --apks target/android-tests/apks --fixtures target/android-tests/fixtures --output target/android-tests/evidence
+
+The job installs x86_64-linux-android in Rust and a full Temurin JDK 21
+(javac is required), plus Poppler, Tesseract English and ImageMagick.
+The emulator action is SHA-pinned as above; the system-image coordinate is
+system-images;android-35;default;x86_64 on the stable SDK channel. The action
+creates a fresh AVD, explicitly reserves port 5554, wipes its data, disables
+snapshots and uses -gpu swiftshader. Only emulator-5554 is passed to the
+smoke script: neither adb's default target nor the first physical device is
+selected. KVM is mandatory; an ephemeral runner-user ACL permits access to
+/dev/kvm without widening permissions to every user.
+
+This is NOT the ARM64 distributable APK running under assumed translation:
+the native application is rebuilt as x86_64 and repackaged under
+org.ripleyeldridge.rustymusicsheets.smoketest, with an isolated
+org.ripleyeldridge.rustymusicsheets.fixture provider. The harness grants real
+content URIs, checks fresh startup, PNG/JPEG imports/rendered RGB fiducials,
+private-copy hashes/DB records, deduplication, and corrupt/oversized/unsafe/
+denied input rejection. It refuses existing test packages or a nonempty
+evidence directory, then removes only packages installed by that fresh run.
+No production package, personal document or existing library is used.
+
+On success OR failure, only target/android-tests/evidence is eligible for
+a 7-day artifact: generated-fixture screenshots, isolated DB snapshots,
+report.json, and any harness-scoped app.log. A report records the serial,
+actual API/ABI/page size and completed cases. If the report exists, the job
+also adds source commit, installed SDK inventory, emulator version and
+test-input checksums. It never uploads .android, AVD disks, adb credentials,
+signing keys, raw global logcat or an entire runner/workspace. A boot/setup
+failure before the harness produces evidence may leave no evidence artifact;
+the action/job status remains failed, not a device-test pass.
+
+Emulator binary and system-image revisions can evolve at that SDK
+coordinate, just like platform-tools; actual versions are inventoried
+rather than claiming a byte-identical image. The action also installs its
+own build-tools 35.0.0 for emulator setup; app packaging/verification still
+explicitly use 36.0.0. Review these additional SDK licenses as well.
+
+Tracked follow-up: M0-CI-EMULATOR (wired; hosted execution pending)
+----------------------------------------------------------------
+Owner: M0 integration lead. The exact CLI is now supplied and the optional
+job is wired. The lead reports a local API 35 x86_64/KVM end-to-end pass;
+that does not establish a successful GitHub-hosted workflow run.
+After integrating the scripts/harness and these CI files, run the manual
+job and inspect report.json complete=true and the action conclusion before
+claiming hosted emulator coverage. The default ARM64 job explicitly reports
+that it performs no device tests; emulator evidence is separately labeled.
+
+Continue tracking API 26, representative intermediate/current APIs,
+ARM64/available Pixel hardware, lifecycle and an actual 16 KiB-page runtime.
+Static ZIP/ELF verification and API 35 x86_64 smoke success do NOT establish
+that remaining device matrix or 16 KiB runtime success.

@@ -18,12 +18,17 @@ else
     export RUSTFLAGS="${RUSTFLAGS:-} -Clink-arg=-Wl,-z,max-page-size=16384 -Clink-arg=-Wl,-z,common-page-size=16384"
 fi
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
+target="${RMS_ANDROID_TARGET:-aarch64-linux-android}"
+case "$target" in
+    aarch64-linux-android|x86_64-linux-android) ;;
+    *) printf 'Unsupported Android target: %s\n' "$target" >&2; exit 1 ;;
+esac
 # Keep Android's debuggable flag, but omit bulky DWARF data by default.
 # Set CARGO_PROFILE_DEV_DEBUG=2 explicitly when native source-level debugging.
 export CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG:-0}"
 lock_before="$(sha256sum "$project_dir/Cargo.lock")"
 cargo metadata --manifest-path "$project_dir/Cargo.toml" --locked --format-version 1 >/dev/null
-cargo apk build --manifest-path "$project_dir/Cargo.toml" --package rustymusicsheets --lib --target aarch64-linux-android "$@"
+cargo apk build --manifest-path "$project_dir/Cargo.toml" --package rustymusicsheets --lib --target "$target" "$@"
 if [[ "$(sha256sum "$project_dir/Cargo.lock")" != "$lock_before" ]]; then
     printf '%s\n' "Cargo.lock changed during packaging; review it before distributing the APK." >&2
     exit 1

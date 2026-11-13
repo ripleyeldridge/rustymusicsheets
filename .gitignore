@@ -2,3 +2,5 @@
 /dist/
 *.keystore
 *.jks
+__pycache__/
+*.py[cod]
