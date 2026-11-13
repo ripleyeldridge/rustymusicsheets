@@ -1,4 +1,4 @@
-use crate::{folder, model::Paths, pdf, storage::Library};
+use crate::{document, folder, model::Paths, storage::Library};
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
 use std::{
@@ -17,6 +17,9 @@ pub struct Report {
     pub errors: Vec<String>,
     pub current: String,
     pub cancelled: bool,
+    pub removed: usize,
+    pub backup: Option<PathBuf>,
+    pub filesystem_errors: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -31,6 +34,8 @@ pub fn import_file(
     db: &Library,
     cancel: &AtomicBool,
 ) -> Result<Outcome> {
+    let kind =
+        document::Kind::of(path).context("Supported score formats are PDF, PNG, JPG, and JPEG")?;
     if cancel.load(Ordering::Relaxed) {
         bail!("Import cancelled");
     }
@@ -73,7 +78,7 @@ pub fn import_file(
                 folder::publish(
                     staged,
                     &root,
-                    Path::new(&format!("{hash}.pdf")),
+                    Path::new(&format!("{hash}.{}", kind.extension())),
                     &hash,
                     cancel,
                 )?
@@ -82,7 +87,7 @@ pub fn import_file(
         }
         return Ok(Outcome::Duplicate);
     }
-    let info = pdf::info(staged.path(), cancel)?;
+    let info = document::info(staged.path(), kind, cancel)?;
     if cancel.load(Ordering::Relaxed) {
         bail!("Import cancelled");
     }
@@ -93,7 +98,7 @@ pub fn import_file(
         let preferred = if paths.music.is_some() {
             PathBuf::from(path.file_name().context("Missing PDF filename")?)
         } else {
-            PathBuf::from(format!("{hash}.pdf"))
+            PathBuf::from(format!("{hash}.{}", kind.extension()))
         };
         folder::publish(staged, &root, &preferred, &hash, cancel)?
     };
@@ -143,17 +148,13 @@ pub fn batch(
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(error) => {
+                    report.filesystem_errors = true;
                     record_error(&mut report, error.to_string());
                     progress(&report);
                     continue;
                 }
             };
-            if !entry.file_type().is_file()
-                || !entry
-                    .path()
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
-            {
+            if !entry.file_type().is_file() || !document::supported(entry.path()) {
                 continue;
             }
             report.current = entry.path().display().to_string();
@@ -167,6 +168,9 @@ pub fn batch(
                     return Ok(report);
                 }
                 Err(error) => {
+                    report.filesystem_errors |= error
+                        .chain()
+                        .any(|cause| cause.downcast_ref::<std::io::Error>().is_some());
                     let message = format!("{}: {error:#}", entry.path().display());
                     record_error(&mut report, message);
                 }

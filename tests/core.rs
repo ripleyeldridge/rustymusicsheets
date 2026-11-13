@@ -16,6 +16,53 @@ use std::{
 #[path = "support/folder_cases.rs"]
 mod folder_cases;
 
+#[path = "support/setlist_cases.rs"]
+mod setlist_cases;
+
+#[path = "support/rescan_cases.rs"]
+mod rescan_cases;
+
+#[path = "support/instrument_cases.rs"]
+mod instrument_cases;
+
+#[test]
+fn display_cleanup_keeps_the_original_pdf_and_stored_title() {
+    use rustymusicsheets::display_names::DisplayNames;
+    let (temp, paths) = setup();
+    let source = temp.path().join("IMSLP237087-PMLP384177-Bach_Prelude.pdf");
+    make_pdf(&source, 2, "Original PDF");
+    let original = fs::read(&source).unwrap();
+    let cancel = AtomicBool::new(false);
+    let db = Library::open(&paths).unwrap();
+    import_file(&source, &paths, &db, &cancel).unwrap();
+    let score = db.scores().unwrap().remove(0);
+    let managed = db.pdf_path(&paths, &score.hash).unwrap();
+    let prefs = Preferences {
+        display_names: DisplayNames {
+            replace_characters: true,
+            remove_imslp_prefix: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    paths.save_preferences(&prefs).unwrap();
+    assert_eq!(
+        paths
+            .preferences()
+            .unwrap()
+            .display_names
+            .format(&score.title),
+        "Bach Prelude"
+    );
+    assert_eq!(
+        db.scores().unwrap()[0].title,
+        "IMSLP237087-PMLP384177-Bach_Prelude"
+    );
+    assert_eq!(fs::read(&source).unwrap(), original);
+    assert_eq!(fs::read(managed).unwrap(), original);
+    assert_eq!(fs::read_dir(paths.score_dir()).unwrap().count(), 1);
+}
+
 fn setup() -> (tempfile::TempDir, Paths) {
     let temp = tempfile::tempdir().unwrap();
     let paths = Paths {
@@ -297,14 +344,32 @@ fn reader_bounds_two_page_turns_and_repeated_setlist_entries() {
 }
 
 #[test]
+fn pruning_a_playback_snapshot_preserves_the_current_repeated_occurrence() {
+    let mut reader = Reader {
+        sequence: vec![1, 2, 1, 2],
+        sequence_index: 3,
+        ..Default::default()
+    };
+    reader.load(2, 3, 1);
+    assert!(!reader.retain_existing(&[2].into_iter().collect()));
+    assert_eq!(reader.sequence, [2, 2]);
+    assert_eq!(reader.sequence_index, 1);
+    assert_eq!(reader.page, 1);
+    assert!(reader.retain_existing(&std::collections::HashSet::new()));
+    assert!(reader.score_id.is_none());
+}
+
+#[test]
 fn preferences_roundtrip_and_search() {
     let (_temp, paths) = setup();
     let prefs = Preferences {
         next_key: "Space".into(),
+        keep_awake: true,
         ..Default::default()
     };
     paths.save_preferences(&prefs).unwrap();
     assert_eq!(paths.preferences().unwrap().next_key, "Space");
+    assert!(paths.preferences().unwrap().keep_awake);
     let score = Score {
         title: "Étude".into(),
         composer: "Chopin".into(),

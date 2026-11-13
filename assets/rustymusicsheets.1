@@ -1,0 +1,101 @@
+.TH RUSTYMUSICSHEETS 1 "November 2026" "RustyMusicSheets 0.2.1" "User Commands"
+.SH NAME
+rustymusicsheets \- sheet music library and performance reader
+.SH SYNOPSIS
+.B rustymusicsheets
+.RI [ option ]
+.SH DESCRIPTION
+RustyMusicSheets is a native Linux application for organizing PDF/PNG/JPEG sheet music,
+watching a music folder, creating setlists, and viewing scores during performance.
+With no arguments it opens the desktop interface.
+.SH OPTIONS
+.TP
+.B \-\-help
+Display available commands.
+.TP
+.BI "\-\-import " PATH
+Import a PDF/PNG/JPEG or recursively import supported scores from a folder.
+Return a nonzero exit status if any files fail.
+.TP
+.B \-\-list
+List scores in the library.
+.TP
+.BI "\-\-detect\-instruments " [ID]
+Create offline instrument proposals for all scores, or the specified score ID.
+Uses PDF text extraction first, then Tesseract OCR when needed.
+Review and apply proposals in Library options; this command does not assign them.
+.TP
+.B \-\-check
+Check availability of Poppler PDF helpers and Tesseract.
+.TP
+.B \-\-smoke\-test
+Open the desktop interface and close it after three seconds.
+.SH ENVIRONMENT
+.TP
+.B XDG_DATA_HOME
+Base directory for the metadata database and default managed score storage.
+.TP
+.B XDG_CONFIG_HOME
+Base directory for saved preferences.
+.TP
+.B XDG_CACHE_HOME
+Base directory reserved for disposable application cache data.
+.SH FILES
+.I ~/.local/share/rustymusicsheets/
+.br
+.I ~/.config/rustymusicsheets/preferences.json
+.PP
+A selected music folder stores score files separately from application metadata.
+.SH NOTES
+Folder watching runs while the application is open.
+Use the Library section to choose a music folder and configure readable titles.
+F11 toggles fullscreen; Escape leaves performance mode.
+Arrow keys and PageUp/PageDown turn pages.
+.PP
+Settings contains an opt-in keep-awake control to inhibit screen dimming,
+idle timeout, and suspend while the application is running.
+Inhibitors are released on disable or exit; system policies may override them.
+Missing folder-picker starting directories fall back to the user's home.
+.PP
+The Setlists toolbar button opens management controls for saved setlists
+and collections, including rename, duplicate, reorder, add/remove, and
+confirmed deletion. Removing a list never removes score PDFs.
+.PP
+Library displays a large central score browser with search and filters.
+Selecting a score opens the separate full-width Reader tab.
+Options toggles the library sidebar; returning to Library retains search state.
+Page-turn shortcuts apply only in Reader.
+Dialogs are constrained to the current window and scroll when necessary.
+.PP
+Settings and metadata reuse the left sidebar in place of Library options.
+Explicit Rescan imports files and removes confirmed missing-score records
+after creating a metadata backup. Automatic watching does not delete records.
+Rescan never deletes PDFs; unavailable folders and backup failures prevent cleanup.
+.PP
+Instrument metadata supports multiple instruments, subtypes, and parts.
+Library options provides detection and evidence review; Settings controls
+opening pages and OCR language. English data is included in package dependencies.
+Additional languages require corresponding Tesseract language packages.
+The instrument filter and search use assigned metadata, not unconfirmed proposals.
+Manual choices, including intentionally empty choices, are protected.
+Optional detection for new GUI imports fills only clear, unassigned,
+unprotected instruments. Bare Alto/Tenor/Bass labels require review.
+No files are uploaded or modified by detection.
+.PP
+PNG and JPEG images are single-page scores; image-sequence assembly is not supported.
+Images exceeding safety limits or with invalid contents are rejected.
+Existing databases receive a metadata backup before instrument-schema migration.
+.PP
+Help provides a searchable offline topic tree, keyboard reference, and About
+details (application version, author, and release year). F1 opens help;
+Escape or Close help returns to the previous workspace without losing drafts
+or reading position. Page-turn shortcuts are suspended in help.
+.PP
+Instrument detection may take a while for large libraries, especially scans
+and images requiring OCR. Warnings appear beside detection controls and before
+CLI detection. Background progress and cancellation are available in the GUI.
+.SH SEE ALSO
+.BR pdfinfo (1),
+.BR pdftoppm (1),
+.BR pdftotext (1),
+.BR tesseract (1)

@@ -15,11 +15,29 @@ pub struct Score {
     pub pages: u32,
     pub last_page: u32,
     pub file_path: PathBuf,
+    pub instruments: Vec<crate::instruments::Instrument>,
+    pub instruments_manual: bool,
+    pub detection_status: String,
 }
 
 impl Score {
+    pub fn metadata_matches(&self, other: &Self) -> bool {
+        self.title == other.title
+            && self.composer == other.composer
+            && self.artist == other.artist
+            && self.genre == other.genre
+            && self.musical_key == other.musical_key
+            && self.tags == other.tags
+            && self.notes == other.notes
+            && self.instruments == other.instruments
+            && self.instruments_manual == other.instruments_manual
+    }
     pub fn matches(&self, query: &str) -> bool {
-        let fields = [
+        self.matches_display(query, &self.title)
+    }
+
+    pub fn matches_display(&self, query: &str, display_title: &str) -> bool {
+        let fields: [&str; 8] = [
             &self.title,
             &self.composer,
             &self.artist,
@@ -27,12 +45,17 @@ impl Score {
             &self.musical_key,
             &self.tags,
             &self.notes,
+            display_title,
         ];
         query.split_whitespace().all(|word| {
             let word = word.to_lowercase();
             fields
                 .iter()
                 .any(|field| field.to_lowercase().contains(&word))
+                || self
+                    .instruments
+                    .iter()
+                    .any(|instrument| instrument.label().to_lowercase().contains(&word))
         })
     }
 }
@@ -55,6 +78,14 @@ pub struct Preferences {
     pub next_key: String,
     pub previous_key: String,
     pub recursive: bool,
+    #[serde(default)]
+    pub display_names: crate::display_names::DisplayNames,
+    #[serde(default)]
+    pub keep_awake: bool,
+    #[serde(default)]
+    pub detect_on_import: bool,
+    #[serde(default)]
+    pub detection_options: crate::instruments::DetectionOptions,
 }
 
 impl Default for Preferences {
@@ -63,6 +94,10 @@ impl Default for Preferences {
             next_key: "PageDown".into(),
             previous_key: "PageUp".into(),
             recursive: true,
+            display_names: crate::display_names::DisplayNames::default(),
+            keep_awake: false,
+            detect_on_import: false,
+            detection_options: crate::instruments::DetectionOptions::default(),
         }
     }
 }

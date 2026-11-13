@@ -1,11 +1,39 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
-  <rect x="4" y="4" width="120" height="120" rx="24" fill="#20252d"/>
-  <path d="M28 20h54l18 18v70H28z" fill="#fff8e9"/>
-  <path d="M82 20v20h18" fill="#d0c4ad"/>
-  <g stroke="#918779" stroke-width="2">
-    <path d="M38 52h50M38 60h50M38 68h50M38 76h50M38 84h50"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>RustyMusicSheets</title>
+  <desc>Warm ivory sheet music with a copper beamed note on a deep slate tile.</desc>
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#374755"/>
+      <stop offset="1" stop-color="#17232e"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="0" y1="0" x2=".8" y2="1">
+      <stop stop-color="#fffdf3"/>
+      <stop offset="1" stop-color="#eee4cd"/>
+    </linearGradient>
+    <linearGradient id="copper" x1="0" y1="0" x2=".8" y2="1">
+      <stop stop-color="#d98b50"/>
+      <stop offset="1" stop-color="#a54e2d"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="22" width="480" height="480" rx="104" fill="#111a24" opacity=".2"/>
+  <rect x="16" y="10" width="480" height="480" rx="104" fill="url(#tile)"/>
+  <rect x="19" y="13" width="474" height="474" rx="101" fill="none" stroke="#687988" stroke-opacity=".32" stroke-width="2"/>
+  <rect x="101" y="86" width="282" height="350" rx="23" transform="rotate(-8 242 261)" fill="#111a24" opacity=".34"/>
+  <rect x="94" y="78" width="282" height="350" rx="23" transform="rotate(-8 235 253)" fill="#c4b79b"/>
+  <path d="M142 64h180l76 76v268a24 24 0 0 1-24 24H142a24 24 0 0 1-24-24V88a24 24 0 0 1 24-24z" fill="#101923" opacity=".22" transform="translate(7 9)"/>
+  <path d="M142 64h180l76 76v268a24 24 0 0 1-24 24H142a24 24 0 0 1-24-24V88a24 24 0 0 1 24-24z" fill="url(#paper)"/>
+  <path d="M322 64v52a24 24 0 0 0 24 24h52z" fill="#d7c8a9"/>
+  <path d="M322 64v52a24 24 0 0 0 24 24h52" fill="none" stroke="#fffdf3" stroke-opacity=".7" stroke-width="3"/>
+  <g fill="none" stroke="#7f8c8e" stroke-width="5" stroke-linecap="round" opacity=".55">
+    <path d="M157 194h202M157 212h202M157 230h202M157 248h202M157 266h202"/>
+    <path d="M157 332h202M157 350h202M157 368h202"/>
   </g>
-  <path d="M58 81V46l26-6v35" fill="none" stroke="#b86336" stroke-width="6"/>
-  <ellipse cx="51" cy="82" rx="11" ry="8" fill="#b86336" transform="rotate(-18 51 82)"/>
-  <ellipse cx="77" cy="76" rx="11" ry="8" fill="#b86336" transform="rotate(-18 77 76)"/>
+  <path d="M221 278V160l102-22v116" fill="none" stroke="#fff9e9" stroke-width="26" stroke-linejoin="round"/>
+  <g fill="url(#copper)">
+    <path d="M211 159l122-27v39l-102 23v84h-20z"/>
+    <path d="M313 158h20v96h-20z"/>
+    <ellipse cx="195" cy="280" rx="37" ry="25" transform="rotate(-19 195 280)"/>
+    <ellipse cx="297" cy="256" rx="37" ry="25" transform="rotate(-19 297 256)"/>
+  </g>
+  <path d="M158 408h34v52l-17-12-17 12z" fill="url(#copper)"/>
 </svg>

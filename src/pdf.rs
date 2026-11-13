@@ -23,9 +23,20 @@ pub fn run(command: &mut Command, cancel: &AtomicBool, timeout: Duration) -> Res
         .stdout(stdout.try_clone()?)
         .stderr(stderr.try_clone()?)
         .spawn()
-        .context("Could not start helper program (install poppler-utils for PDF support)")?;
+        .with_context(|| {
+            format!(
+                "Could not start helper program {}",
+                command.get_program().to_string_lossy()
+            )
+        })?;
     let start = Instant::now();
     let status = loop {
+        if stdout.metadata()?.len() > 2 * 1024 * 1024 || stderr.metadata()?.len() > 2 * 1024 * 1024
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!("Helper output exceeded the 2 MiB safety limit");
+        }
         if cancel.load(Ordering::Relaxed) || start.elapsed() > timeout {
             let _ = child.kill();
             let _ = child.wait();

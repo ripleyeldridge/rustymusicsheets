@@ -8,3 +8,4 @@ Terminal=false
 Categories=AudioVideo;Music;
 Keywords=Sheet;Music;PDF;Scores;Setlist;
 StartupNotify=true
+StartupWMClass=rustymusicsheets

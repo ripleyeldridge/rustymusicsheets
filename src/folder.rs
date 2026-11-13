@@ -1,4 +1,4 @@
-use crate::{model::Paths, storage::Library};
+use crate::{document, model::Paths, storage::Library};
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
 use std::{
@@ -42,6 +42,7 @@ pub fn publish(
         bail!("Invalid destination file name");
     }
     let preferred = root.join(preferred);
+    let extension = document::Kind::of(&preferred).map_or("pdf", document::Kind::extension);
     let parent = preferred.parent().context("Missing parent folder")?;
     // Reject symlinked subdirectories so no write can escape the selected folder.
     let mut current = root.to_owned();
@@ -60,8 +61,8 @@ pub fn publish(
         }
         let target = match attempt {
             0 => preferred.clone(),
-            1 => root.join(format!("{hash}.pdf")),
-            n => root.join(format!("{hash}-{n}.pdf")),
+            1 => root.join(format!("{hash}.{extension}")),
+            n => root.join(format!("{hash}-{n}.{extension}")),
         };
         if std::fs::symlink_metadata(&target).is_ok() {
             if std::fs::symlink_metadata(&target)?.is_file() && hash_file(&target, cancel)? == hash
@@ -106,12 +107,7 @@ pub fn select(
                 bail!("Folder change cancelled");
             }
             let entry = entry?;
-            if entry.file_type().is_file()
-                && entry
-                    .path()
-                    .extension()
-                    .is_some_and(|x| x.eq_ignore_ascii_case("pdf"))
-            {
+            if entry.file_type().is_file() && document::supported(entry.path()) {
                 progress(format!("Checking {}", entry.path().display()));
                 if let Ok(hash) = hash_file(entry.path(), cancel) {
                     existing

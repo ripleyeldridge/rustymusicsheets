@@ -118,7 +118,9 @@ fn schema_one_migrates_and_folder_change_never_overwrites_files() {
     drop(db);
     let conn = rusqlite::Connection::open(paths.data.join("library.sqlite3")).unwrap();
     conn.execute_batch(
-        "ALTER TABLE scores DROP COLUMN file_path;
+        "DROP TABLE score_instruments; DROP TABLE instrument_detections;
+         ALTER TABLE scores DROP COLUMN instruments_manual;
+         ALTER TABLE scores DROP COLUMN file_path;
                         DROP TABLE settings; PRAGMA user_version=1;",
     )
     .unwrap();

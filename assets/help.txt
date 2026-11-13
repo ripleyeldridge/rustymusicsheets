@@ -1,0 +1,295 @@
+@welcome|Getting started|Welcome and quick start|start tutorial first run offline
+RustyMusicSheets is a native Linux sheet-music library and performance reader. It works offline with PDF, PNG, and JPEG scores. It is not yet a full MobileSheets replacement.
+
+1. Open Library and enable Options.
+2. Under Music library folder, use Choose… or enter a folder path and click Set folder.
+3. Wait for the initial scan, then select a score in the main Library list.
+4. Read it in Reader. Use Previous/Next, PageUp/PageDown, or tap the left/right half of the page.
+5. Return to Library to organize scores, edit metadata, build setlists, or detect instruments.
+
+Help is built into the executable: no internet connection or separate help installation is needed. Expand a category and click a subject in the help tree. Search matches words across topic titles, keywords, and full article text. All search words must match the same topic, regardless of case. Clear search to restore the full tree.
+
+Use Help > Keyboard shortcuts for a reference or Help > About for version and credits. F1 opens help; Close help or Escape returns to the unchanged workspace. Help does not turn pages or discard metadata drafts. Background library tasks can continue while you read.
+
+@layout|Getting started|Library, Reader, and panels|tabs sidebar resize window touchscreen
+Library is the main score browser. Reader shows the selected score at its remembered page. Returning to Library retains search and filters; the Reader button returns to the open score without resetting its position.
+
+Options toggles the left Library options panel. Settings, Edit metadata, and instrument review reuse that panel rather than opening extra editor windows. Closing an editor restores the options panel if enabled, or the full-width Reader while reading.
+
+The window supports sizes down to 640×360 logical pixels. Panels and articles scroll where needed; scroll to reach fields or controls that do not fit. Hide Options for more room. Help uses a topic tree beside the article on wider windows; compact windows offer Topics and Article views.
+
+Performance hides editing controls for reading. Escape or Exit performance returns to normal controls. See the Performance topic before using it on stage.
+
+@requirements|Getting started|Installation and helper programs|ubuntu dependencies poppler tesseract zenity launch
+Launch RustyMusicSheets from your application menu after installing a compatible package, or run ~/Projects/LinuxSheets/run.sh from the source checkout. The wrapper builds a release executable only if none exists; rebuild explicitly after source changes.
+
+PDF viewing needs pdfinfo and pdftoppm. PDF text extraction needs pdftotext. These are supplied by Ubuntu's poppler-utils package. OCR needs tesseract-ocr and language data such as tesseract-ocr-eng. Extra languages need their corresponding Tesseract packages. Zenity is optional for graphical file/folder pickers; pasted paths and drag-and-drop remain available.
+
+The native Ubuntu package declares its runtime dependencies. Install with APT after checking architecture and runtime compatibility, for example: sudo apt install ./rustymusicsheets_VERSION-1_amd64.deb (replace VERSION with the release version).
+
+The current amd64 native build requires glibc 2.43 and targets the confirmed Ubuntu 26.10 reader, not Ubuntu 22.04/24.04. Do not replace system glibc or force dependencies. Rebuild on an older supported release if needed. Development builds require Rust 1.86+, Cargo, a C compiler, pkg-config, and eframe's graphics/input development libraries.
+
+@formats|Library and files|Supported formats and image scores|pdf png jpg jpeg transparent encrypted megapixel
+Import PDF, PNG, JPG, or JPEG files; extensions are case-insensitive. Each standalone image is one separate single-page score. A sequence of images is not automatically assembled into a multipage score. Use a PDF if you need one multipage document.
+
+Transparent images display on white. Small images are not enlarged during decoding; zooming changes display size, not source detail. Images over 40 megapixels, over decoder dimension/allocation limits, malformed images, and mismatched image contents/extensions are rejected.
+
+Encrypted or unreadable PDFs are reported individually. Import does not edit the original documents. Audio, ChordPro, text, and other image formats are not supported.
+
+@import|Library and files|Import files and folders|copy drop paste recursive duplicates hashes cancel
+Open Library > Options. Use Import folder… for a folder or the file-picker button (currently labelled PDF…) for a supported score. Alternatively paste a file/folder path and click Import, or drop files/folders onto the application window. Paths beginning with ~/ expand to your home directory.
+
+Include subfolders controls manual folder imports; it is enabled by default and its default can be changed in Settings. Symbolic links are not followed. Importing multiple files is a background operation.
+
+Files outside the managed music folder are copied into it, preserving readable names where possible. Existing files are never overwritten; collisions get distinct names. Files already inside the selected music tree are registered in place without renaming or making duplicate permanent copies.
+
+Content hashes detect identical files, even with different filenames. Different contents sharing one filename remain separate scores. Import reports imported, duplicate, and failed counts; Import errors shows up to 100 individual errors.
+
+Cancel import stops the batch, keeping completed imports and discarding the current unfinished import. Re-importing can recover complete orphaned files from an interruption or repair a missing managed copy if its record still exists.
+
+@folders|Library and files|Choose or move the music folder|set folder change destination copies storage home
+In Library > Options, find Music library folder. Click Choose… or enter a path, then Set folder. A missing destination folder is created. Preparation registers existing supported scores and starts watching the tree.
+
+Before selecting a folder, manual imports use the default application-data scores directory. Selecting a folder makes it the destination for future imports; metadata and preferences remain in their XDG application directories.
+
+Changing folders copies registered scores to the destination while preserving metadata, bookmarks, and lists. Matching destination files are reused, existing files are not overwritten, and old copies are kept. The active location changes only after copying succeeds. Cancellation may leave complete destination copies but does not switch the library.
+
+A missing registered score that cannot be recovered from matching destination files stops preparation rather than switching to an incomplete library.
+
+If the saved folder or picker starting directory is unavailable, the path field/picker starts at your home directory. This does not silently change the configured library or stored score paths. Reconnect the existing storage or explicitly choose a replacement.
+
+@watching|Library and files|Automatic folder watching|arrival new files discovery startup polling subfolders
+After choosing a music folder, RustyMusicSheets watches it and all subfolders while the application is open. Background scans run every two seconds; files must remain unchanged for at least two seconds before importing. Incomplete/invalid files are retried after 30 seconds.
+
+Watching resumes on startup and discovers files added while the app was closed. There is no background service after closing the app. Large folders and slow storage can make scans take longer.
+
+Watching always includes subfolders, independently of the manual-import Include subfolders checkbox. Symbolic links are not followed. Identical content is deduplicated.
+
+Automatic watching NEVER removes missing-score records. Use explicit Rescan for safe cleanup. An unavailable library is reported and checked again; it is not silently replaced.
+
+@rescan|Library and files|Rescan and missing-file cleanup|delete removed rename reconciliation backup safety
+Click Rescan in Library options to scan/import recursively, reconnect renamed identical files, and remove confirmed missing-score records. Save or cancel a dirty metadata draft first. Editing is temporarily disabled during reconciliation.
+
+Cleanup removes missing scores' metadata, bookmarks, and occurrences in setlists/collections. Groups remain, including empty ones. Rescan NEVER deletes score files or directories.
+
+Before cleanup, a complete SQLite metadata backup is saved under the application data directory, in backups/before-rescan-*.sqlite3. The status bar reports the removed count and offers Metadata backup with the exact path. This snapshot contains metadata, not score documents.
+
+Missing/unreadable roots, filesystem access errors, cancellation, a root changing during scanning, or backup failure prevent cleanup. An invalid new score does not remove other valid records. If all backing files disappeared from a readable folder, their records can all be removed.
+
+New imports completed before cancellation are kept. If the open score is removed, the app returns to Library; active playback snapshots discard missing entries. Keep external backups of both documents and metadata.
+
+@browse|Browse and metadata|Search, filters, and sorting|find title composer genre instrument collection unassigned
+Library has search and filters above its score list. Search matches words across saved metadata, including title, composer, artist, tags, notes, and assigned instrument names/subtypes/parts. Original and cleaned display titles are searchable.
+
+Sort by title, composer, or newest. Filter by genre, a saved list/collection, or instrument. The Instrument filter offers all instruments, unassigned scores, and assigned names. A score with several instruments matches each assigned instrument.
+
+Filters combine: if nothing appears, clear search and check every active filter. Unconfirmed instrument proposals are not assigned metadata and do not affect instrument filtering until applied.
+
+Select a score to open Reader. When a list is selected, + Add appends a score without opening it. Hover a score to see its original title and stored filename. Returning from Reader retains library search and filtering state.
+
+@metadata|Browse and metadata|Edit and save score metadata|title composer artist genre key tags notes draft cancel
+Select a score and click Edit metadata. Edit Title, Composer, Artist, Genre, Key, Tags, Notes, and Instruments in the left panel. Filenames initialize titles; PDF Author metadata initially supplies Composer.
+
+Click Save metadata to write the draft to the library database. Cancel discards it. Back or switching to another left panel keeps the unfinished draft; Edit metadata reopens it. Finish or cancel a draft before editing a different score or starting Rescan.
+
+Save metadata and Cancel stay at the top while the fields scroll. Opening Help preserves the draft. Metadata edits do not rename or rewrite the underlying PDF/image.
+
+Save or cancel dirty drafts before instrument detection or applying proposals. Metadata editing is unavailable while detection or reconciliation runs.
+
+@display|Browse and metadata|Readable display names|imslp pmlp underscore replace characters clean prefixes
+In Library options, expand Display names. Replace characters with spaces replaces each character in the Characters field separately. The default is underscore (_); enter _- to replace underscores and hyphens.
+
+Remove IMSLP/PMLP download prefixes strips recognized leading numeric identifiers and their common separators/brackets. It does not strip arbitrary numbers elsewhere in titles.
+
+For example, enabling both options changes IMSLP237087-PMLP384177-Bach_Prelude_No.1 to Bach Prelude No.1. Whitespace is collapsed. If cleanup would leave nothing, the original title remains.
+
+Preview and the Library list update immediately; click Save display options to retain settings after restart. Options apply to old and new scores, list entries, and Reader headings. Sorting uses displayed names; search also retains original identifiers.
+
+This is reversible presentation only. Files are not renamed and stored titles are not rewritten. Distinct scores may have identical displayed names. Metadata editing and CLI --list show original titles.
+
+@instrument-detect|Instruments and OCR|Detect instruments in scores|ocr scan tesseract pdftotext large libraries slow time
+Open Library > Options > Instrument detection. Choose Detect current score, Detect filtered scores, or Detect entire library. Manual detection creates proposals, NOT assigned instrument metadata; review and apply them afterward.
+
+WARNING: Instrument detection may take a while for large libraries, especially scanned PDFs and images that need OCR. Consider a small filtered batch first. Progress and Cancel detection are in the status bar. You can keep reading while detection runs.
+
+PDF text is extracted first using pdftotext. Pages with no clear labels are rendered for Tesseract OCR of the top 35% heading area and left staff-label area. PNG/JPEG scores use the same regions. Uniform text-free regions are skipped.
+
+Settings controls opening pages (default 2, maximum 6) and OCR languages (default eng). Only those pages and regions are inspected. This is label recognition, not music transcription or full-document OCR.
+
+Save or cancel a dirty metadata draft first. Other conflicting library jobs must finish. Detection runs offline and does not modify or upload score documents. CLI --detect-instruments also creates proposals only.
+
+@instrument-apply|Instruments and OCR|Review and apply detected instruments|write metadata save suggestions checkboxes evidence manual protection
+After detection finishes, open Review instrument results in Library options or a score's Review button. Choose the score in the review dropdown. Evidence shows the detected text, page, method, and OCR confidence. Confidence describes OCR text quality, not the probability the categorization is correct.
+
+Tick the correct proposals, then click Apply selected instruments. Clear proposals are ticked initially; uncertain ones need your decision. Applying writes assigned metadata into the library database and protects your confirmed choices. Repeat with other scores using the dropdown.
+
+If existing choices are manually protected, explicitly tick Replace my current manual choices before applying. Applying replaces that score's instrument list with the selected proposals; include every instrument you want to keep, or edit the list manually afterward.
+
+If there are no useful proposals, choose Edit instruments manually. If Apply is disabled, check that at least one proposal is selected, no conflicting task/draft remains, and any manual-replacement confirmation is checked.
+
+Changed score files invalidate old proposals. Rescan the library, detect again, and review fresh evidence. Detection alone, including a CLI run, does not change filters until proposals are applied.
+
+@instrument-manual|Instruments and OCR|Manual instruments, aliases, and protection|saxophone cello violoncello alto tenor bass part subtype
+Open a score > Edit metadata > Instruments. Click + Add instrument, type a name or choose a standard name, and optionally enter Subtype and Part number. Use Remove instrument to delete a row. Click Save metadata when finished.
+
+Several instruments can belong to one score. For Alto Saxophone 1, use Name Saxophone, Subtype Alto, Part 1. Common aliases normalize to shared names: Sax becomes Saxophone, and Violoncello becomes Cello. Custom names are allowed.
+
+Bare Alto, Tenor, or Bass can describe voices or several instruments and are NOT guessed as saxophone. Mentions in titles/prose, faint scans, handwriting, uncommon abbreviations, and cropped-out labels need manual review.
+
+Instrument edits automatically enable Protect manual instrument choices (even if empty) when saved. This includes intentionally removing every instrument. Confirmed review choices are protected too. To unlock, save instrument changes first, then clear protection in a later save.
+
+Automatic filling never replaces protected choices or fills already-assigned instruments. Metadata is stored in RustyMusicSheets' database, not embedded in the score file. If score contents are replaced, manual choices remain; automatic assignments and stale proposals are cleared.
+
+@instrument-auto|Instruments and OCR|Automatic detection on new imports|auto fill arrival watched clear unassigned language settings
+Enable Detect new imports; fill only clear, unassigned instruments in Library options, or the corresponding Settings option. It is off by default.
+
+New GUI imports and watched arrivals are queued for detection. Only clear detections fill empty, unprotected instrument fields; uncertain suggestions stay for review. Existing entries are not scanned merely by enabling this setting.
+
+Automatic detection waits for metadata editing and conflicting library jobs to finish. It does not switch your workspace. Large import batches can take a while, especially when OCR is needed. Monitor progress and cancel if necessary.
+
+CLI --import does not schedule automatic detection. Use --detect-instruments separately, then review/apply in the GUI. Manual metadata and intentionally empty protected values are never overwritten.
+
+In Settings, use Initial pages from 1–6 and installed Tesseract language codes such as eng or eng+deu. Install both language-data packages for a combination. Save preferences to retain these settings.
+
+@lists|Setlists and collections|Create, rename, duplicate, and delete lists|manager collection group unordered repeat setlist
+Click Setlists in the toolbar, or select a group in Library and choose Manage list…. Use Existing list to select a saved group.
+
+Click New list…, enter a name, and Create list. Check Collection for an unordered unique-score collection instead of an ordered setlist. Setlists allow repeated scores; collections contain each score once.
+
+Edit Name and click Rename to save a new name. Duplicate creates an independent copy with a unique copy name. Membership and order, including repetitions, are copied; score files are not duplicated.
+
+Delete list… requires confirmation and removes only the group and membership records, never score documents or library records. Cancelling leaves the list intact.
+
+Membership/order changes save immediately. Naming changes use Rename. In narrow windows, the manager stacks its panels vertically; scroll to reach all actions.
+
+@list-order|Setlists and collections|Add, reorder, remove, and play entries|play here snapshot sequence up down repeated occurrence
+In the list manager, search the full library on the right and click + Add to append a score. Alternatively choose a list in Library and use its + Add controls. Setlists permit repeats; collections deduplicate membership.
+
+Select an occurrence in the order panel. Up/Down moves that occurrence; Remove removes only that occurrence, not its score or file.
+
+Play setlist starts at the beginning; Play here starts at the chosen entry. Page turning continues across score boundaries and reports the end of the setlist. A score opened directly from Library is read individually instead.
+
+Playback uses an order snapshot. Editing a list does not change an already-playing sequence: start playback again to use the new order. Repeated entries stay distinct. If Rescan removes a missing score, active snapshots discard it.
+
+@reading|Reader and performance|Pages, zoom, and display modes|fit width two pages single previous next jump scroll
+Select a score in Library to open Reader at its remembered page. Previous/Next buttons, configured page-turn keys, or tapping/clicking the left/right half of a displayed page turn backward/forward.
+
+Use the Page number control to jump directly. Home/End goes to the first/last page of the current score. Page-turn shortcuts apply in Reader, not while browsing Library, using Help, editing text, or working in editors/list management.
+
+Two pages shows adjacent pages when another page is available. Turn it off for single-page viewing. Fit width uses the available width; otherwise the page fits the workspace. Zoom ranges from 0.5× to 3×, Reset zoom returns to 1×, and scrollbars let you inspect oversized pages.
+
+Reading position is remembered automatically. Reader controls scroll in short windows so they do not crowd out the score. Closing an editor or hiding Options gives more space. Images remain single-page scores.
+
+Rendering runs in the background with nearby-page prefetch and bounded caches. UI render resolution is capped at 2560 pixels along the longest edge; zoom cannot restore detail absent from the source. Retry renders retries failed page loads.
+
+@bookmarks|Reader and performance|Bookmarks and remembered positions|mark page toggle resume jump saved
+In Reader, click Bookmark to toggle a bookmark on the current page. Click it again on that page to remove the bookmark.
+
+Open Bookmarks to list marked pages and select one to jump there. Bookmarks belong to the library score record and persist across restarts and folder moves.
+
+The current reading position is remembered automatically; opening the score again resumes there. The Reader toolbar button returns to the already-open score without reloading its position.
+
+Rescan cleanup of a missing score removes its bookmarks with its metadata. A metadata backup contains these records, but not the score files. Custom annotation tools and handwritten notes on page images are not implemented.
+
+@performance|Reader and performance|Performance mode and fullscreen|stage touch tap exit f11 escape
+Open a score, then click Performance. The app enters fullscreen Reader and hides library/editing controls. Tap/click page halves or use page-turn keys/pedals. Setlist playback continues across score boundaries.
+
+The bottom bar retains Exit performance. Escape leaves performance/fullscreen; F11 toggles fullscreen. Fullscreen and Performance are distinct: F11 alone does not hide the normal controls.
+
+F1 can open Help even during performance; Close help or Escape returns to the previous reading view without turning a page. Opening Help does not discard the active setlist snapshot.
+
+Configure and test page-turn mappings, layout, and power settings before a performance. Physical pedal, touchscreen, and Bluetooth behavior depends on the device and desktop.
+
+@shortcuts|Reader and performance|Keyboard shortcuts and pedals|keys usb bluetooth pageup pagedown space arrow f1 f11 escape
+F1: open Help contents.
+Escape while Help is open: close Help without turning pages.
+F11 outside Help: toggle fullscreen.
+Escape outside Help: leave performance/fullscreen.
+
+Default Reader shortcuts:
+PageDown or ArrowRight: next page.
+PageUp or ArrowLeft: previous page.
+Home: first page of the current score.
+End: last page of the current score.
+
+In Settings, map Next page and Previous page to keys sent by a keyboard-emulating USB/Bluetooth pedal, then Save preferences. They must be different keys. Available choices include PageDown/PageUp, Space, Enter, arrows, N, P, and B. ArrowLeft/ArrowRight also remain page-turn shortcuts.
+
+Pair Bluetooth pedals using Linux device settings. The app accepts keyboard events, not MIDI pedal messages. Reader shortcuts are suspended while text is being edited, Help is open, or editors/list management are active. Test your actual device before relying on it.
+
+Search and text fields support physical keyboards, paste, and Linux on-screen keyboards that send committed text. A page-turn key typed in a text field should not turn the score.
+
+@settings|Settings and data|Preferences and keep-awake protection|power suspend dimming idle save recursive ocr
+Open Settings in the toolbar. Save preferences remains at the top while the body scrolls. Close settings restores the prior layout. Page-turn mappings, import-subfolder defaults, and OCR opening-pages/language options are configured here; click Save preferences to retain them.
+
+Prevent screen dimming/timeout and suspend while running is optional and off by default. This toggle takes effect immediately and saves automatically. It requests temporary GNOME/KDE/freedesktop/logind inhibitors in the background, including while minimized.
+
+Inhibitors are released when disabled, on normal exit, or when the process dies. No permanent desktop power settings are changed. Status shows Keep awake when requests are accepted; a yellow status means pending/incomplete protection. Details and Retry keep-awake request are available in Settings.
+
+Desktop policy, forced suspend, lid handling, and critical-battery safety can override inhibitors. This does not bypass mandatory system policy. Check your reader's actual power behavior before performance use.
+
+Settings also shows the active music folder and metadata directory. Display-name options are configured and saved separately in Library options.
+
+@backups|Settings and data|Storage, backups, and migration|sqlite database xdg config restore wal preferences location
+Default locations:
+~/.local/share/rustymusicsheets/ — SQLite metadata and default/legacy score copies.
+~/.config/rustymusicsheets/preferences.json — preferences.
+~/.cache/rustymusicsheets/ — reserved disposable cache data.
+
+XDG_DATA_HOME, XDG_CONFIG_HOME, and XDG_CACHE_HOME override these bases. The selected music folder stores documents separately; its location and score-relative paths are saved together in the database. Rendered pages currently live in memory, not disk.
+
+For a complete backup, CLOSE the application and copy the selected music folder AND the entire app data and config directories. Do not copy only the SQLite main file while the app is open; WAL files may be needed. Do not manually rename managed files.
+
+Rescan cleanup creates backups/before-rescan-*.sqlite3 first. Instrument-schema migration of an existing database creates backups/before-instruments-*.sqlite3 and retains existing metadata, bookmarks, and list membership. These are metadata-only snapshots, not portable backups of documents.
+
+There is no built-in portable backup/restore interface. Do not casually replace a live database. Keep independent backups before manual recovery. Uninstalling the app does not delete your library; personal library files are never shipped in the package.
+
+@cli|Reference and troubleshooting|Command-line reference|terminal import list check detect instruments smoke test build
+rustymusicsheets — open the desktop app.
+rustymusicsheets --help — show command usage and version.
+rustymusicsheets --import "/path/to/file-or-folder" — import a supported score or recursively import a folder.
+rustymusicsheets --list — list score IDs, page counts, and original titles.
+rustymusicsheets --detect-instruments — create proposals for all library scores.
+rustymusicsheets --detect-instruments 12 — create proposals for score ID 12.
+rustymusicsheets --check — verify PDF and OCR helper executables.
+rustymusicsheets --smoke-test — open the GUI and close after three seconds.
+
+CLI imports use the same managed library and return nonzero if any file fails. CLI detection creates proposals only; review/apply in the GUI. CLI import does not schedule automatic instrument filling. A full-library detection can take a while.
+
+Use isolated XDG_DATA_HOME, XDG_CONFIG_HOME, and XDG_CACHE_HOME directories for test libraries. --check tests executable availability, not every OCR language. Do not point experiments at your personal library.
+
+Source validation: cargo fmt --check; cargo test --locked; cargo clippy --locked --all-targets -- -D warnings; cargo build --locked --release. Tests generate their own scores and use actual Poppler/Tesseract with English data.
+
+@troubleshooting|Reference and troubleshooting|Troubleshooting and common questions|error missing helper no results disabled slow failed
+No scores shown? Clear search and check genre, collection, and instrument filters. Proposals do not count as assigned instruments until Apply selected instruments is clicked.
+
+Detection finished but metadata did not change? Manual detection is proposal-only. Open Review instrument results, choose the score, tick candidates, and Apply selected instruments. Confirm replacement if current choices are protected, or enter instruments through Edit metadata.
+
+Detection slow? Large libraries and scanned PDFs/images can take a while. Try filtered batches, fewer opening pages, or cancel from the status bar. The UI and reading remain available. OCR is heuristic; no result does not mean the instrument is absent.
+
+OCR error or missing language? Run --check for helpers and verify tesseract-ocr plus the requested language packages are installed. Default language is eng; eng+deu requires English and German data. A detected PDF text label can work without OCR.
+
+Controls disabled? Wait for background import/rescan/detection jobs to finish; save/cancel metadata drafts. For Apply, select at least one proposal and explicitly confirm replacing protected choices when applicable.
+
+Page not rendering? Check the score still exists and is readable, verify Poppler for PDFs, and click Retry renders. Invalid/encrypted PDFs and oversized/malformed images are rejected. Re-import an original to repair a missing managed copy, or reconnect unavailable storage.
+
+Deleted file still listed? Automatic watching never deletes metadata. Use explicit Rescan after checking the correct music folder is connected. Rescan creates a metadata snapshot before safe missing-record cleanup.
+
+Picker missing? Install optional Zenity, paste a path, or use drag-and-drop. Missing starting directories fall back to home without silently changing the configured library.
+
+@limits|Reference and troubleshooting|Current limitations|annotations midi audio sync printing export crop rotate mobilesheets
+This release is a functional native reader/library milestone, not full MobileSheets feature parity.
+
+Not implemented: annotations, crop/rotation/page reordering, links/repeats within scores, vertical/half-page display, audio/metronome, MIDI, ChordPro/text, image-sequence assembly, printing/export, portable backup/restore, cloud integration, and multi-device sync.
+
+No compatibility is claimed for MobileSheets proprietary formats or device protocols. PDF/PNG/JPEG documents remain unchanged; instrument metadata stays in the local SQLite library rather than being embedded in the documents.
+
+Instrument categorization is conservative rule-based label detection. Handwriting, faint scans, abbreviations, prose, ambiguous voice names, and labels outside selected pages/regions may need manual entry.
+
+@about|About|About RustyMusicSheets|version author credits release year license copyright
+RustyMusicSheets is a native Rust/egui desktop sheet-music library and performance reader for Linux.
+
+Version, author credit, and release year are shown above from the application's release metadata.
+
+License: MIT. Copyright (c) 2026 RustyMusicSheets contributors. The application is provided without warranty; see the full LICENSE supplied with the source and package. Third-party components retain their respective licenses; the Debian package includes third-party notices and license files.
+
+The current author credit follows the project's existing copyright notice. The application and this help work offline. Score documents are not uploaded for instrument detection.

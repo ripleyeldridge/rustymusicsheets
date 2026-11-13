@@ -1,4 +1,5 @@
 use crate::{
+    document,
     import::{self, Outcome, Report},
     model::Paths,
     storage::Library,
@@ -67,12 +68,7 @@ impl Scanner {
                     continue;
                 }
             };
-            if !entry.file_type().is_file()
-                || !entry
-                    .path()
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
-            {
+            if !entry.file_type().is_file() || !document::supported(entry.path()) {
                 continue;
             }
             let path = entry.into_path();

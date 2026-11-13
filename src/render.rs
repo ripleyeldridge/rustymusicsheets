@@ -1,4 +1,4 @@
-use crate::{model::Paths, pdf, storage::Library};
+use crate::{document, model::Paths, storage::Library};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use eframe::egui::{self, ColorImage, TextureHandle};
 use std::{
@@ -57,7 +57,7 @@ impl PageRenderer {
                 let key = request.key;
                 let result = Library::open(&paths)
                     .and_then(|db| db.pdf_path(&paths, &key.hash))
-                    .and_then(|path| pdf::render(&path, key.page, key.pixels, &request.cancel))
+                    .and_then(|path| document::render(&path, key.page, key.pixels, &request.cancel))
                     .map(|image| {
                         ColorImage::from_rgba_unmultiplied(
                             [image.width() as usize, image.height() as usize],

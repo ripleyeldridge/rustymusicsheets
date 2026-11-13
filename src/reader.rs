@@ -16,6 +16,24 @@ pub enum Turn {
 }
 
 impl Reader {
+    pub fn retain_existing(&mut self, valid: &std::collections::HashSet<i64>) -> bool {
+        if self.score_id.is_some_and(|id| !valid.contains(&id)) {
+            *self = Self {
+                two_pages: self.two_pages,
+                ..Self::default()
+            };
+            return true;
+        }
+        let before = self
+            .sequence
+            .iter()
+            .take(self.sequence_index)
+            .filter(|id| valid.contains(id))
+            .count();
+        self.sequence.retain(|id| valid.contains(id));
+        self.sequence_index = before.min(self.sequence.len().saturating_sub(1));
+        false
+    }
     pub fn load(&mut self, score: i64, pages: u32, page: u32) {
         self.score_id = Some(score);
         self.pages = pages;
