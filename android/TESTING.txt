@@ -36,6 +36,11 @@ Screenshots and DB snapshots contain only the fresh test library. The
 runner refuses existing test packages, nonempty evidence directories,
 locked screens, or screenshots when the test app lacks focus. It requires
 an explicit ADB serial; it never selects a first/default physical device.
+Startup/fixture transitions wait up to 60 seconds for two consecutive
+samples with a live app PID, unlocked input and the exact test Activity in
+focus. This is readiness polling, not permission-dialog dismissal or an
+automatic unlock. Screenshot focus is checked again after capture; bytes
+are discarded if focus changed.
 
 Normal cleanup removes ONLY test packages installed by this invocation.
 --keep-installed deliberately retains those test packages for diagnosis;
@@ -85,6 +90,12 @@ library/reader/error screenshots, and scoped app.log on failures. A passing
 process alone is not a rendering assertion. Failure evidence remains
 incomplete and must not be promoted to a successful device result.
 See android/CI.txt for the corresponding PR/manual Actions jobs.
+
+Readiness failures preserve am-start results, a bounded history of sanitized
+focus-component/lock/PID observations, the last state, and app-PID logcat
+where available. No raw global window dump, lock-screen image, or unrelated
+app log is retained. A persistent focus problem remains a failed smoke
+test; the new diagnostics must be investigated rather than bypassed.
 
 Identity, version codes, and production signing decisions
 ---------------------------------------------------------

@@ -164,6 +164,7 @@ jobs:
               "source_lock_sha256": digest("Cargo.lock"),
               "workflow_sha256": digest(".github/workflows/android.yml"),
               "build_script_sha256": digest("scripts/build-android.sh"),
+              "sdk_view_sha256": digest("scripts/android-sdk-view.py"),
               "verifier_sha256": digest("scripts/verify-android-apk.py"),
               "apk_sha256": digest("dist/android-ci/RustyMusicSheets-arm64-debug.apk"),
               "signing": "ephemeral development/debug only; no production identity",
@@ -211,7 +212,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             build-essential pkg-config poppler-utils \
-            tesseract-ocr tesseract-ocr-eng imagemagick acl
+            tesseract-ocr tesseract-ocr-eng imagemagick acl libpulse0
           tesseract --list-langs | grep -Fx eng
           command -v convert
       - name: Set up complete JDK 21 for isolated provider compilation
@@ -228,11 +229,13 @@ jobs:
           cmdline-tools-version: '12266719'
           accept-android-sdk-licenses: 'true'
           log-accepted-android-sdk-licenses: 'false'
-          packages: 'platform-tools platforms;android-35 platforms;android-36 build-tools;36.0.0 ndk;28.2.13676358'
+          packages: 'platform-tools platforms;android-35 platforms;android-36 build-tools;36.0.0 ndk;28.2.13676358 emulator'
       - name: Select pinned NDK
         run: |
           printf 'ANDROID_NDK_ROOT=%s/ndk/28.2.13676358\n' "$ANDROID_HOME" >> "$GITHUB_ENV"
           printf 'ANDROID_NDK_HOME=%s/ndk/28.2.13676358\n' "$ANDROID_HOME" >> "$GITHUB_ENV"
+      - name: Check headless emulator runtime dependencies
+        run: '"$ANDROID_HOME/emulator/emulator" -no-window -no-audio -version'
       - name: Install pinned Rust and emulator ABI target
         run: |
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target x86_64-linux-android
@@ -278,12 +281,12 @@ jobs:
       - name: Record emulator tool inventory beside generated evidence
         if: ${{ !cancelled() && hashFiles('target/android-tests/evidence/report.json') != '' }}
         run: |
-          sdkmanager --list_installed > target/android-tests/evidence/android-packages.txt
-          "$ANDROID_HOME/emulator/emulator" -version > target/android-tests/evidence/emulator-version.txt 2>&1
           git rev-parse HEAD > target/android-tests/evidence/source-commit.txt
           sha256sum Cargo.lock target/android-tests/apks/smoke-app.apk \
             target/android-tests/apks/fixture-provider.apk \
             > target/android-tests/evidence/input-SHA256SUMS
+          sdkmanager --list_installed > target/android-tests/evidence/android-packages.txt
+          "$ANDROID_HOME/emulator/emulator" -no-window -no-audio -version > target/android-tests/evidence/emulator-version.txt 2>&1
       - name: Confirm source lockfile is unchanged
         if: ${{ always() }}
         run: git diff --exit-code -- Cargo.lock

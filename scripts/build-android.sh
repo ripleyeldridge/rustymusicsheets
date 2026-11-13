@@ -28,7 +28,8 @@ esac
 export CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG:-0}"
 lock_before="$(sha256sum "$project_dir/Cargo.lock")"
 cargo metadata --manifest-path "$project_dir/Cargo.toml" --locked --format-version 1 >/dev/null
-cargo apk build --manifest-path "$project_dir/Cargo.toml" --package rustymusicsheets --lib --target "$target" "$@"
+python3 "$project_dir/scripts/android-sdk-view.py" --sdk "$ANDROID_HOME" -- \
+    cargo apk build --manifest-path "$project_dir/Cargo.toml" --package rustymusicsheets --lib --target "$target" "$@"
 if [[ "$(sha256sum "$project_dir/Cargo.lock")" != "$lock_before" ]]; then
     printf '%s\n' "Cargo.lock changed during packaging; review it before distributing the APK." >&2
     exit 1

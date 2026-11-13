@@ -69,6 +69,12 @@ actual JDK/Rust versions are retained. Ephemeral debug signatures can differ.
 Source Cargo.lock is never regenerated or updated; all application Cargo
 commands use --locked where supported, and the build wrapper and workflow
 check it remains unchanged.
+Because cargo-apk 0.10 chooses the highest build-tools directory it sees,
+the wrapper invokes it through android-sdk-view.py. This creates a temporary
+symlink-only SDK view exposing build-tools 36.0.0, platforms 35/36 and
+platform-tools, while retaining the pinned real NDK. It removes the legacy
+ANDROID_SDK_ROOT override only in the child build process. The shared SDK
+and preinstalled newer build-tools remain untouched.
 
 Checks and retained evidence
 ----------------------------
@@ -128,6 +134,11 @@ the original def8341 baseline. Exact reviewed interfaces:
 
 The job installs x86_64-linux-android in Rust and a full Temurin JDK 21
 (javac is required), plus Poppler, Tesseract English and ImageMagick.
+It explicitly installs the emulator package and libpulse0 on the runner.
+A headless -no-window -no-audio -version preflight runs before the long build,
+and the final inventory probe uses those same headless flags. This avoids
+the graphical QEMU version path that failed to load libpulse.so.0 in the
+first hosted run. Source/input hashes are recorded before ancillary probes.
 The emulator action is SHA-pinned as above; the system-image coordinate is
 system-images;android-35;default;x86_64 on the stable SDK channel. The action
 creates a fresh AVD, explicitly reserves port 5554, wipes its data, disables
@@ -176,3 +187,15 @@ Continue tracking API 26, representative intermediate/current APIs,
 ARM64/available Pixel hardware, lifecycle and an actual 16 KiB-page runtime.
 Static ZIP/ELF verification and API 35 x86_64 smoke success do NOT establish
 that remaining device matrix or 16 KiB runtime success.
+
+First hosted failure and follow-up
+----------------------------------
+Run 43452758229 passed host and ARM64 checks but failed before import cases:
+the original fixed-delay startup capture could not confirm foreground.
+The retained artifact had no fatal app log or foreground/launch diagnostics,
+so it does not prove either an app crash or a timing-only cause.
+Readiness polling now waits for observed live/unlocked/focused state,
+preserves bounded component-only observations and launch results, and still
+fails without screenshots if the state never becomes safe. The exact
+hosted foreground cause remains unproven until a follow-up run provides
+those diagnostics. Local cold-boot smoke is not a replacement for that run.

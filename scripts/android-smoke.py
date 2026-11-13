@@ -19,6 +19,41 @@ HELPER = "org.ripleyeldridge.rustymusicsheets.fixture"
 PACKAGES = (APP, HELPER)
 
 
+def window_state(policy, displays, process):
+    """Keep component identities only, not raw window titles or global dumps."""
+    components = []
+    for line in displays.splitlines():
+        if "mCurrentFocus=" in line:
+            match = re.search(r"([A-Za-z0-9_.]+/[A-Za-z0-9_.$]+)", line)
+            if match:
+                components.append(match.group(1))
+    locked = bool(re.search(r"^\s*showing=true\s*$", policy, re.M)) or "inputRestricted=true" in policy
+    process = process.strip()
+    valid_pid = process if re.fullmatch(r"\d+", process) else None
+    return {
+        "pid": valid_pid,
+        "locked": locked,
+        "focus_reported": any("mCurrentFocus=" in line for line in displays.splitlines()),
+        "focused_components": components,
+        "ready": bool(valid_pid) and not locked and any(component.startswith(APP + "/") for component in components),
+    }
+
+
+def wait_for_readiness(query, description, seconds=60, sample=None, clock=time.monotonic, sleep=time.sleep):
+    deadline = clock() + seconds
+    stable = 0
+    last = {}
+    while clock() < deadline:
+        last = query()
+        if sample:
+            sample(last)
+        stable = stable + 1 if last.get("ready") else 0
+        if stable >= 2:
+            return last
+        sleep(0.25)
+    raise RuntimeError(f"Timed out waiting for foreground readiness: {description}; last state: {last}")
+
+
 def wait_for(action, description, seconds=25):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -48,8 +83,8 @@ def main():
     if any(args.output.iterdir()):
         parser.error("Choose an empty evidence output directory")
 
-    def call(*arguments, binary=False, check=True):
-        result = subprocess.run(base + list(arguments), check=check, capture_output=True, text=not binary, timeout=45)
+    def call(*arguments, binary=False, check=True, timeout=45):
+        result = subprocess.run(base + list(arguments), check=check, capture_output=True, text=not binary, timeout=timeout)
         return result.stdout
 
     def shell(*arguments, check=True):
@@ -73,6 +108,8 @@ def main():
             for name in ("smoke-app.apk", "fixture-provider.apk")
         },
         "fixtures_sha256": hashlib.sha256((args.fixtures / "fixtures.json").read_bytes()).hexdigest(),
+        "launches": [],
+        "readiness": [],
     }
 
     def stop():
@@ -81,13 +118,42 @@ def main():
     def pid():
         return shell("pidof", APP, check=False)
 
+    def current_state():
+        try:
+            return window_state(
+                call("shell", "dumpsys", "window", "policy", timeout=5),
+                call("shell", "dumpsys", "window", "displays", timeout=5),
+                call("shell", "pidof", APP, check=False, timeout=5),
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            return {"ready": False, "adb_error": type(error).__name__}
+
+    def ready(name):
+        observations = []
+        entry = {"stage": name, "observations": observations}
+        report["readiness"].append(entry)
+        def record(state):
+            if state.get("pid"):
+                entry["last_pid"] = state["pid"]
+            observations.append(state)
+            del observations[:-20]
+        state = wait_for_readiness(current_state, name, sample=record)
+        entry["complete"] = True
+        return state
+
+    def launch(*arguments):
+        result = subprocess.run(base + ["shell", "am", "start", "-W", *arguments], check=True, capture_output=True, text=True, timeout=45)
+        report["launches"].append({"component": arguments[1], "stdout": result.stdout, "stderr": result.stderr})
+        if "Error:" in result.stdout or "Error:" in result.stderr:
+            raise RuntimeError("Android rejected test Activity launch; inspect report.json")
+
     def screenshot(name):
-        policy = shell("dumpsys", "window", "policy")
-        assert not re.search(r"^\s*showing=true\s*$", policy, re.M), "Unlock the test target before UI tests"
-        windows = shell("dumpsys", "window", "displays")
-        assert any(APP in line for line in windows.splitlines() if "mCurrentFocus=" in line), "Isolated app is not foreground"
+        ready(name)
+        image = call("exec-out", "screencap", "-p", binary=True)
+        if not current_state().get("ready"):
+            raise RuntimeError("Foreground changed during screenshot capture; image discarded")
         path = args.output / name
-        path.write_bytes(call("exec-out", "screencap", "-p", binary=True))
+        path.write_bytes(image)
         return path
 
     def snapshot(name):
@@ -106,8 +172,8 @@ def main():
 
     def launch_fixture(fixture, count):
         stop()
-        shell("am", "start", "-W", "-n", HELPER + "/.FixtureActivity", "--es", "fixture", fixture)
-        wait_for(pid, f"app starts for {fixture}")
+        launch("-n", HELPER + "/.FixtureActivity", "--es", "fixture", fixture)
+        ready(f"fixture {fixture}")
         if count:
             wait_for(lambda: len(shell("run-as", APP, "ls", "files/library/scores", check=False).splitlines()) >= count, f"{fixture} publishes a private copy")
         time.sleep(1.5)
@@ -153,9 +219,8 @@ def main():
         for name, package in (("smoke-app.apk", APP), ("fixture-provider.apk", HELPER)):
             call("install", "--no-streaming", str(args.apks / name))
             installed.append(package)
-        shell("am", "start", "-W", "-n", APP + "/android.app.NativeActivity")
-        wait_for(pid, "fresh startup")
-        time.sleep(2)
+        launch("-n", APP + "/android.app.NativeActivity")
+        ready("fresh startup")
         screenshot("startup.png")
         expected = json.loads((args.fixtures / "fixtures.json").read_text())
         hashes = {item["name"]: item["sha256"] for item in expected["files"]}
@@ -201,10 +266,18 @@ def main():
             print("PASS:", fixture, "rejected without new record or crash", flush=True)
         assert not shell("run-as", APP, "ls", "cache/rustymusicsheets"), "Leaked staging files"
         report["complete"] = True
-    except BaseException:
-        current = pid()
+    except BaseException as error:
+        report["failure"] = {"type": type(error).__name__, "message": str(error)}
+        state = current_state()
+        report["last_state"] = state
+        current = state.get("pid")
+        if not current:
+            current = next((stage["last_pid"] for stage in reversed(report["readiness"]) if stage.get("last_pid")), None)
         if current:
-            (args.output / "app.log").write_text(call("logcat", "-d", f"--pid={current}", "-t", "200"))
+            try:
+                (args.output / "app.log").write_text(call("logcat", "-d", f"--pid={current}", "-t", "200", timeout=10))
+            except (OSError, subprocess.SubprocessError) as log_error:
+                report["log_error"] = type(log_error).__name__
         raise
     finally:
         (args.output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
