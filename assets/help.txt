@@ -290,6 +290,8 @@ RustyMusicSheets is a native Rust/egui desktop sheet-music library and performan
 
 Version, author credit, and release year are shown above from the application's release metadata.
 
-License: MIT. Copyright (c) 2026 RustyMusicSheets contributors. The application is provided without warranty; see the full LICENSE supplied with the source and package. Third-party components retain their respective licenses; the Debian package includes third-party notices and license files.
+Author: Ripley Eldridge. GitHub: https://github.com/ripleyeldridge
 
-The current author credit follows the project's existing copyright notice. The application and this help work offline. Score documents are not uploaded for instrument detection.
+License: MIT. Copyright (c) 2026 Ripley Eldridge. The application is provided without warranty; see the full LICENSE supplied with the source and package. Third-party components retain their respective licenses; the Debian package includes third-party notices and license files.
+
+The application and this help work offline; opening the optional GitHub profile link uses your browser. Score documents are not uploaded for instrument detection.

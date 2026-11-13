@@ -45,7 +45,8 @@ reading position, list playback, filters, or metadata drafts. Page-turn keys
 are suspended while help is open; background library jobs can continue.
 Help > Keyboard shortcuts opens the key/pedal reference directly.
 Help > About RustyMusicSheets shows the compiled application version,
-author credit RustyMusicSheets contributors, release year 2026, and MIT license.
+author Ripley Eldridge, release year 2026, and MIT license.
+The About page links to the author's GitHub: https://github.com/ripleyeldridge
 The guide is embedded in the executable and also shipped as help.txt in the
 package documentation directory; no network connection is required.
 

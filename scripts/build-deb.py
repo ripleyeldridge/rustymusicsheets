@@ -83,7 +83,8 @@ def main():
         debian.mkdir(exist_ok=True)
         (debian / "control").write_text(
             f"Source: {PACKAGE}\nSection: sound\nPriority: optional\n"
-            "Maintainer: RustyMusicSheets contributors <noreply@rustymusicsheets.invalid>\n"
+            "Maintainer: Ripley Eldridge <noreply@rustymusicsheets.invalid>\n"
+            "Homepage: https://github.com/ripleyeldridge\n"
             "Standards-Version: 4.7.0\n\n"
             f"Package: {PACKAGE}\nArchitecture: any\n"
             "Description: Native sheet music library and performance reader\n"
@@ -111,7 +112,7 @@ def main():
             "    shared editors, offline instrument detection/review/filtering,\n"
             "    standalone PNG/JPEG score support, searchable offline Help/About,\n"
             "    and large-library instrument detection warnings.\n\n"
-            f" -- RustyMusicSheets contributors <noreply@rustymusicsheets.invalid>  {date}\n"
+            f" -- Ripley Eldridge <noreply@rustymusicsheets.invalid>  {date}\n"
         )
         (docs / "changelog.Debian.gz").write_bytes(gzip.compress(changelog.encode(), mtime=0))
         man = stage / "usr/share/man/man1/rustymusicsheets.1.gz"
@@ -140,7 +141,8 @@ def main():
         (control / "control").write_text(
             f"Package: {PACKAGE}\nVersion: {version}\nArchitecture: {arch}\n"
             "Section: sound\nPriority: optional\n"
-            "Maintainer: RustyMusicSheets contributors <noreply@rustymusicsheets.invalid>\n"
+            "Maintainer: Ripley Eldridge <noreply@rustymusicsheets.invalid>\n"
+            "Homepage: https://github.com/ripleyeldridge\n"
             f"Installed-Size: {installed_kib}\n"
             f"Depends: {', '.join(runtime)}\n"
             "Recommends: zenity, libgl1-mesa-dri\n"

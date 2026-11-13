@@ -4,6 +4,7 @@ use std::sync::OnceLock;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const AUTHOR: &str = env!("CARGO_PKG_AUTHORS");
+pub const AUTHOR_URL: &str = env!("CARGO_PKG_HOMEPAGE");
 pub const RELEASE_YEAR: &str = "2026";
 
 pub struct Topic {
@@ -24,7 +25,7 @@ pub fn topics() -> &'static [Topic] {
                 let fields: Vec<_> = header.trim_start_matches('@').split('|').collect();
                 assert_eq!(fields.len(), 4, "Help topic header");
                 let identity = if fields[0] == "about" {
-                    format!(" {VERSION} {AUTHOR} {RELEASE_YEAR}")
+                    format!(" {VERSION} {AUTHOR} {AUTHOR_URL} {RELEASE_YEAR}")
                 } else {
                     String::new()
                 };
@@ -204,6 +205,7 @@ impl Help {
                     ui.label(format!("Version: {VERSION}"));
                     ui.label(format!("Author: {AUTHOR}"));
                     ui.label(format!("Release year: {RELEASE_YEAR}"));
+                    ui.hyperlink_to("GitHub: ripleyeldridge", AUTHOR_URL);
                     ui.label("License: MIT");
                     ui.separator();
                 }

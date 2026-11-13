@@ -1,7 +1,8 @@
 [package]
 name = "rustymusicsheets"
 version = "0.2.1"
-authors = ["RustyMusicSheets contributors"]
+authors = ["Ripley Eldridge"]
+homepage = "https://github.com/ripleyeldridge"
 edition = "2021"
 rust-version = "1.86"
 description = "A native Linux sheet-music library and performance reader"

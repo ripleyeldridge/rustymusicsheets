@@ -125,11 +125,14 @@ fn search_matches_body_keywords_and_all_terms_case_insensitively() {
     assert_eq!(search("  \t ").len(), topics().len());
     assert!(search("no_such_help_word").is_empty());
     assert!(ids(VERSION).contains(&"about"));
+    assert!(ids("Ripley Eldridge").contains(&"about"));
+    assert!(ids(AUTHOR_URL).contains(&"about"));
 }
 
 #[test]
 fn about_displays_release_identity_at_small_and_large_sizes() {
-    assert_eq!(AUTHOR, "RustyMusicSheets contributors");
+    assert_eq!(AUTHOR, "Ripley Eldridge");
+    assert_eq!(AUTHOR_URL, "https://github.com/ripleyeldridge");
     assert_eq!(RELEASE_YEAR, "2026");
     let ctx = egui::Context::default();
     let mut help = Help::default();
@@ -146,6 +149,40 @@ fn about_displays_release_identity_at_small_and_large_sizes() {
             "Close help".into(),
         ] {
             assert!(visible_text(&output, &label).is_some(), "{size:?}: {label}");
+        }
+    }
+}
+
+#[test]
+fn about_github_link_targets_the_author_profile() {
+    let ctx = egui::Context::default();
+    let mut help = Help::default();
+    help.open_topic("about");
+    let size = [1280.0, 900.0];
+    for _ in 0..3 {
+        frame(&mut help, &ctx, size, vec![]);
+    }
+    let output = frame(&mut help, &ctx, size, vec![]);
+    let pos = visible_text(&output, "GitHub: ripleyeldridge").unwrap();
+    for pressed in [true, false] {
+        let output = frame(
+            &mut help,
+            &ctx,
+            size,
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        if !pressed {
+            assert!(output.platform_output.commands.iter().any(
+                |command| matches!(command, egui::OutputCommand::OpenUrl(url) if url.url == AUTHOR_URL)
+            ));
         }
     }
 }
