@@ -126,6 +126,94 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(len(observed), 3)
 
 
+class ImportSummaryTests(unittest.TestCase):
+    def setUp(self):
+        self.smoke = module("summary_smoke", "android-smoke.py")
+
+    def test_complete_summary_handles_punctuation_spacing_and_single_count_glyphs(self):
+        for text in (
+            "0 imported · 1 duplicates · 0 removed · 0 failed",
+            "yet. Oimported: i duplicates -O removed -O failed",
+            "0 imported\nl duplicate | 0 removed; O failed",
+            "0 imported: I duplicates : 0 removed : 0 failed",
+        ):
+            self.assertEqual(self.smoke.parse_import_summary(text), self.smoke.EXPECTED_DUPLICATE, text)
+
+    def test_partial_or_ambiguous_text_does_not_confirm_completion(self):
+        for text in (
+            "i duplicates",
+            "0 imported 1 duplicates",
+            "0 imported 1 duplications 0 removed 0 failed",
+            "no imported i duplicates O removed O failed",
+            "0 imported l1 duplicates 0 removed 0 failed",
+            "0 imported 1 duplicates removed failed",
+        ):
+            self.assertIsNone(self.smoke.parse_import_summary(text), text)
+
+    def test_wrong_counters_are_not_a_success(self):
+        for text in (
+            "1 imported 1 duplicates 0 removed 0 failed",
+            "0 imported 0 duplicates 0 removed 0 failed",
+            "0 imported 11 duplicates 0 removed 0 failed",
+            "0 imported 1 duplicates 1 removed 0 failed",
+            "0 imported 1 duplicates 0 removed 1 failed",
+        ):
+            self.assertNotEqual(self.smoke.parse_import_summary(text), self.smoke.EXPECTED_DUPLICATE, text)
+
+    def test_multiple_summaries_are_rejected(self):
+        summary = "0 imported 1 duplicates 0 removed 0 failed"
+        self.assertIsNone(self.smoke.parse_import_summary(summary + "\n" + summary))
+
+    def test_ocr_falls_back_and_preserves_each_transcript(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            texts = ["i duplicates", "O imported l duplicates O removed O failed"]
+            with patch.object(self.smoke.subprocess, "check_output", side_effect=texts), patch.object(self.smoke.subprocess, "run"):
+                result, attempts = self.smoke.recognize_import_summary(root / "input.png", root / "result")
+            self.assertEqual(result, self.smoke.EXPECTED_DUPLICATE)
+            self.assertEqual([item["recipe"] for item in attempts], ["original", "enlarged"])
+            self.assertEqual((root / attempts[0]["text_file"]).read_text(), texts[0])
+            self.assertEqual((root / attempts[1]["text_file"]).read_text(), texts[1])
+
+    def test_all_bad_ocr_attempts_remain_a_failure(self):
+        text = "0 imported 1 duplicates 0 removed 1 failed"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(self.smoke.subprocess, "check_output", return_value=text), patch.object(self.smoke.subprocess, "run"):
+                result, attempts = self.smoke.recognize_import_summary(root / "input.png", root / "result")
+            self.assertNotEqual(result, self.smoke.EXPECTED_DUPLICATE)
+            self.assertEqual(len(attempts), 3)
+            self.assertTrue(all((root / item["text_file"]).is_file() for item in attempts))
+
+    def test_completion_wait_handles_a_delayed_summary(self):
+        now = [0.0]
+        results = iter([None, self.smoke.EXPECTED_DUPLICATE])
+        result = self.smoke.wait_for_duplicate(
+            lambda: next(results), "duplicate",
+            clock=lambda: now[0], sleep=lambda delay: now.__setitem__(0, now[0] + delay),
+        )
+        self.assertEqual(result, self.smoke.EXPECTED_DUPLICATE)
+        self.assertEqual(now[0], 0.5)
+
+    def test_unreadable_or_failed_summary_times_out(self):
+        for value in (None, {"imported": 0, "duplicates": 1, "removed": 0, "failed": 1}):
+            now = [0.0]
+            with self.assertRaisesRegex(AssertionError, "no confirmed duplicate completion"):
+                self.smoke.wait_for_duplicate(
+                    lambda: value, "pipe", seconds=1,
+                    clock=lambda: now[0], sleep=lambda delay: now.__setitem__(0, now[0] + delay),
+                )
+
+    @unittest.skipUnless(shutil.which("tesseract") and shutil.which("convert"), "OCR tools required")
+    def test_actual_generated_ci_footer_is_recognized(self):
+        # Crop from the generated-score CI run; no personal document/device UI.
+        image = SCRIPTS / "tests/fixtures/duplicate-status-ci.png"
+        with tempfile.TemporaryDirectory() as directory:
+            result, attempts = self.smoke.recognize_import_summary(image, Path(directory) / "ci-result")
+            self.assertEqual(result, self.smoke.EXPECTED_DUPLICATE)
+            self.assertEqual(attempts[0]["recipe"], "original")
+
+
 class SdkViewTests(unittest.TestCase):
     def test_extra_build_tools_cannot_override_the_pin_and_shared_sdk_is_unchanged(self):
         helper = module("sdk_view", "android-sdk-view.py")

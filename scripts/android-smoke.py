@@ -17,6 +17,68 @@ import time
 APP = "org.ripleyeldridge.rustymusicsheets.smoketest"
 HELPER = "org.ripleyeldridge.rustymusicsheets.fixture"
 PACKAGES = (APP, HELPER)
+EXPECTED_DUPLICATE = {"imported": 0, "duplicates": 1, "removed": 0, "failed": 0}
+
+
+def parse_import_summary(text):
+    # Normalize only standalone count glyphs, never words or arbitrary numbers.
+    count = r"(?:0|[1-9][0-9]*|[oOilL])"
+    separator = r"[\s·•:;,.|—–-]*"
+    fields = [
+        rf"(?P<{name}>{count})\s*{label}\b"
+        for name, label in (
+            ("imported", "imported"), ("duplicates", "duplicates?"),
+            ("removed", "removed"), ("failed", "failed"),
+        )
+    ]
+    matches = list(re.finditer(r"(?<![a-z0-9])" + separator.join(fields), text, re.I))
+    if len(matches) != 1:
+        return None
+    def number(value):
+        return 0 if value.lower() == "o" else 1 if value.lower() in ("i", "l") else int(value)
+    try:
+        return {name: number(value) for name, value in matches[0].groupdict().items()}
+    except ValueError:
+        return None
+
+
+def recognize_import_summary(image, prefix):
+    """Try untouched pixels before enhancement; keep text from every attempt."""
+    attempts = []
+    last = None
+    for recipe in ("original", "enlarged", "threshold"):
+        source = image
+        if recipe != "original":
+            source = prefix.with_name(prefix.name + "-" + recipe + ".png")
+            options = ["-resize", "400%"] if recipe == "enlarged" else [
+                "-channel", "R", "-separate", "-threshold", "30%", "-negate", "-resize", "400%",
+            ]
+            subprocess.run(["convert", str(image), *options, str(source)], check=True, timeout=15)
+        text = subprocess.check_output(
+            ["tesseract", str(source), "stdout", "-l", "eng", "--psm", "11"],
+            text=True, env=dict(os.environ, OMP_THREAD_LIMIT="1"),
+            stderr=subprocess.DEVNULL, timeout=15,
+        )
+        transcript = prefix.with_name(prefix.name + "-" + recipe + ".txt")
+        transcript.write_text(text)
+        summary = parse_import_summary(text)
+        attempts.append({"recipe": recipe, "text_file": transcript.name, "summary": summary})
+        if summary is not None:
+            last = summary
+        if summary == EXPECTED_DUPLICATE:
+            return summary, attempts
+    return last, attempts
+
+
+def wait_for_duplicate(probe, description, seconds=15, clock=time.monotonic, sleep=time.sleep):
+    deadline = clock() + seconds
+    last = None
+    while clock() < deadline:
+        last = probe()
+        if last == EXPECTED_DUPLICATE:
+            return last
+        sleep(0.5)
+    raise AssertionError(f"{description} has no confirmed duplicate completion summary; last counters: {last}")
 
 
 def window_state(policy, displays, process):
@@ -110,6 +172,7 @@ def main():
         "fixtures_sha256": hashlib.sha256((args.fixtures / "fixtures.json").read_bytes()).hexdigest(),
         "launches": [],
         "readiness": [],
+        "visual_status": [],
     }
 
     def stop():
@@ -209,11 +272,16 @@ def main():
         assert centers[0] < centers[1] < centers[2], "Rendered fiducial ordering is incorrect"
         return {"colored_pixels": counts, "centers_x": centers}
 
-    def visible_result(name):
-        image = screenshot(name + "-result.png")
-        locator = args.output / (name + "-result-ocr.png")
-        subprocess.run(["convert", str(image), "-channel", "R", "-separate", "-threshold", "30%", "-negate", "-resize", "400%", str(locator)], check=True)
-        return subprocess.check_output(["tesseract", str(locator), "stdout", "--psm", "11"], text=True, env=dict(os.environ, OMP_THREAD_LIMIT="1"), stderr=subprocess.DEVNULL).lower()
+    def confirmed_duplicate(name):
+        shots = []
+        report["visual_status"].append({"stage": name, "shots": shots})
+        def probe():
+            prefix = args.output / f"{name}-result-{len(shots)}"
+            image = screenshot(prefix.name + ".png")
+            summary, attempts = recognize_import_summary(image, prefix)
+            shots.append({"image": image.name, "attempts": attempts})
+            return summary
+        return wait_for_duplicate(probe, name)
 
     try:
         for name, package in (("smoke-app.apk", APP), ("fixture-provider.apk", HELPER)):
@@ -239,11 +307,11 @@ def main():
         assert len(rows) == 3 and ("Étude Unicode", hashes["Étude Unicode.png"], 1) in rows, rows
         report["cases"].append({"fixture": "unicode", "result": "Unicode metadata imported"})
         launch_fixture("png", 3)
-        assert re.search(r"\b1\s+dupl", visible_result("duplicate")), "Duplicate import has not visibly completed"
+        confirmed_duplicate("duplicate")
         assert len(snapshot("duplicate-database")) == 3
         report["cases"].append({"fixture": "duplicate", "result": "deduplicated"})
         launch_fixture("pipe", 3)
-        assert re.search(r"\b1\s+dupl", visible_result("pipe")), "Pipe import has not visibly completed"
+        confirmed_duplicate("pipe")
         assert len(snapshot("pipe-database")) == 3
         report["cases"].append({"fixture": "pipe", "result": "non-seekable descriptor imported and deduplicated"})
         failures = {

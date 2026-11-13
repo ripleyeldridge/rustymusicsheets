@@ -90,6 +90,17 @@ library/reader/error screenshots, and scoped app.log on failures. A passing
 process alone is not a rendering assertion. Failure evidence remains
 incomplete and must not be promoted to a successful device result.
 See android/CI.txt for the corresponding PR/manual Actions jobs.
+Duplicate/pipe completion requires the entire visible summary: zero
+imported, one duplicate, zero removed, and zero failed. Recognition tries
+untouched pixels first, then unthresholded enlargement and a thresholded
+fallback; single standalone O/0 and I/i/l/1 count glyphs are normalized.
+Partial, multiple/ambiguous, or wrong-counter summaries do not pass. The
+runner polls briefly for completion and retains each image, OCR transcript
+and parsed result in visual_status evidence. Existing DB/integrity checks
+still run after visual confirmation.
+scripts/tests/fixtures/duplicate-status-ci.png is a cropped, generated-only
+status footer from CI run 43464956647, not a personal document or phone
+screenshot. It covers the false-negative introduced by hard thresholding.
 
 Readiness failures preserve am-start results, a bounded history of sanitized
 focus-component/lock/PID observations, the last state, and app-PID logcat
