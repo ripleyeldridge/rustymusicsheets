@@ -43,13 +43,23 @@ See [Scan, review, apply](#instrument-detection-scan-review-apply) for the workf
 
 ## Install
 ### Option 1: Ubuntu/Debian package
-If a compatible `.deb` is available in [Releases](https://github.com/ripleyeldridge/rustymusicsheets/releases), download it and install it using APT so dependencies are resolved:
+Download the current native package:
+
+**[RustyMusicSheets 0.2.1-2 — Ubuntu 26.10 amd64 (.deb)](https://github.com/ripleyeldridge/rustymusicsheets/raw/refs/heads/main/packages/rustymusicsheets_0.2.1-2_amd64.deb)**
+
+Then install it using APT so dependencies are resolved:
 
 ```bash
 sudo apt install ./rustymusicsheets_0.2.1-2_amd64.deb
 ```
 
-Use the actual filename of the package you downloaded. If no binary has been published, build from source below. Generated packages live in `dist/` locally and are not tracked in Git.
+For an optional integrity check, download [SHA256SUMS](https://github.com/ripleyeldridge/rustymusicsheets/raw/refs/heads/main/packages/SHA256SUMS) into the same directory as the `.deb` and run:
+
+```bash
+sha256sum -c SHA256SUMS
+```
+
+Development builds are generated in the ignored `dist/` directory. The selected downloadable build and checksum are tracked under [`packages/`](packages/). Build from source below if this package does not match your system.
 
 **Compatibility matters:** the current native amd64 build targets the confirmed **Ubuntu 26.10 x86_64** reader and requires **glibc 2.43 or newer**. It is **not compatible with Ubuntu 22.04/24.04**. A `.deb` is not a universal Linux binary: use a matching package or build on your target distribution. Do not force-install incompatible packages or replace system glibc.
 
