@@ -1,232 +1,194 @@
 use super::*;
-use std::{
-    io::{BufRead, BufReader},
-    process::{Child, Command, Stdio},
-    sync::atomic::AtomicU32,
-};
+use crossbeam_channel::{unbounded, Sender};
+use std::thread::ThreadId;
 
-struct TestBus {
-    daemon: Child,
-    address: String,
+#[derive(Debug, PartialEq, Eq)]
+enum Event {
+    Acquire(ThreadId),
+    Release(ThreadId),
+    Cancel(ThreadId),
 }
 
-impl TestBus {
-    fn new() -> Self {
-        let mut daemon = Command::new("dbus-daemon")
-            .args(["--session", "--nofork", "--print-address=1"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("Tests require dbus-daemon");
-        let mut address = String::new();
-        BufReader::new(daemon.stdout.take().unwrap())
-            .read_line(&mut address)
-            .unwrap();
-        Self {
-            daemon,
-            address: address.trim().to_owned(),
-        }
-    }
+struct FakeBackend {
+    events: Sender<Event>,
+    wait_for_cancel: bool,
+    fail: bool,
+}
 
-    fn client(&self) -> Connection {
-        async_io::block_on(
-            zbus::connection::Builder::address(self.address.as_str())
-                .unwrap()
-                .build(),
-        )
-        .unwrap()
+struct FakeInhibition {
+    events: Sender<Event>,
+    status: PowerStatus,
+}
+
+impl Inhibition for FakeInhibition {
+    fn status(&self) -> PowerStatus {
+        self.status.clone()
     }
 }
 
-impl Drop for TestBus {
+impl Drop for FakeInhibition {
     fn drop(&mut self) {
-        let _ = self.daemon.kill();
-        let _ = self.daemon.wait();
+        let _ = self
+            .events
+            .send(Event::Release(std::thread::current().id()));
     }
 }
 
-struct Gnome {
-    flags: Arc<AtomicU32>,
-    released: Arc<AtomicU32>,
-}
-
-#[zbus::interface(name = "org.gnome.SessionManager")]
-impl Gnome {
-    fn inhibit(&self, app: &str, xid: u32, reason: &str, flags: u32) -> u32 {
-        assert_eq!(app, APP);
-        assert_eq!(xid, 0);
-        assert_eq!(reason, REASON);
-        self.flags.store(flags, Ordering::SeqCst);
-        42
-    }
-    fn uninhibit(&self, cookie: u32) {
-        assert_eq!(cookie, 42);
-        self.released.fetch_add(1, Ordering::SeqCst);
-    }
-}
-
-struct Kde {
-    flags: Arc<AtomicU32>,
-    released: Arc<AtomicU32>,
-}
-
-#[zbus::interface(name = "org.kde.Solid.PowerManagement.PolicyAgent")]
-impl Kde {
-    fn add_inhibition(&self, flags: u32, app: &str, reason: &str) -> u32 {
-        assert_eq!(app, APP);
-        assert_eq!(reason, REASON);
-        self.flags.store(flags, Ordering::SeqCst);
-        23
-    }
-    fn release_inhibition(&self, cookie: u32) {
-        assert_eq!(cookie, 23);
-        self.released.fetch_add(1, Ordering::SeqCst);
-    }
-}
-
-struct ScreenSaver(Arc<AtomicU32>);
-
-#[zbus::interface(name = "org.freedesktop.ScreenSaver")]
-impl ScreenSaver {
-    fn inhibit(&self, app: &str, reason: &str) -> u32 {
-        assert_eq!(app, APP);
-        assert_eq!(reason, REASON);
-        self.0.fetch_add(1, Ordering::SeqCst);
-        19
-    }
-    #[zbus(name = "UnInhibit")]
-    fn uninhibit(&self, cookie: u32) {
-        assert_eq!(cookie, 19);
-        self.0.fetch_add(1, Ordering::SeqCst);
-    }
-}
-
-struct Power(Arc<AtomicU32>);
-
-#[zbus::interface(name = "org.freedesktop.PowerManagement.Inhibit")]
-impl Power {
-    fn inhibit(&self, app: &str, reason: &str) -> u32 {
-        assert_eq!(app, APP);
-        assert_eq!(reason, REASON);
-        self.0.fetch_add(1, Ordering::SeqCst);
-        29
-    }
-    #[zbus(name = "UnInhibit")]
-    fn uninhibit(&self, cookie: u32) {
-        assert_eq!(cookie, 29);
-        self.0.fetch_add(1, Ordering::SeqCst);
-    }
-}
-
-#[test]
-fn gnome_requests_idle_and_suspend_and_releases_its_cookie() {
-    let bus = TestBus::new();
-    let flags = Arc::new(AtomicU32::new(0));
-    let released = Arc::new(AtomicU32::new(0));
-    let _server = zbus::blocking::connection::Builder::address(bus.address.as_str())
-        .unwrap()
-        .name(GNOME.destination)
-        .unwrap()
-        .serve_at(
-            GNOME.path,
-            Gnome {
-                flags: flags.clone(),
-                released: released.clone(),
+impl PowerBackend for FakeBackend {
+    fn acquire(&mut self, cancellation: &Cancellation) -> Option<Box<dyn Inhibition>> {
+        let thread = std::thread::current().id();
+        self.events.send(Event::Acquire(thread)).unwrap();
+        if self.wait_for_cancel {
+            while !cancellation.cancelled() {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            self.events.send(Event::Cancel(thread)).unwrap();
+            return None;
+        }
+        Some(Box::new(FakeInhibition {
+            events: self.events.clone(),
+            status: PowerStatus {
+                requested: true,
+                screen: !self.fail,
+                suspend: !self.fail,
+                message: if self.fail {
+                    "test failure"
+                } else {
+                    "test protection"
+                }
+                .into(),
             },
-        )
-        .unwrap()
-        .build()
-        .unwrap();
-    let mut locks = Inhibitors::default();
-    locks.status.requested = true;
-    async_io::block_on(locks.session(bus.client()));
-    assert_eq!(flags.load(Ordering::SeqCst), 12);
-    assert!(locks.status.complete());
-    assert_eq!(released.load(Ordering::SeqCst), 0);
-    async_io::block_on(locks.release());
-    assert_eq!(released.load(Ordering::SeqCst), 1);
+        }))
+    }
 }
 
-#[test]
-fn kde_requests_dimming_and_suspend_plus_screen_lock_inhibition() {
-    let bus = TestBus::new();
-    let flags = Arc::new(AtomicU32::new(0));
-    let released = Arc::new(AtomicU32::new(0));
-    let screensaver = Arc::new(AtomicU32::new(0));
-    let _server = zbus::blocking::connection::Builder::address(bus.address.as_str())
-        .unwrap()
-        .name(KDE.destination)
-        .unwrap()
-        .name(SCREENSAVER.destination)
-        .unwrap()
-        .serve_at(
-            KDE.path,
-            Kde {
-                flags: flags.clone(),
-                released: released.clone(),
-            },
-        )
-        .unwrap()
-        .serve_at(SCREENSAVER.path, ScreenSaver(screensaver.clone()))
-        .unwrap()
-        .build()
-        .unwrap();
-    let mut locks = Inhibitors::default();
-    locks.status.requested = true;
-    async_io::block_on(locks.session(bus.client()));
-    assert!(locks.status.complete());
-    assert_eq!(flags.load(Ordering::SeqCst), 5);
-    assert_eq!(screensaver.load(Ordering::SeqCst), 1);
-    async_io::block_on(locks.release());
-    assert_eq!(released.load(Ordering::SeqCst), 1);
-    assert_eq!(screensaver.load(Ordering::SeqCst), 2);
+fn backend() -> (FakeBackend, Receiver<Event>) {
+    let (events, receiver) = unbounded();
+    (
+        FakeBackend {
+            events,
+            wait_for_cancel: false,
+            fail: false,
+        },
+        receiver,
+    )
 }
 
-#[test]
-fn freedesktop_fallback_handles_both_locks_and_missing_services() {
-    let bus = TestBus::new();
-    let screensaver = Arc::new(AtomicU32::new(0));
-    let power = Arc::new(AtomicU32::new(0));
-    let server = zbus::blocking::connection::Builder::address(bus.address.as_str())
-        .unwrap()
-        .name(SCREENSAVER.destination)
-        .unwrap()
-        .name(POWER.destination)
-        .unwrap()
-        .serve_at(SCREENSAVER.path, ScreenSaver(screensaver.clone()))
-        .unwrap()
-        .serve_at(POWER.path, Power(power.clone()))
-        .unwrap()
-        .build()
-        .unwrap();
-    let mut locks = Inhibitors::default();
-    locks.status.requested = true;
-    async_io::block_on(locks.session(bus.client()));
-    assert!(locks.status.complete());
-    async_io::block_on(locks.release());
-    assert_eq!(screensaver.load(Ordering::SeqCst), 2);
-    assert_eq!(power.load(Ordering::SeqCst), 2);
-    drop(server);
-    let mut missing = Inhibitors::default();
-    async_io::block_on(missing.session(bus.client()));
-    assert!(!missing.status.screen);
-    assert!(!missing.status.suspend);
-    assert!(missing.cookies.is_empty());
+fn next_event(events: &Receiver<Event>) -> Event {
+    events.recv_timeout(Duration::from_secs(5)).unwrap()
+}
+
+fn next_status(worker: &KeepAwake) -> PowerStatus {
+    worker.updates.recv_timeout(Duration::from_secs(5)).unwrap()
 }
 
 #[test]
 fn disabled_worker_does_not_acquire_power_locks() {
-    let worker = KeepAwake::new(false, || {});
-    let status = worker.updates.recv_timeout(Duration::from_secs(2)).unwrap();
-    assert!(!status.requested);
-    assert!(!status.screen);
-    assert!(!status.suspend);
+    let (backend, events) = backend();
+    let worker = KeepAwake::with_backend(false, || {}, backend);
+    assert!(!next_status(&worker).requested);
     worker.set_enabled(false);
-    assert!(
-        !worker
-            .updates
-            .recv_timeout(Duration::from_secs(2))
-            .unwrap()
-            .requested
+    assert!(!next_status(&worker).requested);
+    drop(worker);
+    assert!(events.try_recv().is_err());
+}
+
+#[test]
+fn disable_retry_and_shutdown_release_on_the_acquiring_thread() {
+    let (backend, events) = backend();
+    let worker = KeepAwake::with_backend(true, || {}, backend);
+    let Event::Acquire(thread) = next_event(&events) else {
+        panic!("Expected acquisition")
+    };
+    assert_ne!(thread, std::thread::current().id());
+    assert!(next_status(&worker).complete());
+    worker.set_enabled(true);
+    assert_eq!(next_event(&events), Event::Release(thread));
+    assert_eq!(next_event(&events), Event::Acquire(thread));
+    assert!(next_status(&worker).complete());
+    worker.set_enabled(false);
+    assert_eq!(next_event(&events), Event::Release(thread));
+    assert!(!next_status(&worker).requested);
+    worker.set_enabled(true);
+    assert_eq!(next_event(&events), Event::Acquire(thread));
+    assert!(next_status(&worker).complete());
+    drop(worker);
+    assert_eq!(next_event(&events), Event::Release(thread));
+    assert!(events.try_recv().is_err());
+}
+
+#[test]
+fn cancellation_during_acquisition_never_publishes_active_protection() {
+    let (mut backend, events) = backend();
+    backend.wait_for_cancel = true;
+    let worker = KeepAwake::with_backend(true, || {}, backend);
+    let Event::Acquire(thread) = next_event(&events) else {
+        panic!("Expected acquisition")
+    };
+    worker.set_enabled(false);
+    assert_eq!(next_event(&events), Event::Cancel(thread));
+    let status = next_status(&worker);
+    assert!(!status.requested && !status.complete());
+    drop(worker);
+    assert!(events.try_recv().is_err());
+}
+
+#[test]
+fn dropping_worker_cancels_an_inflight_request() {
+    let (mut backend, events) = backend();
+    backend.wait_for_cancel = true;
+    let worker = KeepAwake::with_backend(true, || {}, backend);
+    let Event::Acquire(thread) = next_event(&events) else {
+        panic!("Expected acquisition")
+    };
+    drop(worker);
+    assert_eq!(next_event(&events), Event::Cancel(thread));
+    assert!(events.try_recv().is_err());
+}
+
+#[test]
+fn failed_backend_reports_failure_and_can_be_disabled() {
+    let (mut backend, events) = backend();
+    backend.fail = true;
+    let worker = KeepAwake::with_backend(true, || {}, backend);
+    let Event::Acquire(thread) = next_event(&events) else {
+        panic!("Expected acquisition")
+    };
+    let status = next_status(&worker);
+    assert!(status.requested && !status.complete());
+    assert_eq!(status.message, "test failure");
+    worker.set_enabled(false);
+    assert_eq!(next_event(&events), Event::Release(thread));
+    assert!(!next_status(&worker).requested);
+}
+
+#[test]
+fn slow_ui_still_receives_the_latest_status() {
+    let (backend, _events) = backend();
+    let (repaint, repainted) = unbounded();
+    let worker = KeepAwake::with_backend(
+        false,
+        move || {
+            repaint.send(()).unwrap();
+        },
+        backend,
     );
+    repainted.recv_timeout(Duration::from_secs(5)).unwrap();
+    for index in 0..20 {
+        worker.set_enabled(index % 2 == 0);
+        repainted.recv_timeout(Duration::from_secs(5)).unwrap();
+    }
+    let statuses: Vec<_> = worker.updates.try_iter().collect();
+    assert!(!statuses.is_empty());
+    assert!(!statuses.last().unwrap().requested);
+    assert!(statuses.len() <= 8);
+}
+
+#[test]
+fn unsupported_backend_never_claims_protection() {
+    let worker = KeepAwake::with_backend(true, || {}, unsupported::Backend);
+    let status = next_status(&worker);
+    assert!(status.requested);
+    assert!(!status.screen && !status.suspend && !status.complete());
+    assert!(status.message.contains("not implemented"));
 }

@@ -1,12 +1,8 @@
 use anyhow::{bail, Context, Result};
-use std::{
-    fs::File,
-    io::Read,
-    path::Path,
-    process::{Command, Stdio},
-    sync::atomic::{AtomicBool, Ordering},
-    time::{Duration, Instant},
-};
+#[cfg(not(target_os = "android"))]
+use std::{fs::File, io::Read, process::Stdio, sync::atomic::Ordering, time::Instant};
+use std::{path::Path, process::Command, sync::atomic::AtomicBool, time::Duration};
+#[cfg(not(target_os = "android"))]
 use wait_timeout::ChildExt;
 
 #[derive(Debug)]
@@ -15,6 +11,7 @@ pub struct PdfInfo {
     pub author: String,
 }
 
+#[cfg(not(target_os = "android"))]
 pub fn run(command: &mut Command, cancel: &AtomicBool, timeout: Duration) -> Result<Vec<u8>> {
     let mut stdout = tempfile::tempfile()?;
     let mut stderr = tempfile::tempfile()?;
@@ -59,6 +56,12 @@ pub fn run(command: &mut Command, cancel: &AtomicBool, timeout: Duration) -> Res
     read_limited(&mut stdout)
 }
 
+#[cfg(target_os = "android")]
+pub fn run(_command: &mut Command, _cancel: &AtomicBool, _timeout: Duration) -> Result<Vec<u8>> {
+    bail!("PDF/OCR helper execution is unavailable in the Android foundation; an embedded Android PDF/OCR backend is still required")
+}
+
+#[cfg(not(target_os = "android"))]
 fn read_limited(file: &mut File) -> Result<Vec<u8>> {
     use std::io::{Seek, SeekFrom};
     file.seek(SeekFrom::Start(0))?;

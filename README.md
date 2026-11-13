@@ -2,7 +2,15 @@
 A native Linux sheet-music library and performance reader, written in Rust with egui.
 **A headline feature: offline instrument detection that helps turn a folder of scores into an instrument-searchable library—even when the parts are scanned PDFs or standalone images.**
 
-**Version:** 0.2.1 · **Author:** [Ripley Eldridge](https://github.com/ripleyeldridge) · **Release year:** 2026 · **License:** [MIT](LICENSE)
+**Version:** 0.2.2 preview · **Author:** [Ripley Eldridge](https://github.com/ripleyeldridge) · **Release year:** 2026 · **License:** [MIT](LICENSE)
+
+## 0.2.2 preview downloads
+The [0.2.2 prerelease](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.2.2) includes:
+- [Linux amd64 `.deb`](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.2.2/rustymusicsheets_0.2.2-1_amd64.deb), requiring glibc 2.43 or newer.
+- [Experimental Android ARM64 debug APK](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.2.2/rustymusicsheets_0.2.2-foundation_arm64_debug.apk), minimum API 26 and target API 36.
+- [SHA256SUMS](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.2.2/SHA256SUMS) for both downloads.
+
+**Android is a foundation preview, not a full PDF sheet-music release.** It supports the initial Open with PNG/JPEG import path, local metadata and offline Help. Native PDF/OCR, the in-app picker, document-tree watching, and keep-awake integration are not implemented. Startup was checked on a Pixel 8 Pro; the user confirmed the inset-corrected layout works. Broader import/device testing is still needed. This APK uses a development/debug signature and is not a production-signed Play Store build. The existing [stable Linux 0.2.1 release](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.2.1) remains available.
 
 ## Why this exists
 > I vibe-coded the fuck out of this because I couldn't find a suitable Linux sheet-music reader for what I needed and I have a full-time coding job so I don't have time to write the whole thing myself.
@@ -43,7 +51,7 @@ See [Scan, review, apply](#instrument-detection-scan-review-apply) for the workf
 
 ## Install
 ### Option 1: Ubuntu/Debian package
-Download the current native package:
+Download the existing stable native package (or use the preview downloads above):
 
 **[RustyMusicSheets 0.2.1-2 — Ubuntu 26.10 amd64 (.deb)](https://github.com/ripleyeldridge/rustymusicsheets/raw/refs/heads/main/packages/rustymusicsheets_0.2.1-2_amd64.deb)**
 
@@ -91,7 +99,7 @@ If you already have the repository, skip cloning and build from your existing ch
 To build a native Debian package without installing it or requiring root:
 
 ```bash
-python3 scripts/build-deb.py --revision 2
+python3 scripts/build-deb.py
 ```
 
 Packaging also requires Python 3.9+, dpkg-dev, dpkg-deb, and binutils. The resulting package is written to `dist/`.
@@ -170,6 +178,22 @@ Not implemented yet: annotations, crop/rotation/page reordering, in-score links/
 OCR is conservative label detection, not musical-notation recognition. Faint scans, handwriting, uncommon abbreviations, and labels outside the inspected regions may need manual entry. Physical pedals and touchscreens require device-specific testing. No compatibility is claimed for MobileSheets proprietary formats.
 
 ## Development checks
+### Platform backends
+File selection and keep-awake behavior use shared interfaces with separate platform backends:
+- **Linux:** Zenity file/folder dialogs and the existing GNOME/KDE/freedesktop/logind power inhibitors.
+- **Windows:** native `rfd` file/folder dialogs and worker-thread-scoped `SetThreadExecutionState` requests for display timeout and idle sleep. Windows screen savers and user-forced sleep are not blocked.
+- **Other platforms:** explicit unsupported-status/error messages, with pasted paths and drag-and-drop remaining available for file selection.
+
+Picker results use native paths, with cancellation separated from reported errors. Power guards release their requests when disabled, replaced/retried, cancelled, or shut down; Windows acquire/release operations stay on the same worker thread. Linux-only D-Bus dependencies are excluded from Windows builds.
+
+**This refactor is not a Windows release:** the published download above is still Linux-only. A complete Windows package still needs its PDF/OCR helper tools, DLLs/language data, a native build toolchain, and Windows runtime testing. Module cross-compilation does not establish runtime compatibility.
+
+### Android foundation
+The source now includes a NativeActivity entry point and a document-access layer that distinguishes desktop paths from Android `content://` URIs. An initial Android **Open with** PNG/JPEG can be read through `ContentResolver`, staged privately, and passed to the existing importer without treating the URI as a filename.
+
+This is an **experimental Android prerelease**, not desktop feature parity. Native PDF/OCR, the in-app Android picker, document-tree watching, and Android keep-awake integration remain incomplete. The ARM64 debug APK builds using `scripts/build-android.sh`; signature/manifest/16 KiB alignment checks pass with `scripts/verify-android-apk.py`. Startup was checked on a Pixel 8 Pro (API 37), and the user confirmed the safe-area layout works. Broader rendering, import/provider, and device testing remains pending. See [Android setup and implementation boundaries](android/README.txt) before attempting a build or installation.
+
+### Validation commands
 ```bash
 cargo fmt --check
 cargo test --locked

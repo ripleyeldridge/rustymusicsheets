@@ -227,6 +227,10 @@ Inhibitors are released when disabled, on normal exit, or when the process dies.
 
 Desktop policy, forced suspend, lid handling, and critical-battery safety can override inhibitors. This does not bypass mandatory system policy. Check your reader's actual power behavior before performance use.
 
+Power requests use platform backends: Linux desktop/logind inhibitors, or Windows thread-scoped display/idle-sleep requests. Windows requests do not stop screen savers or user-forced sleep. Unsupported platforms report protection unavailable. Native Windows dialogs are implemented separately from Linux Zenity; this does not mean a complete Windows release with PDF/OCR tools has been packaged or runtime-tested.
+
+The experimental Android foundation includes a NativeActivity entry, system-bar/cutout/keyboard safe-area handling, and a content-URI resolver for an initial Open with PNG/JPEG import into private storage. It does not have desktop feature parity: in-app picking, document-tree watching, keep-screen-on, and native PDF/OCR are not yet implemented. See android/README.txt in the source for setup and test boundaries.
+
 Settings also shows the active music folder and metadata directory. Display-name options are configured and saved separately in Library options.
 
 @backups|Settings and data|Storage, backups, and migration|sqlite database xdg config restore wal preferences location

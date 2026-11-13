@@ -28,6 +28,20 @@ pub enum Outcome {
     Duplicate,
 }
 
+pub fn import_document(
+    source: &crate::source::DocumentRef,
+    access: &dyn crate::source::DocumentAccess,
+    paths: &Paths,
+    db: &Library,
+    cancel: &AtomicBool,
+) -> Result<Outcome> {
+    if let Some(path) = source.as_path() {
+        return import_file(path, paths, db, cancel);
+    }
+    let staged = crate::source::stage(source, access, &paths.cache, cancel)?;
+    import_file(&staged.path, paths, db, cancel)
+}
+
 pub fn import_file(
     path: &Path,
     paths: &Paths,

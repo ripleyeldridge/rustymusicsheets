@@ -111,6 +111,21 @@ pub struct Paths {
 }
 
 impl Paths {
+    /// Android-provided private directories, never guessed from HOME/XDG.
+    pub fn app_private(files: &std::path::Path, cache: &std::path::Path) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            files.is_absolute() && cache.is_absolute(),
+            "App-private paths must be absolute"
+        );
+        let paths = Self {
+            data: files.join("library"),
+            config: files.join("config"),
+            cache: cache.join("rustymusicsheets"),
+            music: None,
+        };
+        paths.create()?;
+        Ok(paths)
+    }
     pub fn discover() -> anyhow::Result<Self> {
         let dirs = directories::ProjectDirs::from("org", "RustyMusicSheets", "rustymusicsheets")
             .ok_or_else(|| anyhow::anyhow!("Cannot find your home/data directories"))?;

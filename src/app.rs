@@ -15,6 +15,7 @@ use crate::{
     reconcile,
     render::{PageKey, PageRenderer},
     setlists::SetlistManager,
+    source::{DocumentAccess, DocumentRef, LocalDocuments},
     storage::Library,
     text_input::{ImeCompatibility, TextEditFocusExt},
     watch::FolderWatcher,
@@ -58,6 +59,7 @@ enum ImportMessage {
 }
 
 pub struct MusicApp {
+    document_access: Arc<dyn DocumentAccess>,
     paths: Paths,
     db: Library,
     prefs: Preferences,
@@ -138,6 +140,7 @@ impl MusicApp {
             style.spacing.button_padding = Vec2::new(10.0, 7.0);
         });
         Ok(Self {
+            document_access: Arc::new(LocalDocuments),
             library_folder_input: picker::initial_directory(
                 &paths.score_dir(),
                 &picker::home_directory(),
@@ -209,6 +212,24 @@ impl MusicApp {
             auto_detection_pending: std::collections::HashSet::new(),
             help: Help::default(),
         })
+    }
+
+    pub fn new_mobile(
+        cc: &eframe::CreationContext<'_>,
+        paths: Paths,
+        access: Arc<dyn DocumentAccess>,
+        initial: Result<Option<DocumentRef>>,
+    ) -> Result<Self> {
+        let mut app = Self::from_context(&cc.egui_ctx, paths, None)?;
+        app.document_access = access;
+        app.show_options = false;
+        app.status = "Android foundation: open a PNG/JPEG using your document app's Open with action. Native PDF/OCR and the in-app Android picker are not implemented yet.".into();
+        match initial {
+            Ok(Some(document)) => app.start_document_import(document, &cc.egui_ctx),
+            Ok(None) => {}
+            Err(error) => app.error = Some(format!("Cannot open launch document: {error:#}")),
+        }
+        Ok(app)
     }
 
     fn result<T>(&mut self, result: Result<T>) -> Option<T> {
@@ -415,6 +436,47 @@ impl MusicApp {
         });
     }
 
+    fn start_document_import(&mut self, source: DocumentRef, ctx: &egui::Context) {
+        if self.import_task.is_some() || self.detection_job.is_some() {
+            self.status = "Wait for the current library task before importing a document.".into();
+            return;
+        }
+        self.watcher.take();
+        let (tx, rx) = bounded(8);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let stopping = cancel.clone();
+        let paths = self.paths.clone();
+        let access = self.document_access.clone();
+        let repaint = ctx.clone();
+        let worker = std::thread::spawn(move || {
+            let result = (|| -> Result<Report> {
+                let db = Library::open(&paths)?;
+                let outcome =
+                    import::import_document(&source, access.as_ref(), &paths, &db, &stopping)?;
+                Ok(Report {
+                    imported: usize::from(outcome == import::Outcome::Imported),
+                    skipped: usize::from(outcome == import::Outcome::Duplicate),
+                    ..Default::default()
+                })
+            })();
+            let result = match result {
+                Err(_) if stopping.load(Ordering::Relaxed) => Ok(Report {
+                    cancelled: true,
+                    ..Default::default()
+                }),
+                result => result.map_err(|error| format!("{error:#}")),
+            };
+            let _ = tx.send(ImportMessage::Done(result));
+            repaint.request_repaint();
+        });
+        self.report = Some(Report::default());
+        self.import_task = Some(ImportTask {
+            rx,
+            cancel,
+            worker: Some(worker),
+        });
+    }
+
     fn start_watching(&mut self, ctx: &egui::Context) {
         self.watcher.take();
         if self.paths.music.is_some() {
@@ -542,22 +604,12 @@ impl MusicApp {
         let home = picker::home_directory();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let result = (|| -> Result<Option<PathBuf>> {
-                let mut command = picker::command(folder, &preferred, &home);
-                let output = command.output().map_err(|e| {
-                    anyhow::anyhow!("File picker unavailable ({e}); paste a path instead")
-                })?;
-                if !output.status.success() {
-                    return Ok(None);
-                }
-                use std::os::unix::ffi::OsStringExt;
-                let mut bytes = output.stdout;
-                if bytes.last() == Some(&b'\n') {
-                    bytes.pop();
-                }
-                Ok(Some(PathBuf::from(std::ffi::OsString::from_vec(bytes))))
-            })()
-            .map_err(|e| format!("{e:#}"));
+            let kind = if folder {
+                picker::SelectionKind::Folder
+            } else {
+                picker::SelectionKind::Score
+            };
+            let result = picker::select(kind, &preferred, &home).map_err(|e| format!("{e:#}"));
             let _ = tx.send(result);
             ctx.request_repaint();
         });
@@ -2874,6 +2926,57 @@ mod tests {
         );
         app.query = "Tenor".into();
         assert_eq!(app.visible_scores()[0].id, b);
+    }
+
+    #[test]
+    fn external_document_import_runs_in_background_without_losing_reader_or_draft() {
+        struct Documents(Vec<u8>);
+        impl DocumentAccess for Documents {
+            fn metadata(&self, _source: &DocumentRef) -> Result<crate::source::Metadata> {
+                Ok(crate::source::Metadata {
+                    display_name: Some("External cello.png".into()),
+                    mime_type: Some("image/png".into()),
+                    size: Some(self.0.len() as u64),
+                })
+            }
+            fn open(&self, _source: &DocumentRef) -> Result<Box<dyn std::io::Read + Send>> {
+                Ok(Box::new(std::io::Cursor::new(self.0.clone())))
+            }
+        }
+        let (_root, ctx, mut app) = test_app();
+        let old = app
+            .db
+            .insert("existing-doc", "Existing score", 3, "")
+            .unwrap();
+        app.reload();
+        app.load_score(old, Some(1));
+        app.open_metadata_editor();
+        app.editing.as_mut().unwrap().notes = "Keep my draft".into();
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::RgbImage::from_pixel(40, 60, image::Rgb([255, 255, 255]))
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .unwrap();
+        app.document_access = Arc::new(Documents(bytes.into_inner()));
+        app.start_document_import(
+            DocumentRef::Content(
+                crate::source::ContentUri::parse("content://test.documents/document/score")
+                    .unwrap(),
+            ),
+            &ctx,
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while app.import_task.is_some() {
+            app.poll(&ctx);
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(app.error.is_none(), "{:?}", app.error);
+        assert_eq!(app.report.as_ref().unwrap().imported, 1);
+        assert_eq!(app.scores.len(), 2);
+        assert_eq!(app.reader.score_id, Some(old));
+        assert_eq!(app.reader.page, 1);
+        assert_eq!(app.editing.as_ref().unwrap().notes, "Keep my draft");
+        assert_eq!(std::fs::read_dir(&app.paths.cache).unwrap().count(), 0);
     }
 
     #[test]

@@ -111,7 +111,9 @@ def main():
             "    Library/Reader tabs, safe explicit Rescan cleanup with backups,\n"
             "    shared editors, offline instrument detection/review/filtering,\n"
             "    standalone PNG/JPEG score support, searchable offline Help/About,\n"
-            "    and large-library instrument detection warnings.\n\n"
+            "    large-library instrument detection warnings, platform-specific\n"
+            "    picker/power backends, and an experimental Android activity,\n"
+            "    content-URI import, and safe-area layout foundation.\n\n"
             f" -- Ripley Eldridge <noreply@rustymusicsheets.invalid>  {date}\n"
         )
         (docs / "changelog.Debian.gz").write_bytes(gzip.compress(changelog.encode(), mtime=0))

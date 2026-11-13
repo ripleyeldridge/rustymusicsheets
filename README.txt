@@ -1,4 +1,4 @@
-RustyMusicSheets 0.2.1
+RustyMusicSheets 0.2.2 preview
 ===================
 
 A native Rust desktop sheet-music library and PDF/image performance reader for Linux.
@@ -9,6 +9,19 @@ Build and run
 -------------
 Rust 1.86 or newer and Cargo are required. Dependencies are locked for the
 currently installed compiler. No compiler upgrade is needed for this version.
+The current source separates file selection and power management behind
+platform backends. Linux retains Zenity and D-Bus/logind behavior. Windows
+uses native file/folder dialogs and thread-scoped idle display/sleep requests;
+screen savers and user-forced sleep are not blocked. Other targets report
+unsupported functionality instead of trying Linux helper services.
+Cancellation remains distinct from reported picker errors; power requests
+are released on disable, replacement/retry, cancellation, and worker exit.
+These changes do not constitute a Windows release: the published .deb is
+Linux-only, and Windows PDF/OCR dependencies and runtime testing remain needed.
+Android NativeActivity and content-URI import groundwork is also available
+in the source; see android/README.txt for build setup and explicit limits.
+The initial Open with path supports PNG/JPEG private copies, not an Android
+release or native PDF/OCR parity.
 
     cargo build --locked --release
     ./target/release/rustymusicsheets
@@ -413,7 +426,7 @@ Build a native package without installing it or requiring root:
 
 This requires Python 3.9+, Cargo/Rust, dpkg-deb, dpkg-shlibdeps (dpkg-dev),
 and binutils. The result is written to:
-    dist/rustymusicsheets_0.2.1-1_<architecture>.deb
+    dist/rustymusicsheets_0.2.2-1_<architecture>.deb
 
 To package an already-built release executable:
     python3 scripts/build-deb.py --skip-build
@@ -436,7 +449,7 @@ Do not force-install it or replace the reader's glibc to bypass dependencies.
 
 After confirming compatibility, install the package with APT so dependencies
 are resolved:
-    sudo apt install ./dist/rustymusicsheets_0.2.1-1_amd64.deb
+    sudo apt install ./dist/rustymusicsheets_0.2.2-1_amd64.deb
 
 Replace the filename with the package matching your reader's architecture.
 Personal music-library data and preferences are not shipped in the package.
