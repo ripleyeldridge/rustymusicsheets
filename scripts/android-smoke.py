@@ -1,0 +1,359 @@
+#!/usr/bin/env python3
+"""Exercise only isolated test package IDs on an explicitly selected Android target."""
+import argparse
+import csv
+import hashlib
+import io
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import sqlite3
+import struct
+import subprocess
+import time
+
+APP = "org.ripleyeldridge.rustymusicsheets.smoketest"
+HELPER = "org.ripleyeldridge.rustymusicsheets.fixture"
+PACKAGES = (APP, HELPER)
+EXPECTED_DUPLICATE = {"imported": 0, "duplicates": 1, "removed": 0, "failed": 0}
+
+
+def parse_import_summary(text):
+    # Normalize only standalone count glyphs, never words or arbitrary numbers.
+    count = r"(?:0|[1-9][0-9]*|[oOilL])"
+    separator = r"[\s·•:;,.|—–-]*"
+    fields = [
+        rf"(?P<{name}>{count})\s*{label}\b"
+        for name, label in (
+            ("imported", "imported"), ("duplicates", "duplicates?"),
+            ("removed", "removed"), ("failed", "failed"),
+        )
+    ]
+    matches = list(re.finditer(r"(?<![a-z0-9])" + separator.join(fields), text, re.I))
+    if len(matches) != 1:
+        return None
+    def number(value):
+        return 0 if value.lower() == "o" else 1 if value.lower() in ("i", "l") else int(value)
+    try:
+        return {name: number(value) for name, value in matches[0].groupdict().items()}
+    except ValueError:
+        return None
+
+
+def recognize_import_summary(image, prefix):
+    """Try untouched pixels before enhancement; keep text from every attempt."""
+    attempts = []
+    last = None
+    for recipe in ("original", "enlarged", "threshold"):
+        source = image
+        if recipe != "original":
+            source = prefix.with_name(prefix.name + "-" + recipe + ".png")
+            options = ["-resize", "400%"] if recipe == "enlarged" else [
+                "-channel", "R", "-separate", "-threshold", "30%", "-negate", "-resize", "400%",
+            ]
+            subprocess.run(["convert", str(image), *options, str(source)], check=True, timeout=15)
+        text = subprocess.check_output(
+            ["tesseract", str(source), "stdout", "-l", "eng", "--psm", "11"],
+            text=True, env=dict(os.environ, OMP_THREAD_LIMIT="1"),
+            stderr=subprocess.DEVNULL, timeout=15,
+        )
+        transcript = prefix.with_name(prefix.name + "-" + recipe + ".txt")
+        transcript.write_text(text)
+        summary = parse_import_summary(text)
+        attempts.append({"recipe": recipe, "text_file": transcript.name, "summary": summary})
+        if summary is not None:
+            last = summary
+        if summary == EXPECTED_DUPLICATE:
+            return summary, attempts
+    return last, attempts
+
+
+def wait_for_duplicate(probe, description, seconds=15, clock=time.monotonic, sleep=time.sleep):
+    deadline = clock() + seconds
+    last = None
+    while clock() < deadline:
+        last = probe()
+        if last == EXPECTED_DUPLICATE:
+            return last
+        sleep(0.5)
+    raise AssertionError(f"{description} has no confirmed duplicate completion summary; last counters: {last}")
+
+
+def window_state(policy, displays, process):
+    """Keep component identities only, not raw window titles or global dumps."""
+    components = []
+    for line in displays.splitlines():
+        if "mCurrentFocus=" in line:
+            match = re.search(r"([A-Za-z0-9_.]+/[A-Za-z0-9_.$]+)", line)
+            if match:
+                components.append(match.group(1))
+    locked = bool(re.search(r"^\s*showing=true\s*$", policy, re.M)) or "inputRestricted=true" in policy
+    process = process.strip()
+    valid_pid = process if re.fullmatch(r"\d+", process) else None
+    return {
+        "pid": valid_pid,
+        "locked": locked,
+        "focus_reported": any("mCurrentFocus=" in line for line in displays.splitlines()),
+        "focused_components": components,
+        "ready": bool(valid_pid) and not locked and any(component.startswith(APP + "/") for component in components),
+    }
+
+
+def wait_for_readiness(query, description, seconds=60, sample=None, clock=time.monotonic, sleep=time.sleep):
+    deadline = clock() + seconds
+    stable = 0
+    last = {}
+    while clock() < deadline:
+        last = query()
+        if sample:
+            sample(last)
+        stable = stable + 1 if last.get("ready") else 0
+        if stable >= 2:
+            return last
+        sleep(0.25)
+    raise RuntimeError(f"Timed out waiting for foreground readiness: {description}; last state: {last}")
+
+
+def wait_for(action, description, seconds=25):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        result = action()
+        if result:
+            return result
+        time.sleep(0.25)
+    raise RuntimeError(f"Timed out: {description}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--serial", required=True)
+    parser.add_argument("--apks", type=Path, required=True)
+    parser.add_argument("--fixtures", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--keep-installed", action="store_true", help="Keep only the isolated test packages for diagnosis")
+    args = parser.parse_args()
+    if not __debug__:
+        parser.error("Smoke verification requires assertions; disable Python -O/PYTHONOPTIMIZE")
+    if not shutil.which("tesseract") or not shutil.which("convert"):
+        parser.error("Host Tesseract English and ImageMagick convert are required for render evidence")
+    sdk = Path(os.environ.get("ANDROID_HOME", Path.home() / "Android/Sdk"))
+    adb = sdk / "platform-tools/adb"
+    base = [str(adb), "-s", args.serial]
+    args.output.mkdir(parents=True, exist_ok=True)
+    if any(args.output.iterdir()):
+        parser.error("Choose an empty evidence output directory")
+
+    def call(*arguments, binary=False, check=True, timeout=45):
+        result = subprocess.run(base + list(arguments), check=check, capture_output=True, text=not binary, timeout=timeout)
+        return result.stdout
+
+    def shell(*arguments, check=True):
+        return call("shell", *arguments, check=check).strip()
+
+    assert shell("getprop", "sys.boot_completed") == "1", "Device is not booted"
+    assert int(shell("getprop", "ro.build.version.sdk")) >= 26
+    for package in PACKAGES:
+        assert not shell("pm", "path", package, check=False), f"Refusing to replace existing test app {package}; uninstall it explicitly first"
+    installed = []
+    report = {
+        "serial": args.serial,
+        "api": shell("getprop", "ro.build.version.sdk"),
+        "abis": shell("getprop", "ro.product.cpu.abilist"),
+        "page_size": shell("getconf", "PAGE_SIZE"),
+        "package": APP,
+        "cases": [],
+        "complete": False,
+        "inputs": {
+            name: hashlib.sha256((args.apks / name).read_bytes()).hexdigest()
+            for name in ("smoke-app.apk", "fixture-provider.apk")
+        },
+        "fixtures_sha256": hashlib.sha256((args.fixtures / "fixtures.json").read_bytes()).hexdigest(),
+        "launches": [],
+        "readiness": [],
+        "visual_status": [],
+    }
+
+    def stop():
+        shell("am", "force-stop", APP)
+
+    def pid():
+        return shell("pidof", APP, check=False)
+
+    def current_state():
+        try:
+            return window_state(
+                call("shell", "dumpsys", "window", "policy", timeout=5),
+                call("shell", "dumpsys", "window", "displays", timeout=5),
+                call("shell", "pidof", APP, check=False, timeout=5),
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            return {"ready": False, "adb_error": type(error).__name__}
+
+    def ready(name):
+        observations = []
+        entry = {"stage": name, "observations": observations}
+        report["readiness"].append(entry)
+        def record(state):
+            if state.get("pid"):
+                entry["last_pid"] = state["pid"]
+            observations.append(state)
+            del observations[:-20]
+        state = wait_for_readiness(current_state, name, sample=record)
+        entry["complete"] = True
+        return state
+
+    def launch(*arguments):
+        result = subprocess.run(base + ["shell", "am", "start", "-W", *arguments], check=True, capture_output=True, text=True, timeout=45)
+        report["launches"].append({"component": arguments[1], "stdout": result.stdout, "stderr": result.stderr})
+        if "Error:" in result.stdout or "Error:" in result.stderr:
+            raise RuntimeError("Android rejected test Activity launch; inspect report.json")
+
+    def screenshot(name):
+        ready(name)
+        image = call("exec-out", "screencap", "-p", binary=True)
+        if not current_state().get("ready"):
+            raise RuntimeError("Foreground changed during screenshot capture; image discarded")
+        path = args.output / name
+        path.write_bytes(image)
+        return path
+
+    def snapshot(name):
+        # Stop only our fresh test app, then copy its consistent DB/WAL pair.
+        stop()
+        directory = args.output / name
+        directory.mkdir()
+        for suffix in ("", "-wal"):
+            filename = "files/library/library.sqlite3" + suffix
+            exists = subprocess.run(base + ["shell", "run-as", APP, "test", "-f", filename], capture_output=True, timeout=10)
+            if exists.returncode == 0:
+                (directory / ("library.sqlite3" + suffix)).write_bytes(call("exec-out", "run-as", APP, "cat", filename, binary=True))
+        with sqlite3.connect(directory / "library.sqlite3") as database:
+            assert database.execute("PRAGMA quick_check").fetchone() == ("ok",), "Test library integrity check failed"
+            return database.execute("SELECT title, hash, pages FROM scores ORDER BY title").fetchall()
+
+    def launch_fixture(fixture, count):
+        stop()
+        launch("-n", HELPER + "/.FixtureActivity", "--es", "fixture", fixture)
+        ready(f"fixture {fixture}")
+        if count:
+            wait_for(lambda: len(shell("run-as", APP, "ls", "files/library/scores", check=False).splitlines()) >= count, f"{fixture} publishes a private copy")
+        time.sleep(1.5)
+
+    def render(name, token):
+        library = screenshot(name + "-library.png")
+        locator = args.output / (name + "-locator.png")
+        subprocess.run(["convert", str(library), "-colorspace", "Gray", "-threshold", "45%", "-negate", "-resize", "300%", str(locator)], check=True)
+        result = subprocess.check_output(
+            ["tesseract", str(locator), "stdout", "--psm", "11", "tsv"],
+            text=True, env=dict(os.environ, OMP_THREAD_LIMIT="1"), stderr=subprocess.DEVNULL,
+        )
+        words = list(csv.DictReader(io.StringIO(result), delimiter="\t"))
+        match = next((word for word in words if re.search(r"\b" + token + r"\b", word.get("text", ""), re.I) and "/" not in word.get("text", "")), None)
+        assert match, f"No visible generated {token} score row"
+        x = (int(match["left"]) + int(match["width"]) // 2) // 3
+        y = (int(match["top"]) + int(match["height"]) // 2) // 3
+        shell("input", "tap", str(x), str(y))
+        time.sleep(2)
+        reader = screenshot(name + "-reader.png")
+        width, height = struct.unpack(">II", reader.read_bytes()[16:24])
+        pixels = subprocess.check_output(["convert", str(reader), "-alpha", "off", "-depth", "8", "rgb:-"])
+        assert len(pixels) == width * height * 3
+        counts, centers = [0, 0, 0], [0, 0, 0]
+        for index in range(0, len(pixels), 3):
+            red, green, blue = pixels[index:index + 3]
+            for channel, present in enumerate((red > 200 and green < 50 and blue < 50, green > 200 and red < 50 and blue < 50, blue > 200 and red < 50 and green < 50)):
+                if present:
+                    counts[channel] += 1
+                    centers[channel] += (index // 3) % width
+        assert all(count > 300 for count in counts), f"Generated RGB score fiducials not rendered: {counts}"
+        centers = [total / count for total, count in zip(centers, counts)]
+        assert centers[0] < centers[1] < centers[2], "Rendered fiducial ordering is incorrect"
+        return {"colored_pixels": counts, "centers_x": centers}
+
+    def confirmed_duplicate(name):
+        shots = []
+        report["visual_status"].append({"stage": name, "shots": shots})
+        def probe():
+            prefix = args.output / f"{name}-result-{len(shots)}"
+            image = screenshot(prefix.name + ".png")
+            summary, attempts = recognize_import_summary(image, prefix)
+            shots.append({"image": image.name, "attempts": attempts})
+            return summary
+        return wait_for_duplicate(probe, name)
+
+    try:
+        for name, package in (("smoke-app.apk", APP), ("fixture-provider.apk", HELPER)):
+            call("install", "--no-streaming", str(args.apks / name))
+            installed.append(package)
+        launch("-n", APP + "/android.app.NativeActivity")
+        ready("fresh startup")
+        screenshot("startup.png")
+        expected = json.loads((args.fixtures / "fixtures.json").read_text())
+        hashes = {item["name"]: item["sha256"] for item in expected["files"]}
+        for fixture, token, count, title, filename in (
+            ("png", "PNG", 1, "Smoke PNG", "score.png"),
+            ("jpeg", "JPEG", 2, "Smoke JPEG", "score.jpg"),
+        ):
+            launch_fixture(fixture, count)
+            evidence = render(fixture, token)
+            rows = snapshot(fixture + "-database")
+            assert len(rows) == count and (title, hashes[filename], 1) in rows, rows
+            report["cases"].append({"fixture": fixture, "result": "imported and rendered", "evidence": evidence})
+            print("PASS:", fixture, "real URI import, private copy, DB metadata and rendering", flush=True)
+        launch_fixture("unicode", 3)
+        rows = snapshot("unicode-database")
+        assert len(rows) == 3 and ("Étude Unicode", hashes["Étude Unicode.png"], 1) in rows, rows
+        report["cases"].append({"fixture": "unicode", "result": "Unicode metadata imported"})
+        launch_fixture("png", 3)
+        confirmed_duplicate("duplicate")
+        assert len(snapshot("duplicate-database")) == 3
+        report["cases"].append({"fixture": "duplicate", "result": "deduplicated"})
+        launch_fixture("pipe", 3)
+        confirmed_duplicate("pipe")
+        assert len(snapshot("pipe-database")) == 3
+        report["cases"].append({"fixture": "pipe", "result": "non-seekable descriptor imported and deduplicated"})
+        failures = {
+            "corrupt": "contents do not match",
+            "oversized": "megapixel",
+            "oversized-metadata": "size limit",
+            "unsafe-name": "unsafe display name",
+            "denied": "read grant",
+        }
+        for fixture, reason in failures.items():
+            launch_fixture(fixture, 0)
+            assert pid(), f"App crashed for {fixture}"
+            error = screenshot(fixture + "-error.png")
+            locator = args.output / (fixture + "-error-ocr.png")
+            subprocess.run(["convert", str(error), "-channel", "R", "-separate", "-threshold", "45%", "-negate", "-resize", "300%", str(locator)], check=True)
+            text = subprocess.check_output(["tesseract", str(locator), "stdout", "--psm", "11"], text=True, env=dict(os.environ, OMP_THREAD_LIMIT="1"), stderr=subprocess.DEVNULL).lower()
+            assert "action needed" in text and reason in text, f"Expected handled {fixture} error is not visible"
+            assert len(snapshot(fixture + "-database")) == 3, f"Invalid fixture inserted a record: {fixture}"
+            report["cases"].append({"fixture": fixture, "result": "rejected without new record/crash"})
+            print("PASS:", fixture, "rejected without new record or crash", flush=True)
+        assert not shell("run-as", APP, "ls", "cache/rustymusicsheets"), "Leaked staging files"
+        report["complete"] = True
+    except BaseException as error:
+        report["failure"] = {"type": type(error).__name__, "message": str(error)}
+        state = current_state()
+        report["last_state"] = state
+        current = state.get("pid")
+        if not current:
+            current = next((stage["last_pid"] for stage in reversed(report["readiness"]) if stage.get("last_pid")), None)
+        if current:
+            try:
+                (args.output / "app.log").write_text(call("logcat", "-d", f"--pid={current}", "-t", "200", timeout=10))
+            except (OSError, subprocess.SubprocessError) as log_error:
+                report["log_error"] = type(log_error).__name__
+        raise
+    finally:
+        (args.output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
+        if not args.keep_installed:
+            for package in reversed(installed):
+                call("uninstall", package, check=False)
+    print("Isolated Android smoke passed. Evidence:", args.output)
+
+
+if __name__ == "__main__":
+    main()

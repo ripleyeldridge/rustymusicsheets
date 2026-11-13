@@ -1,0 +1,130 @@
+Android M0 test baseline
+=======================
+
+Status
+------
+This implements the local M0 slice of the approved Android roadmap.
+It does not complete M1 (in-app picking), PDF/OCR, or production readiness.
+Tracking: GitHub #1 umbrella, #2 M0, #3 M1.
+
+Local evidence: AOSP API 35 default x86_64, KVM, 4 KiB pages. The isolated
+native binary imports and renders original PNG/JPEG score fixtures through
+real ContentResolver grants; private SQLite records and content hashes are
+verified. Unicode provider metadata, unknown sizes, a real pipe descriptor,
+deduplication, malformed/oversized images, oversized metadata, traversal
+names, and denied read grants are covered. Visible completion/error text is
+checked, and the generated score's RGB fiducials must actually render.
+Both test packages are removed after each normal run.
+
+This is not ARM64 runtime or 16 KiB-page runtime validation. API 26,
+intermediate/current APIs, physical ARM64 hardware, tablets, lifecycle,
+pedals, and broader providers remain in the device matrix. A local run and
+workflow syntax validation are NOT a clean hosted CI pass. Keep M0/#2 open
+until the hosted build and emulator evidence pass.
+
+Safety boundaries
+-----------------
+The production package is never installed, cleared, uninstalled, or queried.
+The scripts use only:
+    org.ripleyeldridge.rustymusicsheets.smoketest
+    org.ripleyeldridge.rustymusicsheets.fixture
+
+The native smoke APK contains the real compiled library under the isolated
+application ID. The private fixture provider can grant only allowlisted,
+generated assets to that isolated app. It has no broad storage permissions.
+Screenshots and DB snapshots contain only the fresh test library. The
+runner refuses existing test packages, nonempty evidence directories,
+locked screens, or screenshots when the test app lacks focus. It requires
+an explicit ADB serial; it never selects a first/default physical device.
+Startup/fixture transitions wait up to 60 seconds for two consecutive
+samples with a live app PID, unlocked input and the exact test Activity in
+focus. This is readiness polling, not permission-dialog dismissal or an
+automatic unlock. Screenshot focus is checked again after capture; bytes
+are discarded if focus changed.
+
+Normal cleanup removes ONLY test packages installed by this invocation.
+--keep-installed deliberately retains those test packages for diagnosis;
+subsequent runs refuse them until the tester explicitly removes them.
+Do not run test cleanup against the production application ID.
+
+Signing keys for the isolated APKs are generated temporarily with a random
+password held only in the build process environment, never printed or
+stored in Git. Those keys are discarded; the APKs are not update-compatible
+production artifacts. CI never uploads signing keys or emulator/ADB state.
+
+Reproducing the local checks
+---------------------------
+Host tools: Poppler, Tesseract with English data, ImageMagick convert,
+Python 3, a complete JDK 21 (javac), and the SDK/NDK in android/README.txt.
+Use an empty output directory for each APK/evidence run.
+
+From the repository root, after configuring the local SDK/JDK:
+
+    python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+    RMS_ANDROID_TARGET=x86_64-linux-android ./scripts/build-android.sh
+    python3 scripts/generate-android-fixtures.py --output target/android-tests/fixtures
+    python3 scripts/build-android-smoke.py \
+      --apk target/debug/apk/RustyMusicSheets.apk \
+      --fixtures target/android-tests/fixtures \
+      --output target/android-tests/apks --abi x86_64
+    python3 scripts/verify-android-apk.py \
+      --abi x86_64 --package org.ripleyeldridge.rustymusicsheets.smoketest \
+      target/android-tests/apks/smoke-app.apk
+    python3 scripts/android-smoke.py --serial YOUR_TEST_SERIAL \
+      --apks target/android-tests/apks \
+      --fixtures target/android-tests/fixtures \
+      --output target/android-tests/evidence
+
+For an ARM64 test device, use the default Android target and --abi arm64-v8a
+for both packaging/verification, selecting that test device's serial.
+Do not install a production-ID CI APK over a valuable preview library.
+Do not use Python -O/PYTHONOPTIMIZE to bypass test assertions; verification
+scripts explicitly reject optimized Python.
+
+The generated corpus includes text/multipage/image-only PDFs for the later
+PDF backend milestone, plus PNG/JPEG, Unicode-name, corrupt and oversized
+fixtures. It is original material; no personal music folder is read.
+
+Read report.json complete=true, the per-case results/input hashes, generated
+library/reader/error screenshots, and scoped app.log on failures. A passing
+process alone is not a rendering assertion. Failure evidence remains
+incomplete and must not be promoted to a successful device result.
+See android/CI.txt for the corresponding PR/manual Actions jobs.
+Duplicate/pipe completion requires the entire visible summary: zero
+imported, one duplicate, zero removed, and zero failed. Recognition tries
+untouched pixels first, then unthresholded enlargement and a thresholded
+fallback; single standalone O/0 and I/i/l/1 count glyphs are normalized.
+Partial, multiple/ambiguous, or wrong-counter summaries do not pass. The
+runner polls briefly for completion and retains each image, OCR transcript
+and parsed result in visual_status evidence. Existing DB/integrity checks
+still run after visual confirmation.
+scripts/tests/fixtures/duplicate-status-ci.png is a cropped, generated-only
+status footer from CI run 43464956647, not a personal document or phone
+screenshot. It covers the false-negative introduced by hard thresholding.
+
+Readiness failures preserve am-start results, a bounded history of sanitized
+focus-component/lock/PID observations, the last state, and app-PID logcat
+where available. No raw global window dump, lock-screen image, or unrelated
+app log is retained. A persistent focus problem remains a failed smoke
+test; the new diagnostics must be investigated rather than bypassed.
+
+Identity, version codes, and production signing decisions
+---------------------------------------------------------
+- Reserve org.ripleyeldridge.rustymusicsheets for the current preview/future
+  production identity. Do not silently rename or replace the installed app.
+- Keep smoketest/fixture identities isolated and never publish their APKs
+  as user releases. Ordinary CI APKs have disposable development signing.
+- Existing v0.2.2 previews were debug-signed. A future production signer can
+  differ; no promise of a lossless in-place upgrade is made. M3 must provide
+  export/recovery and M6 must verify the chosen migration path before users
+  are told to replace an installation. Never uninstall to bypass a mismatch.
+- cargo-apk 0.10 derives version codes from numeric major/minor/patch and
+  ignores prerelease suffixes. Allocate a unique increasing numeric version
+  for each externally distributed Android update; an alpha/beta suffix
+  alone is not a new version code. Verify the manifest before distribution.
+- Ripley/the maintainer retains production key ownership outside Git and
+  PR/fork CI. No production key is created or chosen by this M0 work.
+  Provisioning/access control, recovery, rotation and signing validation
+  remain explicit M6 release gates.
+- Do not promote a CI debug signature, unsigned provenance record, local
+  image smoke, or static ELF alignment check into production readiness.

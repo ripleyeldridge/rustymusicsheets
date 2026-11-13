@@ -1155,6 +1155,7 @@ impl MusicApp {
 
     fn library_view(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
             ui.heading("Score library");
             ui.horizontal(|ui| {
                 self.text_input_active |= ui
@@ -1173,7 +1174,8 @@ impl MusicApp {
                     ui.memory_mut(|memory| memory.request_focus(egui::Id::new("library_search")));
                 }
             });
-            ui.horizontal_wrapped(|ui| {
+            let compact_filters = ui.available_width() < 560.0;
+            let filters = |ui: &mut egui::Ui| {
                 let mut selected = self.selected_group;
                 let name = self
                     .groups
@@ -1225,6 +1227,9 @@ impl MusicApp {
                             );
                         }
                     });
+                if compact_filters {
+                    ui.end_row();
+                }
                 if selected != self.selected_group {
                     self.selected_group = selected;
                     self.show_all_to_add = false;
@@ -1259,7 +1264,15 @@ impl MusicApp {
                             ui.selectable_value(&mut self.genre, genre.clone(), genre);
                         }
                     });
-            });
+            };
+            if compact_filters {
+                egui::Grid::new("compact_library_filters")
+                    .num_columns(2)
+                    .spacing(ui.spacing().item_spacing)
+                    .show(ui, filters);
+            } else {
+                ui.horizontal_wrapped(filters);
+            }
             if self.selected_group.is_some() {
                 ui.horizontal_wrapped(|ui| {
                     ui.checkbox(
@@ -2264,6 +2277,29 @@ mod tests {
                     .any(|shape| visible(&shape.shape, shape.clip_rect));
             }
             assert!(shown, "Score list was clipped after resizing to {size:?}");
+        }
+    }
+
+    #[test]
+    fn phone_width_library_stays_within_the_viewport() {
+        let (_root, ctx, mut app) = test_app();
+        app.db.insert("phone", "Smoke JPEG", 1, "").unwrap();
+        app.reload();
+        app.show_options = false;
+        for _ in 0..4 {
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(320.0, 640.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    app.library_view(ctx);
+                    assert!(ctx.used_rect().right() <= 320.0, "{:?}", ctx.used_rect());
+                },
+            );
         }
     }
 

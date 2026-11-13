@@ -1,0 +1,301 @@
+name: Android development APK
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_emulator:
+        description: Run isolated API 35 x86_64 provider-import smoke tests
+        type: boolean
+        required: false
+        default: false
+
+# Fork PRs need no secrets, write token, OIDC identity, or production environment.
+# Never replace pull_request with pull_request_target for this build.
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_TOOLCHAIN: 1.86.0
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: '4'
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  host:
+    name: Linux regression checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out source without persisting credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install host build and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential pkg-config libgl1-mesa-dev libx11-dev libxi-dev \
+            libxrandr-dev libxcursor-dev libxinerama-dev libxkbcommon-dev \
+            libwayland-dev libudev-dev libdbus-1-dev \
+            poppler-utils tesseract-ocr tesseract-ocr-eng imagemagick dbus dbus-x11
+          for tool in pdfinfo pdftoppm pdftotext tesseract dbus-daemon; do
+            command -v "$tool"
+          done
+          tesseract --list-langs | grep -Fx eng
+      - name: Install pinned Rust with host lint components
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt,clippy
+          rustup default "$RUST_TOOLCHAIN"
+          rustc --version --verbose
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Run existing host tests
+        run: cargo test --locked
+      - name: Run Python Android tooling tests
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+      - name: Run Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Build Linux release
+        run: cargo build --locked --release
+      - name: Confirm source lockfile is unchanged
+        if: ${{ always() }}
+        run: git diff --exit-code -- Cargo.lock
+
+  android:
+    name: ARM64 debug build and static verification
+    needs: host
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out source without persisting credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install native build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends build-essential pkg-config
+      - name: Set up JDK 21
+        id: java
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Set up Android SDK and accept build-tool licenses
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+        with:
+          cmdline-tools-version: '12266719'
+          accept-android-sdk-licenses: 'true'
+          log-accepted-android-sdk-licenses: 'false'
+          packages: 'platform-tools platforms;android-35 platforms;android-36 build-tools;36.0.0 ndk;28.2.13676358'
+      - name: Select pinned NDK
+        run: |
+          printf 'ANDROID_NDK_ROOT=%s/ndk/28.2.13676358\n' "$ANDROID_HOME" >> "$GITHUB_ENV"
+          printf 'ANDROID_NDK_HOME=%s/ndk/28.2.13676358\n' "$ANDROID_HOME" >> "$GITHUB_ENV"
+      - name: Install pinned Rust and ARM64 target
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target aarch64-linux-android
+          rustup default "$RUST_TOOLCHAIN"
+      - name: Install pinned cargo-apk separately from source dependencies
+        run: |
+          cargo install cargo-apk --version '=0.10.0' --locked --root "$HOME/.local"
+          printf '%s/.local/bin\n' "$HOME" >> "$GITHUB_PATH"
+      - name: Build development APK with existing wrapper
+        run: |
+          mkdir -p dist/android-ci
+          sha256sum Cargo.lock > "$RUNNER_TEMP/android-source-lock.sha256"
+          scripts/build-android.sh
+          sha256sum --check "$RUNNER_TEMP/android-source-lock.sha256"
+          cp target/debug/apk/RustyMusicSheets.apk dist/android-ci/RustyMusicSheets-arm64-debug.apk
+      - name: Verify signature, manifest, permissions, ABI and ZIP/ELF alignment
+        run: |
+          python3 scripts/verify-android-apk.py \
+            dist/android-ci/RustyMusicSheets-arm64-debug.apk \
+            --sdk "$ANDROID_HOME" --ndk "$ANDROID_NDK_ROOT" \
+            | tee dist/android-ci/verification.txt
+      - name: Record build provenance and tool inventory
+        env:
+          RESOLVED_JAVA_VERSION: ${{ steps.java.outputs.version }}
+        run: |
+          rustc --version --verbose > dist/android-ci/rustc.txt
+          cargo --version > dist/android-ci/cargo.txt
+          cargo apk version > dist/android-ci/cargo-apk.txt
+          java -version > dist/android-ci/java.txt 2>&1
+          sdkmanager --list_installed > dist/android-ci/android-packages.txt
+          cp Cargo.lock dist/android-ci/Cargo.lock
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+
+          def digest(path):
+              return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+          record = {
+              "schema": "rustymusicsheets-ci-build-record-v1",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+              "workflow": os.environ["GITHUB_WORKFLOW"],
+              "workflow_ref": os.environ["GITHUB_WORKFLOW_REF"],
+              "event": os.environ["GITHUB_EVENT_NAME"],
+              "run_url": f'{os.environ["GITHUB_SERVER_URL"]}/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}',
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "runner_os": os.environ["RUNNER_OS"],
+              "runner_arch": os.environ["RUNNER_ARCH"],
+              "runner_image": os.environ.get("ImageVersion", "unknown"),
+              "rust": os.environ["RUST_TOOLCHAIN"],
+              "jdk": os.environ["RESOLVED_JAVA_VERSION"],
+              "ndk": "28.2.13676358",
+              "build_tools": "36.0.0",
+              "sdk_platforms": [35, 36],
+              "cargo_apk": "0.10.0",
+              "source_lock_sha256": digest("Cargo.lock"),
+              "workflow_sha256": digest(".github/workflows/android.yml"),
+              "build_script_sha256": digest("scripts/build-android.sh"),
+              "sdk_view_sha256": digest("scripts/android-sdk-view.py"),
+              "verifier_sha256": digest("scripts/verify-android-apk.py"),
+              "apk_sha256": digest("dist/android-ci/RustyMusicSheets-arm64-debug.apk"),
+              "signing": "ephemeral development/debug only; no production identity",
+              "device_tests": "NOT RUN by this ARM64 job; optional x86_64 emulator evidence is separate",
+              "attestation": "unsigned build record, not a SLSA or GitHub attestation",
+          }
+          Path("dist/android-ci/provenance.json").write_text(
+              json.dumps(record, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
+          cp LICENSE dist/android-ci/LICENSE
+          cp android/CI.txt dist/android-ci/CI.txt
+          (
+            cd dist/android-ci
+            sha256sum RustyMusicSheets-arm64-debug.apk verification.txt provenance.json \
+              rustc.txt cargo.txt cargo-apk.txt java.txt android-packages.txt \
+              Cargo.lock LICENSE CI.txt > SHA256SUMS
+            sha256sum --check SHA256SUMS
+          )
+      - name: Confirm source lockfile is unchanged
+        if: ${{ always() }}
+        run: git diff --exit-code -- Cargo.lock
+      - name: Retain verified development artifacts (not a release)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: android-arm64-debug-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/android-ci/
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: false
+
+  emulator:
+    name: Isolated API 35 x86_64 smoke
+    if: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.run_emulator) }}
+    needs: host
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out source without persisting credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install build, fixture and render-check dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential pkg-config poppler-utils \
+            tesseract-ocr tesseract-ocr-eng imagemagick acl libpulse0
+          tesseract --list-langs | grep -Fx eng
+          command -v convert
+      - name: Set up complete JDK 21 for isolated provider compilation
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '21'
+          java-package: jdk
+      - name: Check Java compiler
+        run: '"$JAVA_HOME/bin/javac" -version'
+      - name: Set up pinned Android build tools
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+        with:
+          cmdline-tools-version: '12266719'
+          accept-android-sdk-licenses: 'true'
+          log-accepted-android-sdk-licenses: 'false'
+          packages: 'platform-tools platforms;android-35 platforms;android-36 build-tools;36.0.0 ndk;28.2.13676358 emulator'
+      - name: Select pinned NDK
+        run: |
+          printf 'ANDROID_NDK_ROOT=%s/ndk/28.2.13676358\n' "$ANDROID_HOME" >> "$GITHUB_ENV"
+          printf 'ANDROID_NDK_HOME=%s/ndk/28.2.13676358\n' "$ANDROID_HOME" >> "$GITHUB_ENV"
+      - name: Check headless emulator runtime dependencies
+        run: '"$ANDROID_HOME/emulator/emulator" -no-window -no-audio -version'
+      - name: Install pinned Rust and emulator ABI target
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target x86_64-linux-android
+          rustup default "$RUST_TOOLCHAIN"
+          cargo install cargo-apk --version '=0.10.0' --locked --root "$HOME/.local"
+          printf '%s/.local/bin\n' "$HOME" >> "$GITHUB_PATH"
+      - name: Build x86_64 native application and isolated test APKs
+        run: |
+          RMS_ANDROID_TARGET=x86_64-linux-android ./scripts/build-android.sh
+          python3 scripts/generate-android-fixtures.py --output target/android-tests/fixtures
+          python3 scripts/build-android-smoke.py \
+            --apk target/debug/apk/RustyMusicSheets.apk \
+            --fixtures target/android-tests/fixtures \
+            --output target/android-tests/apks --abi x86_64
+          python3 scripts/verify-android-apk.py \
+            --abi x86_64 \
+            --package org.ripleyeldridge.rustymusicsheets.smoketest \
+            target/android-tests/apks/smoke-app.apk
+      - name: Allow only the runner user to access KVM
+        run: |
+          test -c /dev/kvm
+          sudo setfacl -m "u:$(id -un):rw" /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+      - name: Run fresh isolated provider-import and rendering smoke tests
+        id: smoke
+        uses: ReactiveCircus/android-emulator-runner@1dcd0090116d15e7c562f8db72807de5e036a4ed # v2.34.0
+        with:
+          api-level: '35'
+          system-image-api-level: '35'
+          target: default
+          arch: x86_64
+          channel: stable
+          avd-name: rms-ci-api35-x86_64
+          force-avd-creation: true
+          emulator-port: 5554
+          emulator-boot-timeout: 600
+          disable-linux-hw-accel: false
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader -no-snapshot -noaudio -no-boot-anim -wipe-data
+          script: |
+            test "$ANDROID_SERIAL" = emulator-5554
+            python3 scripts/android-smoke.py --serial emulator-5554 --apks target/android-tests/apks --fixtures target/android-tests/fixtures --output target/android-tests/evidence
+      - name: Record emulator tool inventory beside generated evidence
+        if: ${{ !cancelled() && hashFiles('target/android-tests/evidence/report.json') != '' }}
+        run: |
+          git rev-parse HEAD > target/android-tests/evidence/source-commit.txt
+          sha256sum Cargo.lock target/android-tests/apks/smoke-app.apk \
+            target/android-tests/apks/fixture-provider.apk \
+            > target/android-tests/evidence/input-SHA256SUMS
+          sdkmanager --list_installed > target/android-tests/evidence/android-packages.txt
+          "$ANDROID_HOME/emulator/emulator" -no-window -no-audio -version > target/android-tests/evidence/emulator-version.txt 2>&1
+      - name: Confirm source lockfile is unchanged
+        if: ${{ always() }}
+        run: git diff --exit-code -- Cargo.lock
+      - name: Retain only isolated smoke evidence, including on failure
+        if: ${{ !cancelled() && (steps.smoke.outcome == 'success' || steps.smoke.outcome == 'failure') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: android-api35-x86_64-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/android-tests/evidence/
+          if-no-files-found: warn
+          retention-days: 7
+          include-hidden-files: false
