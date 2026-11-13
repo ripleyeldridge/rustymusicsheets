@@ -5,7 +5,7 @@ A native Linux sheet-music library and performance reader, written in Rust with 
 **Version:** 0.2.1 · **Author:** [Ripley Eldridge](https://github.com/ripleyeldridge) · **Release year:** 2026 · **License:** [MIT](LICENSE)
 
 ## Why this exists
-> I vibe-coded the fuck out of this because I couldn't find a suitable Linux sheet-music reader for what I needed.
+> I vibe-coded the fuck out of this because I couldn't find a suitable Linux sheet-music reader for what I needed and I have a full-time coding job so I don't have time to write the whole thing myself.
 >
 > — Ripley Eldridge
 
