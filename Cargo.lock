@@ -2766,6 +2766,7 @@ dependencies = [
  "futures-lite",
  "image",
  "jni 0.21.1",
+ "libc",
  "log",
  "regex",
  "rfd",

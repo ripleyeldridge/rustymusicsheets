@@ -102,7 +102,8 @@ Back up the complete data/config directories and original music folder with
 the application closed; a SQLite metadata backup is not a score backup.
 .SH MUSIC AND PERFORMANCE
 Install Audiveris, FluidSynth and a SoundFont separately for optional Linux
-music recognition/playback; these are not embedded in the application.
+music recognition/playback. Default playback uses external FluidSynth; the
+optional audio-host helper links the system FluidSynth library.
 Instrument-label detection is text classification, not note transcription.
 Audiveris is AGPLv3, FluidSynth LGPL, and SoundFonts have separate licenses.
 .PP
@@ -140,6 +141,54 @@ rhythm, ties, repeats, part names and pagination. Expression, pedal, grace notes
 advanced navigation and nested repeats may be unsupported or approximated.
 There is no VST host, microphone score tracking, looping or metronome.
 Android OMR/synth parity is not implemented.
+.SS OPTIONAL AUDIO-HOST PREVIEW
+Legacy FluidSynth remains the default. Explicitly select Audio host preview
+in Settings for PipeWire/JACK or native JACK and browse to rms-audio-host.
+An empty helper path uses /usr/libexec/rustymusicsheets/rms-audio-host.
+PipeWire mode uses /usr/bin/pw-jack; native JACK never starts a server.
+Both require existing stereo physical playback ports; the first two ports are
+connected automatically. Output-routing selection is not implemented yet.
+.PP
+The companion provides process supervision, bounded Unix-socket control and a
+shared device-clock SoundFont mixer for up to 32 parts.
+VST3 loading/editors/state and yabridge/Wine setup remain unimplemented.
+MIDI export and legacy playback retain the 15-pitched-part limit.
+Host failure stops audio without closing the reader or silently switching engines.
+Press Play explicitly to retry. Only owned processes/private files are cleaned up.
+.PP
+Build from source with python3 scripts/build-audio-host.py --test.
+CMake, a C++17 compiler, pkg-config and JACK, FluidSynth and OpenSSL development
+packages are required. Ordinary Cargo/Android builds remain independent.
+On Ubuntu the helper build packages are build-essential, cmake, pkg-config,
+libjack-jackd2-dev, libfluidsynth-dev and libssl-dev. An existing PipeWire
+desktop also needs pipewire-jack; fluid-soundfont-gm provides an example bank.
+The runtime FluidSynth package alone does not provide development headers.
+These prerequisites are installed manually, never by the application.
+Wine, yabridge and the VST3 SDK are not needed for this stage.
+Build the application with cargo build --locked --release and launch
+\&./target/release/rustymusicsheets from the source root. Build the separate
+helper as above, Browse to its absolute output path, select a SoundFont
+and save settings. An older installed app may lack the backend selector.
+The helper output is target/audio-host/rms-audio-host.
+Use --core-only --test --build-dir target/audio-host-core for scheduler tests
+without JACK/FluidSynth headers; core-only mode creates no live helper.
+Debian packaging includes the helper only with scripts/build-deb.py --with-audio-host.
+Building a package does not install it. Source builds do not install the
+/usr/libexec/ helper; leave the helper path empty only for an installed
+helper-enabled package. To disable the preview, select FluidSynth (legacy,
+default) and save. Backend changes stop playback; press Play explicitly.
+.PP
+If the helper is missing or the protocol mismatches, build both binaries from
+the same source. If JACK/output ports are unavailable, match the existing
+server/backend and enable stereo output. Device/rate/output changes require
+fixing routing and retrying explicitly. More than ten seconds of reported
+latency or exhausted timing history fails closed. Muting does not unload
+SoundFonts/free sample RAM. See the README for a muted real-helper smoke test.
+.PP
+Audible position is an estimate requiring loopback calibration. FluidSynth's
+internal 64-frame quantum may delay acoustic onset. Chorus/reverb are disabled
+for pause/seek flushing, so sound differs from legacy playback. Each part loads
+its own SoundFont instance; test memory, levels and timing before performance use.
 .SH NOTES
 Folder watching runs while the application is open.
 Use the Library section to choose a music folder and configure readable titles.

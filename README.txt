@@ -323,11 +323,98 @@ Playback interprets partwise MusicXML with chords, voices, multi-staff parts,
 rests, transposition, ties, tempo changes, basic repeats and first/second endings.
 Read warnings for fixed velocity and unsupported expression/pedal, grace notes,
 advanced navigation/nested repeats. There is no notation editor, microphone-based tracking,
-looping, metronome or VST host. GUI transport uses a background sequencer and persistent
-external FluidSynth process, not an embedded synth. Other target OSes do not
+looping, metronome or VST host. Default GUI transport uses a background sequencer and
+persistent external FluidSynth process. Other target OSes do not
 support the recognition/audio workflow yet.
 Audiveris is AGPLv3, FluidSynth LGPL, and SoundFonts have separate licenses;
 these optional engines/data are not bundled or relicensed with the MIT app.
+
+Optional audio-host foundation (development preview)
+---------------------------------------------------
+An opt-in C++ companion now provides supervised process isolation, bounded
+versioned Unix-socket control, a device-clock scheduler and stereo mixing of up
+to 32 independent SoundFont parts. VST3 loading, scanning, editors, plugin state,
+yabridge and Wine setup are NOT implemented in this stage.
+
+Ordinary Cargo and Android builds remain independent of native audio SDKs.
+The initial native target is Linux x86_64. No Wine, yabridge or VST3 SDK is needed.
+Complete the normal source-build setup above, including Rust >=1.86.
+The helper additionally needs CMake >=3.16, C++17, pkg-config and development
+packages for JACK, FluidSynth >=2.2 and OpenSSL. Ubuntu package example:
+    sudo apt update
+    sudo apt install build-essential cmake pkg-config libjack-jackd2-dev libfluidsynth-dev libssl-dev
+For an existing PipeWire desktop and an example SoundFont:
+    sudo apt install pipewire-jack fluid-soundfont-gm
+    command -v pw-jack
+    pkg-config --modversion jack fluidsynth openssl
+Review package-manager changes before accepting. These are manual commands,
+not automatic application/build actions. Runtime FluidSynth alone lacks
+development headers/fluidsynth.pc. Another compatible SF2/SF3 bank is fine.
+Do not replace your existing audio server just for this preview.
+
+From the repository root, build BOTH binaries and launch the new app:
+    cargo build --locked --release
+    python3 scripts/build-audio-host.py --test
+    ./target/release/rustymusicsheets
+Cargo does not build the helper. --test opens no audio device.
+For scheduler tests without JACK/FluidSynth development files:
+    python3 scripts/build-audio-host.py --core-only --test --build-dir target/audio-host-core
+Use a separate build directory: core-only mode creates no live helper.
+It also tests the protocol when OpenSSL development files are available.
+
+Launch the rebuilt app, not an older installed version. Under Settings >
+Music recognition and MIDI playback (or Music / OMR > Engine settings),
+choose Audio host preview - PipeWire/JACK or native JACK under Playback
+backend (Linux). Browse to the absolute path of target/audio-host/rms-audio-host,
+choose a SoundFont and save preferences/music settings.
+An empty helper field uses /usr/libexec/rustymusicsheets/rms-audio-host.
+It does not search PATH. A source build does not install that location.
+The FluidSynth executable field applies only to legacy playback.
+Load existing MusicXML or recognize a score, start with a low master level,
+and Play selected parts. Audiveris is needed only for recognition.
+PipeWire mode uses /usr/bin/pw-jack; native JACK never starts a server.
+Both require existing stereo physical output ports; the preview connects to
+the first two playback ports, without a device-routing picker.
+Legacy FluidSynth remains the default; MIDI export and legacy live mixing
+retain the 15-pitched-part limit. Host failures stop audio, preserve the reader
+and report an error; explicitly press Play to retry. No silent engine fallback.
+
+Part volumes retain legacy CC7 semantics, while master gain is smoothed after
+mixing. Chorus/reverb are disabled for immediate pause/seek flushing, so sound
+differs from legacy playback. Every part loads its own SoundFont instance:
+watch RAM use. The device-clock page estimate accounts for latency/tempo, but
+real loopback calibration is pending. FluidSynth's internal 64-frame quantum
+can delay actual note onset. Test before relying on the preview in performance.
+
+python3 scripts/build-deb.py --with-audio-host explicitly packages the helper,
+native runtime dependencies and notices. Default packages omit the helper.
+No Wine/yabridge installation, system Wine changes or release changes occur.
+Building a .deb does not install it; install the explicitly chosen output with
+your normal package manager. A helper-enabled package uses the empty helper
+field's installed path. --skip-build reuses both binaries; verify their source
+first. Native packages retain build-host architecture/glibc requirements.
+
+To disable the preview, choose FluidSynth (legacy, default) and save preferences.
+Backend changes stop playback; explicitly press Play to start the selected engine.
+For a muted real-helper check from the repository root:
+    RMS_TEST_AUDIO_HOST="$PWD/target/audio-host/rms-audio-host" cargo test --locked --lib real_audio_host_muted_smoke -- --ignored --nocapture
+Optional overrides: RMS_TEST_SOUNDFONT and RMS_TEST_AUDIO_BACKEND=jack.
+This checks lifecycle/controls, not acoustic or loopback calibration.
+
+Troubleshooting:
+- Missing fluidsynth.pc/headers: install libfluidsynth-dev and check pkg-config.
+- Missing helper/protocol mismatch: build app/helper from the same checkout;
+  browse to the output instead of expecting a source build to install it.
+- JACK unavailable/no physical stereo ports: match the running server/backend,
+  ensure pw-jack for PipeWire mode, and enable a stereo output. No server is
+  started or globally reconfigured by the helper.
+- Device/rate/output change or host failure: fix routing then explicitly retry.
+  Reported latency >10 seconds or exhausted timing history fails closed.
+- High RAM/xruns: reduce instrument instances and other heavy workloads.
+  Muting does not unload a SoundFont/free sample RAM; test before performance.
+- Header/library validation overrides are CMake-cached. Use a fresh --build-dir
+  when changing FLUIDSYNTH_INCLUDE_DIR/FLUIDSYNTH_LIBRARY and browse to its helper.
+  The package builder expects the default target/audio-host/ output.
 
 Standalone commands (do not open/change the library database):
     rustymusicsheets --omr SOURCE.pdf OUTPUT_DIR --audiveris /opt/audiveris/bin/Audiveris

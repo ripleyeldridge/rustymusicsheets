@@ -319,6 +319,14 @@ impl ManagedProcess {
         Ok(process)
     }
 
+    /// Persistent companions use protocol heartbeat/load/command deadlines, not
+    /// the one-shot MIDI player's absolute lifetime (which includes paused time).
+    pub(crate) fn companion(command: &mut Command, slot: ProcessSlot) -> Result<Self> {
+        let mut process = Self::spawn_inner(command, Duration::MAX, false)?;
+        process.registration = Some(slot);
+        Ok(process)
+    }
+
     pub(crate) fn id(&self) -> u32 {
         self.group
     }

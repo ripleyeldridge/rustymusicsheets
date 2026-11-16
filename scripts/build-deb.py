@@ -29,12 +29,23 @@ def install(source, destination, mode=0o644):
     shutil.copyfile(source, destination)
     destination.chmod(mode)
 
+def validate_native_binary(binary, arch):
+    if not binary.is_file():
+        raise ValueError(f"native binary missing: {binary}")
+    machine = output("readelf", "-h", str(binary))
+    expected = {"amd64": "Advanced Micro Devices X86-64", "arm64": "AArch64",
+                "armhf": "ARM"}.get(arch)
+    if expected is None or not re.search(rf"Machine:\s+{re.escape(expected)}\s*$", machine, re.M):
+        raise ValueError(f"binary {binary.name} does not match supported native architecture {arch}")
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--skip-build", action="store_true",
                         help="package the existing native release executable")
     parser.add_argument("--revision", default="1", help="Debian package revision")
+    parser.add_argument("--with-audio-host", action="store_true",
+                        help="explicitly build/package the optional Linux SoundFont audio-host preview")
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9][A-Za-z0-9.+~]*", args.revision):
         parser.error("revision must start with a digit and contain Debian version characters")
@@ -49,14 +60,16 @@ def main():
     arch = output("dpkg", "--print-architecture")
     if not args.skip_build:
         run("cargo", "build", "--locked", "--release", cwd=ROOT)
+        if args.with_audio_host:
+            run("python3", str(ROOT / "scripts/build-audio-host.py"), "--test", cwd=ROOT)
     binary = ROOT / "target/release" / PACKAGE
-    if not binary.is_file():
-        parser.error("release binary missing; build it first or omit --skip-build")
-    machine = output("readelf", "-h", str(binary))
-    expected = {"amd64": "Advanced Micro Devices X86-64", "arm64": "AArch64",
-                "armhf": "ARM"}.get(arch)
-    if expected is None or not re.search(rf"Machine:\s+{re.escape(expected)}\s*$", machine, re.M):
-        parser.error(f"release binary does not match supported native architecture {arch}")
+    helper = ROOT / "target/audio-host/rms-audio-host"
+    try:
+        validate_native_binary(binary, arch)
+        if args.with_audio_host:
+            validate_native_binary(helper, arch)
+    except ValueError as error:
+        parser.error(str(error))
     epoch = int(os.environ.get("SOURCE_DATE_EPOCH", int(time.time())))
     env = dict(os.environ, SOURCE_DATE_EPOCH=str(epoch), LC_ALL="C")
     destination = ROOT / "dist" / f"{PACKAGE}_{version}_{arch}.deb"
@@ -66,6 +79,10 @@ def main():
         stage = work / "debian" / PACKAGE
         install(binary, stage / "usr/bin" / PACKAGE, 0o755)
         run("strip", "--strip-unneeded", str(stage / "usr/bin" / PACKAGE))
+        native_binary = stage / f"usr/libexec/{PACKAGE}/rms-audio-host"
+        if args.with_audio_host:
+            install(helper, native_binary, 0o755)
+            run("strip", "--strip-unneeded", str(native_binary))
         install(ROOT / "assets/rustymusicsheets.desktop",
                 stage / "usr/share/applications/rustymusicsheets.desktop")
         install(ROOT / "assets/rustymusicsheets.svg",
@@ -89,7 +106,10 @@ def main():
             f"Package: {PACKAGE}\nArchitecture: any\n"
             "Description: Native sheet music library and performance reader\n"
         )
-        dependencies = output("dpkg-shlibdeps", "-O", str(stage / "usr/bin" / PACKAGE),
+        elf_files = [str(stage / "usr/bin" / PACKAGE)]
+        if args.with_audio_host:
+            elf_files.append(str(native_binary))
+        dependencies = output("dpkg-shlibdeps", "-O", *elf_files,
                               cwd=work, env=env)
         linked = next(line.removeprefix("shlibs:Depends=")
                       for line in dependencies.splitlines() if line.startswith("shlibs:Depends="))
@@ -137,6 +157,12 @@ def main():
                 if (directory / subdir).is_dir():
                     shutil.copytree(directory / subdir, notices / name / subdir, dirs_exist_ok=True)
         (docs / "third-party-notices.txt").write_text("\n".join(entries) + "\n")
+        if args.with_audio_host:
+            native_docs = docs / "audio-host"
+            for name in ("THIRD_PARTY_NOTICES.txt", "dependencies.json"):
+                install(ROOT / "native/audio-host" / name, native_docs / name)
+            for name in ("LICENSE.MIT", "provenance.json"):
+                install(ROOT / "native/vendor/nlohmann" / name, native_docs / "nlohmann" / name)
         installed_kib = (sum(p.stat().st_size for p in stage.rglob("*") if p.is_file()) + 1023) // 1024
         control = stage / "DEBIAN"
         control.mkdir()

@@ -1,0 +1,2 @@
+# Keep the checksum-pinned upstream license unchanged, including its whitespace.
+native/vendor/nlohmann/LICENSE.MIT -whitespace

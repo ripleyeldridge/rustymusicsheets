@@ -5,6 +5,7 @@ use crate::picker::SelectionKind;
 pub(crate) enum PathField {
     Audiveris,
     FluidSynth,
+    AudioHost,
     SoundFont,
     LoadMusicXml,
     ExportMusicXml(bool),
@@ -13,7 +14,7 @@ pub(crate) enum PathField {
 impl PathField {
     pub fn kind(self) -> SelectionKind {
         match self {
-            Self::Audiveris | Self::FluidSynth => SelectionKind::Executable,
+            Self::Audiveris | Self::FluidSynth | Self::AudioHost => SelectionKind::Executable,
             Self::SoundFont => SelectionKind::SoundFont,
             Self::LoadMusicXml => SelectionKind::MusicXml,
             Self::ExportMusicXml(true) => SelectionKind::SaveMxl,
@@ -22,7 +23,10 @@ impl PathField {
         }
     }
     fn is_setting(self) -> bool {
-        matches!(self, Self::Audiveris | Self::FluidSynth | Self::SoundFont)
+        matches!(
+            self,
+            Self::Audiveris | Self::FluidSynth | Self::SoundFont | Self::AudioHost
+        )
     }
 }
 
@@ -55,6 +59,9 @@ pub(super) fn entry(
 }
 
 impl Music {
+    pub(crate) fn browse_audio_host(&mut self, settings: &crate::audio::Settings) {
+        self.request_path(PathField::AudioHost, &settings.host_executable);
+    }
     pub(crate) fn browse_settings(&mut self, field: PathField, settings: &Settings) {
         let value = match field {
             PathField::Audiveris => &settings.audiveris_executable,
@@ -103,6 +110,7 @@ impl Music {
         request: PathRequest,
         path: PathBuf,
         settings: &mut Settings,
+        audio: &mut crate::audio::Settings,
     ) -> Result<()> {
         if !request.field.is_setting() {
             let owner = self
@@ -143,6 +151,7 @@ impl Music {
         match request.field {
             PathField::Audiveris => settings.audiveris_executable = value,
             PathField::FluidSynth => settings.fluidsynth_executable = value,
+            PathField::AudioHost => audio.host_executable = value,
             PathField::SoundFont => settings.soundfont = value,
             PathField::LoadMusicXml => self.load_path = value,
             PathField::ExportMusicXml(_) => self.xml_destination = value,
@@ -155,6 +164,32 @@ impl Music {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn audio_host_chooser_only_updates_global_audio_path() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let host = root.path().join("rms-audio-host");
+        std::fs::write(&host, b"#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&host, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut music = Music::default();
+        let mut audio = crate::audio::Settings::default();
+        let mut settings = Settings::default();
+        let previous = settings.fluidsynth_executable.clone();
+        music.browse_audio_host(&audio);
+        let request = music.take_path_request().unwrap();
+        assert_eq!(request.field.kind(), SelectionKind::Executable);
+        music
+            .apply_path(request, host.clone(), &mut settings, &mut audio)
+            .unwrap();
+        assert_eq!(audio.host_executable, host.to_str().unwrap());
+        assert_eq!(audio.backend, crate::audio::Backend::Legacy);
+        assert_eq!(settings.fluidsynth_executable, previous);
+        assert!(
+            music.playback.is_none(),
+            "Selecting a path must not launch audio"
+        );
+    }
 
     #[test]
     fn global_settings_and_per_score_paths_route_without_automatic_side_effects() {
@@ -167,7 +202,12 @@ mod tests {
         let request = music.take_path_request().unwrap();
         assert_eq!(request.field.kind(), SelectionKind::SoundFont);
         music
-            .apply_path(request, bank.clone(), &mut settings)
+            .apply_path(
+                request,
+                bank.clone(),
+                &mut settings,
+                &mut crate::audio::Settings::default(),
+            )
             .unwrap();
         assert_eq!(settings.soundfont, bank.to_str().unwrap());
         music.binding = Some((1, "hash".into()));
@@ -176,7 +216,12 @@ mod tests {
         music.request_path(PathField::LoadMusicXml, "");
         let request = music.take_path_request().unwrap();
         music
-            .apply_path(request, xml.clone(), &mut settings)
+            .apply_path(
+                request,
+                xml.clone(),
+                &mut settings,
+                &mut crate::audio::Settings::default(),
+            )
             .unwrap();
         assert_eq!(music.load_path, xml.to_str().unwrap());
         assert!(music.loading.is_none(), "Browse must not silently load");
@@ -190,7 +235,12 @@ mod tests {
             music.request_path(field, "");
             let request = music.take_path_request().unwrap();
             music
-                .apply_path(request, output.clone(), &mut settings)
+                .apply_path(
+                    request,
+                    output.clone(),
+                    &mut settings,
+                    &mut crate::audio::Settings::default(),
+                )
                 .unwrap();
             assert!(!output.exists(), "Browse must not export");
         }
@@ -199,7 +249,12 @@ mod tests {
         let previous = music.midi_destination.clone();
         music.binding = Some((2, "other".into()));
         assert!(music
-            .apply_path(request, root.path().join("wrong-score.mid"), &mut settings)
+            .apply_path(
+                request,
+                root.path().join("wrong-score.mid"),
+                &mut settings,
+                &mut crate::audio::Settings::default()
+            )
             .is_err());
         assert_eq!(music.midi_destination, previous);
     }
@@ -215,14 +270,26 @@ mod tests {
         music.browse_settings(PathField::SoundFont, &settings);
         let request = music.take_path_request().unwrap();
         assert!(music
-            .apply_path(request, file.clone(), &mut settings)
+            .apply_path(
+                request,
+                file.clone(),
+                &mut settings,
+                &mut crate::audio::Settings::default()
+            )
             .is_err());
         assert_eq!(settings.soundfont, old);
         #[cfg(target_os = "linux")]
         {
             music.browse_settings(PathField::Audiveris, &settings);
             let request = music.take_path_request().unwrap();
-            assert!(music.apply_path(request, file, &mut settings).is_err());
+            assert!(music
+                .apply_path(
+                    request,
+                    file,
+                    &mut settings,
+                    &mut crate::audio::Settings::default()
+                )
+                .is_err());
         }
     }
 
@@ -239,7 +306,12 @@ mod tests {
             b"/tmp/score-\xff.sf2".to_vec(),
         ));
         assert!(music
-            .apply_path(request, file, &mut settings)
+            .apply_path(
+                request,
+                file,
+                &mut settings,
+                &mut crate::audio::Settings::default()
+            )
             .unwrap_err()
             .to_string()
             .contains("Unicode"));

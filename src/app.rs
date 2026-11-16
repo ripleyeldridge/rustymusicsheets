@@ -654,6 +654,7 @@ impl MusicApp {
     }
 
     fn poll(&mut self, ctx: &egui::Context) {
+        self.music.configure_audio(&self.prefs.audio);
         self.renderer.poll(ctx);
         let mut detection_done = false;
         let mut detection_update = false;
@@ -721,7 +722,12 @@ impl MusicApp {
                         self.start_import(vec![path], ctx);
                     }
                     PickerTarget::Music(request) => {
-                        let result = self.music.apply_path(request, path, &mut self.prefs.music);
+                        let result = self.music.apply_path(
+                            request,
+                            path,
+                            &mut self.prefs.music,
+                            &mut self.prefs.audio,
+                        );
                         self.result(result);
                     }
                 },
@@ -1981,6 +1987,9 @@ impl MusicApp {
                 if let Some(field)=crate::music::settings_ui(ui, &mut self.prefs.music,self.picker.is_some()) {
                     self.music.browse_settings(field,&self.prefs.music);
                 }
+                if crate::music::audio_settings_ui(ui, &mut self.prefs.audio, self.picker.is_some()) {
+                    self.music.browse_audio_host(&self.prefs.audio);
+                }
                 ui.label("Open a score in Reader, then Music / OMR. Save preferences to retain engine settings.");
                 ui.separator();
                 ui.label(format!("Music folder: {}", self.paths.score_dir().display()));
@@ -2309,6 +2318,7 @@ impl eframe::App for MusicApp {
                 score.as_ref().zip(path.as_deref()),
                 &self.paths,
                 &mut self.prefs.music,
+                &mut self.prefs.audio,
                 busy,
             ) {
                 self.result(self.paths.save_preferences(&self.prefs));

@@ -1,0 +1,11 @@
+{
+  "native_only": true,
+  "downloads_during_build": false,
+  "dependencies": [
+    {"name": "nlohmann/json", "version": "3.11.3", "license": "MIT", "source": "../vendor/nlohmann/provenance.json", "usage": "vendored control JSON only"},
+    {"name": "JACK client library", "license": "LGPL-2.1-or-later", "source": "https://jackaudio.org/", "usage": "system shared library, optional live target"},
+    {"name": "FluidSynth", "minimum_version": "2.2", "license": "LGPL-2.1-or-later", "source": "https://github.com/FluidSynth/fluidsynth", "usage": "system shared library, optional live target"},
+    {"name": "OpenSSL libcrypto", "license": "system-version-dependent (OpenSSL 3: Apache-2.0)", "source": "https://openssl-library.org/", "usage": "system SHA256, optional protocol tests and live target"}
+  ],
+  "distribution_note": "No native shared libraries, SoundFonts, SDKs or plugins are bundled. Optional Debian packaging includes the helper, native dependency manifest and vendored JSON license/provenance; runtime libraries remain distribution-provided."
+}

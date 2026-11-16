@@ -63,6 +63,17 @@ jobs:
         run: cargo test --locked
       - name: Run Python Android tooling tests
         run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+      - name: Build optional native audio host and run no-audio tests
+        run: |
+          sudo apt-get install --yes --no-install-recommends \
+            cmake libjack-jackd2-dev libfluidsynth-dev libssl-dev
+          python3 scripts/build-audio-host.py --test
+      - name: Run native scheduler and protocol sanitizers
+        run: |
+          cmake -S native/audio-host -B target/audio-host-sanitize \
+            -DRMS_CORE_ONLY=ON -DRMS_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug
+          cmake --build target/audio-host-sanitize --parallel 2
+          ctest --test-dir target/audio-host-sanitize --output-on-failure
       - name: Run Clippy
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Build Linux release

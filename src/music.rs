@@ -83,6 +83,7 @@ pub struct Music {
     loading: Option<Receiver<Result<Loaded, String>>>,
     playback: Option<Transport>,
     synth_settings: Option<(String, String)>,
+    audio_settings: crate::audio::Settings,
     composition: Option<Composition>,
     xml: Option<PathBuf>,
     movements: Vec<PathBuf>,
@@ -108,6 +109,17 @@ pub struct Music {
 }
 
 impl Music {
+    pub(crate) fn configure_audio(&mut self, settings: &crate::audio::Settings) {
+        if &self.audio_settings != settings {
+            let active = self.playback.is_some();
+            self.stop();
+            self.audio_settings = settings.clone();
+            if active {
+                self.notice =
+                    "Audio backend changed. Press Play to start the selected engine.".into();
+            }
+        }
+    }
     pub fn open_for(&mut self, score: &Score, source: &Path, paths: &Paths, ctx: &egui::Context) {
         self.open = true;
         self.prepare_for(score, source, paths, ctx);
@@ -605,8 +617,9 @@ impl Music {
             .as_ref()
             .context("Recognize or load music first")?
             .clone();
-        self.playback = Some(Transport::start_with_master(
+        self.playback = Some(Transport::start_with_backend(
             settings.clone(),
+            self.audio_settings.clone(),
             score,
             self.options(),
             play,
@@ -661,7 +674,10 @@ impl Music {
                 )
                 .clicked()
             {
-                let result = if let Some(transport) = &self.playback {
+                let result = if matches!(state, Some(State::Failed)) {
+                    self.stop();
+                    self.start_transport(settings)
+                } else if let Some(transport) = &self.playback {
                     if playing {
                         transport.pause()
                     } else {
@@ -700,6 +716,14 @@ impl Music {
                     clock(snapshot.duration),
                     snapshot.state
                 ));
+                if let Some(audio) = snapshot.audio {
+                    ui.small(format!(
+                        "{} Hz · estimated output latency {:.1} ms · {} xruns",
+                        audio.sample_rate,
+                        audio.latency_frames as f64 * 1000.0 / f64::from(audio.sample_rate),
+                        audio.xruns,
+                    ));
+                }
             }
         });
         self.master_volume_ui(ui, ready);
@@ -900,8 +924,10 @@ impl Music {
         score: Option<(&Score, &Path)>,
         paths: &Paths,
         settings: &mut Settings,
+        audio_settings: &mut crate::audio::Settings,
         library_busy: bool,
     ) -> bool {
+        self.configure_audio(audio_settings);
         if !self.open {
             return false;
         }
@@ -925,13 +951,17 @@ impl Music {
                 };
                 ui.heading(&score.title);
                 ui.colored_label(Color32::YELLOW, "OMR output is unverified. Review notes, rhythm, repeats, and part grouping.");
-                ui.label("Original scores and library metadata are never rewritten. Audio uses an external FluidSynth process, not a VST host.");
+                ui.label("Original scores and library metadata are never rewritten. Legacy FluidSynth remains the default; the optional audio-host preview currently supports SoundFonts, not VST plugins.");
                 ui.collapsing("Engine settings", |ui| {
                     if let Some(field)=settings_ui(ui, settings, self.path_picker_active) {
                         self.browse_settings(field,settings);
                     }
+                    if audio_settings_ui(ui, audio_settings, self.path_picker_active) {
+                        self.browse_audio_host(audio_settings);
+                    }
                     save_settings = ui.button("Save music settings").clicked();
                 });
+                self.configure_audio(audio_settings);
                 let idle = self.job.is_none() && self.loading.is_none() && !library_busy && !self.path_picker_active;
                 ui.horizontal_wrapped(|ui| {
                     if ui.add_enabled(idle, egui::Button::new("Recognize with Audiveris")).clicked() {
@@ -1085,6 +1115,32 @@ pub(crate) fn settings_ui(
     }
     ui.label("Install Audiveris separately, including its Tesseract language data. Recognition runs locally. Audiveris is AGPLv3; FluidSynth is LGPL.");
     selected
+}
+
+pub(crate) fn audio_settings_ui(
+    ui: &mut egui::Ui,
+    settings: &mut crate::audio::Settings,
+    busy: bool,
+) -> bool {
+    use crate::audio::Backend;
+    ui.separator();
+    ui.label("Playback backend (Linux):");
+    egui::ComboBox::from_id_salt("audio_backend")
+        .selected_text(settings.backend.label())
+        .show_ui(ui, |ui| {
+            for backend in [Backend::Legacy, Backend::PipeWire, Backend::Jack] {
+                ui.selectable_value(&mut settings.backend, backend, backend.label());
+            }
+        });
+    ui.label("Audio-host executable (empty uses the installed companion):");
+    let browse = paths::entry(
+        ui,
+        PathField::AudioHost,
+        &mut settings.host_executable,
+        !busy,
+    );
+    ui.small("Preview requires a separately built rms-audio-host and an existing PipeWire-JACK/native JACK output. No automatic fallback or Wine changes. SoundFonts only; VST3 hosting follows separately.");
+    browse
 }
 
 fn program_label(program: u8) -> String {
@@ -1455,7 +1511,14 @@ mod tests {
                     ..Default::default()
                 },
                 |ctx| {
-                    music.show(ctx, Some((&score, &source)), &paths, &mut settings, false);
+                    music.show(
+                        ctx,
+                        Some((&score, &source)),
+                        &paths,
+                        &mut settings,
+                        &mut crate::audio::Settings::default(),
+                        false,
+                    );
                 },
             );
             for shape in output.shapes {
@@ -1514,6 +1577,7 @@ mod tests {
             error: None,
             source_page: Some(1),
             score_tick: 1920,
+            audio: None,
         };
         assert_eq!(music.follow_page_at(&score, &snapshot), None);
         music.follow_pages = true;

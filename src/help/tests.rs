@@ -63,6 +63,38 @@ fn current_docs_and_embedded_music_reference_remain_consistent() {
         .starts_with(&format!("RustyMusicSheets {VERSION} preview")));
 }
 
+#[test]
+fn audio_host_setup_documents_dependencies_activation_and_separate_builds() {
+    let article = topics()
+        .iter()
+        .find(|topic| topic.id == "audio-host")
+        .unwrap()
+        .body;
+    for documentation in [
+        include_str!("../../README.md"),
+        include_str!("../../README.txt"),
+        include_str!("../../assets/rustymusicsheets.1"),
+        article,
+    ] {
+        for term in [
+            "libjack-jackd2-dev",
+            "libfluidsynth-dev",
+            "libssl-dev",
+            "pipewire-jack",
+            "cargo build --locked --release",
+            "scripts/build-audio-host.py --test",
+            "target/audio-host/rms-audio-host",
+            "--core-only",
+            "FluidSynth (legacy",
+        ] {
+            assert!(
+                documentation.contains(term),
+                "Missing audio-host setup instruction: {term}"
+            );
+        }
+    }
+}
+
 fn visible_text(output: &egui::FullOutput, needle: &str) -> Option<egui::Pos2> {
     output.shapes.iter().find_map(|shape| {
         if let egui::Shape::Text(label) = &shape.shape {
@@ -107,7 +139,7 @@ fn click(help: &mut Help, ctx: &egui::Context, size: [f32; 2], label: &str) {
 fn embedded_articles_are_unique_and_cover_all_workflows() {
     let ids: HashSet<_> = topics().iter().map(|t| t.id).collect();
     assert_eq!(ids.len(), topics().len());
-    assert_eq!(topics().len(), 28);
+    assert_eq!(topics().len(), 29);
     for id in [
         "welcome",
         "layout",
@@ -125,6 +157,7 @@ fn embedded_articles_are_unique_and_cover_all_workflows() {
         "instrument-manual",
         "instrument-auto",
         "music",
+        "audio-host",
         "lists",
         "list-order",
         "reading",
@@ -159,6 +192,7 @@ fn search_matches_body_keywords_and_all_terms_case_insensitively() {
     assert!(ids("WaL").contains(&"backups"));
     assert!(ids("USB Bluetooth").contains(&"shortcuts"));
     assert!(ids("large libraries").contains(&"instrument-detect"));
+    assert!(ids("audio host latency").contains(&"audio-host"));
     assert!(ids("Alto Violoncello").contains(&"instrument-manual"));
     assert_eq!(search("  \t ").len(), topics().len());
     assert!(search("no_such_help_word").is_empty());

@@ -1,0 +1,84 @@
+rms-audio-host protocol 1 — SoundFont foundation
+
+Launch: rms-audio-host serve --socket ABSOLUTE_PATH --parent-pid PID
+The Rust parent owns a private 0700 directory, 0600 socket and 0600 plan.
+Both endpoints verify Linux SO_PEERCRED UID/PID. The helper connects to the
+parent. Process isolation is not a security sandbox.
+
+Frames: nonzero unsigned 32-bit big-endian payload length, then UTF-8 JSON.
+Payloads are <=1 MiB; partial headers/bodies survive nonblocking reads.
+Native parsing bounds nesting and rejects duplicate object keys.
+Every object has version:1, session:64 lowercase hex characters,
+request_id:unsigned integer, epoch:unsigned integer, type:string.
+Session is a per-transport identifier, not a secret/authentication credential.
+Score/movement binding remains in Rust; snapshots are not shared across
+transport instances, and each transferred plan is digest-checked.
+
+Handshake:
+Parent sends hello at request_id=0, epoch=0.
+Helper replies hello with capabilities:["soundfont","jack"].
+Parent sends load at id=1, epoch=0:
+  plan_path, plan_sha256, plan_bytes
+  soundfont:absolute path, autoplay:boolean
+  master_volume:0..100, tempo_scale:0.1..4
+One load per process; graph replacement starts a fresh session.
+Plan files must be private, owned regular files, not symlinks, <=64 MiB.
+
+Plan:
+  version:1, ticks_per_quarter:960, duration_ticks
+  tempos:[{tick,bpm},...] ordered/unique, starting at tick zero
+  parts:[{id,enabled,volume,program,notes},...]
+  notes:[{start_tick,duration_ticks,pitch,velocity},...]
+Limits: 1..32 parts; unique nonempty <=256-byte non-NUL IDs; <=250000 total
+notes+tempos; maximum tick82944000; <=864000 base seconds.
+Notes have positive duration and end within plan duration; pitch/program/
+volume <=127; velocity1..127. Merge overlapping same-pitch notes in Rust;
+native independently rejects unmerged overlaps. BPM is finite, >0, <=60000.
+M0 volume is legacy CC7, not a duplicate post-part gain. SoundFont nodes
+have gain .2; master gain is smoothed after stereo summing.
+
+Commands:
+  play, pause, stop
+  seek {delta:relative playback seconds}
+  tempo {scale:0.1..4}
+  mix {part_id,enabled,volume:0..127,program:0..127}
+  master_volume {percent:0..100}
+  shutdown
+Each command increases request_id. Play/pause/stop/seek/tempo increase epoch;
+mix/master/shutdown keep the epoch. Relative seeks multiply delta by scale.
+Acknowledgement may coalesce to the latest applied request, but must match
+that request's epoch. Old in-flight epochs cannot update pages after a seek.
+
+Status (~25 Hz and after commands):
+  type:status, request_id:last_applied, epoch:applied_epoch
+  state:playing|paused|stopped|finished
+  position, rendered_position, duration:BASE seconds before tempo scaling
+  score_tick:estimated audible tick, tempo_scale
+  sample_rate, latency_frames, xruns
+GUI seconds are position/tempo_scale and duration/tempo_scale.
+Do not extrapolate through a stalled helper. Supported downstream latency
+is <=10 seconds. Sparse slope/hold history accounts for tempo changes,
+deliberate control gaps and the output drain. Exhaustion fails closed.
+Device/rate loss or processing failure ends the session.
+
+Fatal error: type:error, message, last safely applied request_id/epoch.
+Rust bounds connect/load/heartbeat/frame/command deadlines and output logs.
+Failure preserves the reader and reports an error; no substitution, silent
+legacy fallback or restart loop. Cleanup affects only the owned process
+group/private files. Explicit Play starts a new attempt.
+
+Real-time ownership:
+JACK owns scheduling/rendering. Control code parses JSON, loads plans/banks
+and applies graph edits behind an atomic quiescence handshake. No host
+allocation, mutex, IPC, disk I/O or logging occurs inside the callback.
+FluidSynth has its own internal 64-frame quantum; precise host event
+dispatch does not establish sample-exact acoustic onset. Reverb/chorus
+are disabled for bounded voice flushing. Output sanitizes non-finite
+samples and clamps peaks.
+
+Tests use fake instruments, a fake helper or link-time JACK doubles unless
+an explicitly ignored real-helper smoke test is selected. The latter keeps
+master muted and is not an acoustic/loopback test.
+
+Not yet implemented: scan mode, VST3/editors/opaque state, per-part worker
+isolation, yabridge/Wine setup, user-selectable output routing.

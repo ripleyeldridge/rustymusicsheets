@@ -1,4 +1,5 @@
 pub mod app;
+pub mod audio;
 pub mod display_names;
 pub mod document;
 pub mod folder;

@@ -32,10 +32,11 @@ pub struct Snapshot {
     pub error: Option<String>,
     pub source_page: Option<u32>,
     pub score_tick: u64,
+    pub audio: Option<crate::audio::Diagnostics>,
 }
 
 #[derive(Debug)]
-enum Command {
+pub(crate) enum Command {
     Play,
     Pause,
     Stop,
@@ -70,25 +71,58 @@ impl Transport {
         autoplay: bool,
         master_volume: u8,
     ) -> Result<Self> {
+        Self::start_with_backend(
+            settings,
+            crate::audio::Settings::default(),
+            score,
+            options,
+            autoplay,
+            master_volume,
+        )
+    }
+    pub fn start_with_backend(
+        settings: Settings,
+        audio: crate::audio::Settings,
+        score: Composition,
+        options: MidiOptions,
+        autoplay: bool,
+        master_volume: u8,
+    ) -> Result<Self> {
         ensure!(master_volume <= 100, "Master volume must be 0–100%");
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = (settings, score, options, autoplay, master_volume);
+            let _ = (settings, audio, score, options, autoplay, master_volume);
             anyhow::bail!("Synth transport is currently available only on Linux");
         }
         #[cfg(target_os = "linux")]
         {
-            let mut timeline = Timeline::new(&score, &options)?;
-            timeline.autoplay = autoplay;
-            timeline.master_volume = master_volume;
+            let plan = if audio.backend == crate::audio::Backend::Legacy {
+                None
+            } else {
+                Some(crate::audio::plan::compile(&score, &options)?)
+            };
+            let timeline = if plan.is_none() {
+                let mut timeline = Timeline::new(&score, &options)?;
+                timeline.autoplay = autoplay;
+                timeline.master_volume = master_volume;
+                Some(timeline)
+            } else {
+                None
+            };
+            let duration = plan.as_ref().map_or_else(
+                || timeline.as_ref().unwrap().duration,
+                |plan| plan.seconds_at(plan.duration_ticks),
+            );
+            let pages = score.page_map;
             let (commands, rx) = bounded(128);
             let snapshot = Arc::new(Mutex::new(Snapshot {
                 state: State::Starting,
                 position: 0.0,
-                duration: timeline.duration / options.tempo_scale,
+                duration: duration / options.tempo_scale,
                 error: None,
                 source_page: None,
                 score_tick: 0,
+                audio: None,
             }));
             let cancelled = Arc::new(AtomicBool::new(false));
             let process = Arc::new(Mutex::new(None));
@@ -96,15 +130,33 @@ impl Transport {
             std::thread::Builder::new()
                 .name("synth-transport".into())
                 .spawn(move || {
-                    let result = linux::run(
-                        settings,
-                        timeline,
-                        options.tempo_scale,
-                        rx,
-                        &view,
-                        &stop,
-                        slot,
-                    );
+                    let result = if let Some(plan) = plan {
+                        crate::audio::supervisor::run(
+                            crate::audio::supervisor::Session {
+                                audio,
+                                settings,
+                                plan,
+                                pages,
+                                autoplay,
+                                tempo_scale: options.tempo_scale,
+                                master_volume,
+                            },
+                            rx,
+                            &view,
+                            &stop,
+                            slot,
+                        )
+                    } else {
+                        linux::run(
+                            settings,
+                            timeline.unwrap(),
+                            options.tempo_scale,
+                            rx,
+                            &view,
+                            &stop,
+                            slot,
+                        )
+                    };
                     if let Err(error) = result {
                         if !stop.load(Ordering::Relaxed) {
                             let mut state = view.lock().unwrap_or_else(|e| e.into_inner());

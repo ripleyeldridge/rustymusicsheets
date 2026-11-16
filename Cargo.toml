@@ -34,6 +34,7 @@ eframe = { version = "=0.31.1", default-features = false, features = ["x11", "wa
 [target.'cfg(target_os = "linux")'.dependencies]
 async-io = "2"
 futures-lite = "2"
+libc = "0.2"
 zbus = "=4.4.0"
 
 [target.'cfg(windows)'.dependencies]

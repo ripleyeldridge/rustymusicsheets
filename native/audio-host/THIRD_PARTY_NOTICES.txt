@@ -1,0 +1,25 @@
+Native audio helper dependencies (not used by normal Cargo or Android builds)
+
+nlohmann/json 3.11.3 is vendored under ../vendor/nlohmann.
+Copyright (c) 2013-2023 Niels Lohmann.
+Its full MIT license is in ../vendor/nlohmann/LICENSE.MIT.
+Exact upstream URLs and SHA256 digests are in provenance.json in that directory.
+
+The optional live host dynamically links system JACK (LGPL-2.1-or-later)
+and FluidSynth (LGPL-2.1-or-later). The protocol layer dynamically links
+system OpenSSL libcrypto (OpenSSL 3 is Apache-2.0; older versions have their
+own terms). No copies of those libraries or their development headers are
+redistributed in this source tree. Consult the exact system distribution
+copyright files and upstream licenses when packaging the helper.
+
+Upstreams:
+https://jackaudio.org/
+https://github.com/FluidSynth/fluidsynth
+https://openssl-library.org/
+https://github.com/nlohmann/json
+
+No VST3 SDK, yabridge, Wine, SoundFonts or third-party plugins are bundled.
+Optional Debian packages include this notice, dependencies.json and the
+nlohmann license/provenance under /usr/share/doc/rustymusicsheets/audio-host/.
+Runtime shared libraries are provided separately by the distribution and
+listed in the package's generated Depends field, not bundled into the helper.
