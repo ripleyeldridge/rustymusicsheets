@@ -70,7 +70,7 @@ fn click(help: &mut Help, ctx: &egui::Context, size: [f32; 2], label: &str) {
 fn embedded_articles_are_unique_and_cover_all_workflows() {
     let ids: HashSet<_> = topics().iter().map(|t| t.id).collect();
     assert_eq!(ids.len(), topics().len());
-    assert_eq!(topics().len(), 27);
+    assert_eq!(topics().len(), 28);
     for id in [
         "welcome",
         "layout",
@@ -87,6 +87,7 @@ fn embedded_articles_are_unique_and_cover_all_workflows() {
         "instrument-apply",
         "instrument-manual",
         "instrument-auto",
+        "music",
         "lists",
         "list-order",
         "reading",

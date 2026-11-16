@@ -30,6 +30,7 @@ This project was built with substantial AI assistance. It is a working, evolving
 - **Read during performance** with single/two-page display, fit-width and zoom controls, bookmarks, remembered positions, fullscreen, and page turning by keyboard, tap/click, or keyboard-emulating pedal.
 - **Keep the reader awake**, optionally requesting temporary screen-idle and suspend protection without changing permanent desktop settings.
 - **Find instructions inside the app** using a searchable, clickable offline help tree.
+- **Recognize printed music and audition selected parts on Linux** using optional Audiveris and FluidSynth helpers, with MusicXML/MIDI export, instrument choices, and tempo scaling.
 
 Original score documents are not rewritten by metadata editing or detection. Instrument metadata is stored in the local library database, **not embedded into the PDFs/images**. Scores are not uploaded for OCR.
 ## Spotlight: offline instrument detection
@@ -132,7 +133,7 @@ Files imported from outside the selected folder are copied into it. Existing fil
 ## Where to find help
 Press **F1**, or choose **Help → Help contents**, for the built-in offline user guide.
 
-- **27 clickable topics** cover setup, imports, folder watching, metadata, instruments/OCR, setlists, reading, pedals, settings, backups, CLI use, and troubleshooting.
+- **28 clickable topics** cover setup, imports, folder watching, metadata, instruments/OCR, MusicXML/MIDI playback, setlists, reading, pedals, settings, backups, CLI use, and troubleshooting.
 - **Search help** searches topic titles, keywords, and article text. Click a result to read it; **Clear** restores the full tree.
 - **Help → Keyboard shortcuts** opens the keyboard and pedal reference.
 - **Help → About RustyMusicSheets** shows the version, author, release year, license, and GitHub profile link.
@@ -151,6 +152,51 @@ Help is embedded in the executable and works without an internet connection. The
 Manual scans create proposals; they do not silently write assigned metadata. Existing protected choices require explicit replacement confirmation. For manual entry, use **Edit metadata → Instruments → + Add instrument**, then **Save metadata**.
 
 Automatic detection for new GUI imports is optional and off by default. It fills only clear, empty, unprotected instrument values. Ambiguous labels such as bare “Alto 1” are not blindly treated as saxophone.
+
+## Music recognition, MusicXML export, and MIDI playback (Linux)
+This is an **experimental, review-first OMR workflow**, separate from instrument-label detection. Audiveris recognizes printed notation into MusicXML; RustyMusicSheets interprets supported notation and drives a separately installed FluidSynth process. No scores are uploaded, and source documents and library metadata remain unchanged.
+
+### Setup
+- Install [Audiveris](https://github.com/Audiveris/audiveris/releases) separately using its official Linux package. Recent releases include Java. Configure its executable in **Settings → Music recognition and MIDI playback**, or **Reader → Music / OMR → Engine settings**. An absolute path such as `/opt/audiveris/bin/Audiveris` works; a Flatpak command with arguments is not an executable path—use a launcher script if necessary.
+- Install FluidSynth and a SoundFont, for example `sudo apt install fluidsynth fluid-soundfont-gm`. Choose a `.sf2`/`.sf3` bank in settings; common system banks are detected automatically.
+- Audiveris needs its own OCR language setup, even if the application's existing Tesseract label detector works. Install English through Audiveris's language management, or point `TESSDATA_PREFIX` at compatible full [Tesseract tessdata](https://github.com/tesseract-ocr/tessdata) models before launching the app. LSTM-only distro models may not provide the legacy data required by Audiveris.
+- Save preferences. Missing helpers, unsupported targets, malformed notation, and audio-device failures are reported; optional helpers are not bundled or automatically installed.
+
+### Reader workflow
+1. Open a library score, then **Music / OMR → Recognize with Audiveris**. Recognition runs in the background and can be cancelled.
+2. If several movements are exported, choose one and **Load movement**. Previously successful results are retained if another recognition attempt fails.
+3. Review warnings and the exported notation. Part names and instrument guesses can be wrong: a cello line may be labelled “Voice.” Choose **Cello (GM 43)** explicitly when needed; Piano is GM 1. Numbers in the UI/CLI are one-based.
+4. Tick the parts to hear and set each **Volume %** independently. A recognized piano grand staff stays one selectable part, with both staves and voices. Part choices, volume, instruments and tempo apply live and are remembered for that recognized movement.
+5. Use **Play selected parts / Pause**, **Rewind 5s**, **Fast-forward 5s**, and **Stop audio**. Pause freezes position and silences active voices; resuming or seeking reconstructs notes held at the target position. Stop resets to the beginning. Seek while paused to stay paused, or seek before the first Play to prepare a starting position. Instrument envelopes restart on reconstructed notes; this is musical-position seeking, not sample-exact audio seeking.
+6. Enter destination filenames and **Export MusicXML** or **Export selected MIDI**. Existing files are never overwritten. `.mxl` remains compressed MusicXML; use the matching extension. MusicXML preserves all recognized parts; MIDI reflects your selected parts, instruments, per-part channel volumes, and tempo.
+
+### Performance accompaniment
+The **Master volume %** slider below the transport controls adjusts all instruments together, from mute (0%) to normal output (100%), without changing their individual balances. It applies live and is remembered per recognized movement. The same slider appears in Music / OMR. This is a playback-output control; exported MIDI retains the individual part levels.
+After saving engine settings, enter **Performance**. The bottom **Accompaniment** strip automatically loads saved recognition for the current score without opening settings. If no usable result exists, click **Recognize music** and use the visible progress/cancel controls. Multiple movements require an explicit **Load movement** choice.
+
+The strip keeps **Rewind 5s**, **Play/Pause**, **Fast-forward 5s**, **Stop**, and position/duration available while the score remains visible. Open **Parts / volume** to choose individual parts, set independent 0–100% levels, or change their GM instruments and tempo. Unchecking a part mutes it without restarting the timeline. Live mixing supports up to 15 musical parts; MIDI percussion channel 10 is reserved. **Music settings / results** opens the full settings/review/export window without leaving performance mode.
+
+Closing the music window does not stop accompaniment; the performance strip remains available. Changing/removing the score, detecting a changed backing file, or exiting the application stops the synth. Page turns remain independent of musical position. Escape closes an open music window/mixer before exiting performance.
+
+Use **Load corrected or existing MusicXML** to load a private copy of a `.mxl`, `.musicxml`, or `.xml` file edited externally, for example in Audiveris or MuseScore. This does not import a new library score or alter assigned instrument metadata.
+
+Successful recognition artifacts and logs live under the app-data `omr/<source-hash>/run-*/` tree, with a small `omr-index/` for reuse across restarts. Per-movement mixer settings live under `omr-mix/`, keyed by source and MusicXML content hashes. Include app data in backups. Failed/cancelled runs and temporary helper files are cleaned up. The backing score is hash-checked when loading results; detected later changes invalidate playback until the score is rescanned/reopened.
+
+Supported playback includes partwise MusicXML, chords/voices, multi-staff parts, rests, transposition, ties, tempo changes, basic repeats and first/second endings. Recognition and performance are **not guaranteed faithful**: expression, pedal, grace notes, advanced navigation/nested repeats and other unsupported constructs are warned about or approximated. GUI playback uses an application sequencer driving a persistent FluidSynth command process; the CLI retains one-shot MIDI playback. Note velocity is fixed, with independent part volume. A full notation editor, automatic score following, looping, metronome, VST hosting, and Android/Windows OMR/audio are not implemented.
+
+Audiveris is **AGPLv3**, FluidSynth is **LGPL**, and SoundFonts have their own licenses. They remain separately installed programs/data, not components embedded into or relicensed with this MIT application.
+
+### Standalone music commands
+These commands do not open or change the library database. Output directories/files are explicit:
+
+```bash
+rustymusicsheets --omr "/path/to/score.pdf" "/path/to/results" --audiveris /opt/audiveris/bin/Audiveris
+rustymusicsheets --inspect-musicxml "/path/to/results/score.mxl"
+rustymusicsheets --midi "/path/to/results/score.mxl" "/path/to/piano.mid" --parts P2
+rustymusicsheets --midi "/path/to/results/score.mxl" "/path/to/cello.mid" --parts P1 --program P1=43 --play --play-seconds 5
+```
+
+Recognition prints the exact generated movement paths; use those in subsequent commands. Part IDs are read from MusicXML, not guessed from this example. Optional MIDI arguments include `--tempo-scale 0.8`, `--soundfont /absolute/bank.sf2`, and `--fluidsynth /absolute/fluidsynth`. CLI engines use their automatic defaults or explicit options, not GUI preferences. `--play-seconds` requires `--play`; without a duration playback continues until the MIDI finishes.
 
 ## Useful command-line options
 ```bash
@@ -173,9 +219,9 @@ By default:
 The app honors `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, and `XDG_CACHE_HOME`. For a complete backup, **close the app**, then copy the selected music folder **and** the entire app data and config directories. Automatic pre-rescan/schema-migration snapshots contain metadata only, not copies of your scores.
 
 ## Current limitations
-Not implemented yet: annotations, crop/rotation/page reordering, in-score links/repeats, vertical/half-page display, audio/metronome, MIDI, ChordPro/text, assembling image sequences, printing/export, portable backup/restore, cloud integration, and multi-device sync.
+Not implemented yet: annotations, crop/rotation/page reordering, in-score navigation links, vertical/half-page display, metronome, VST hosting, ChordPro/text, assembling image sequences, document printing/export, portable backup/restore, cloud integration, and multi-device sync. MusicXML/MIDI export and experimental Linux MIDI playback are available as described above.
 
-OCR is conservative label detection, not musical-notation recognition. Faint scans, handwriting, uncommon abbreviations, and labels outside the inspected regions may need manual entry. Physical pedals and touchscreens require device-specific testing. No compatibility is claimed for MobileSheets proprietary formats.
+Instrument OCR remains conservative label detection; musical transcription uses the separate optional Audiveris workflow. Faint scans, handwriting, uncommon abbreviations, and labels outside inspected regions may need manual entry. Audiveris targets printed notation, not handwriting. Physical pedals and touchscreens require device-specific testing. No compatibility is claimed for MobileSheets proprietary formats.
 
 ## Development checks
 ### Platform backends

@@ -3,6 +3,9 @@ RustyMusicSheets Android foundation
 
 This is the experimental Android foundation distributed with the 0.2.2
 prerelease, NOT a production Android release or desktop feature parity.
+Work toward M0 now includes generated fixtures, isolated provider/import/
+rendering smoke tests and a draft CI workflow; see TESTING.txt and CI.txt.
+Hosted CI must pass before the next roadmap milestone is considered ready.
 
 Implemented
 -----------

@@ -18,9 +18,13 @@ def run(*args, env=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("apk", type=Path)
+    parser.add_argument("--abi", choices=("arm64-v8a", "x86_64"), default="arm64-v8a")
+    parser.add_argument("--package", default="org.ripleyeldridge.rustymusicsheets")
     parser.add_argument("--sdk", type=Path, default=Path(os.environ.get("ANDROID_HOME", Path.home() / "Android/Sdk")))
     parser.add_argument("--ndk", type=Path)
     args = parser.parse_args()
+    if not __debug__:
+        parser.error("APK verification requires assertions; disable Python -O/PYTHONOPTIMIZE")
     sdk = args.sdk
     ndk = args.ndk or Path(os.environ.get("ANDROID_NDK_ROOT", sdk / "ndk/28.2.13676358"))
     tools = sdk / "build-tools/36.0.0"
@@ -33,10 +37,10 @@ def main():
     badging = run(tools / "aapt", "dump", "badging", args.apk)
     manifest = run(tools / "aapt", "dump", "xmltree", args.apk, "AndroidManifest.xml")
     permissions = run(tools / "aapt", "dump", "permissions", args.apk)
-    assert "name='org.ripleyeldridge.rustymusicsheets'" in badging, "Unexpected package"
+    assert f"name='{args.package}'" in badging, "Unexpected package"
     assert "sdkVersion:'26'" in badging, "Unexpected minimum API"
     assert "targetSdkVersion:'36'" in badging, "Unexpected target API"
-    assert "native-code: 'arm64-v8a'" in badging, "Expected ARM64 ABI"
+    assert f"native-code: '{args.abi}'" in badging, "Unexpected ABI"
     assert "application-debuggable" in badging, "Expected development APK"
     for value in (
         "RustyMusicSheets", "android.app.NativeActivity", "android.intent.action.MAIN",
@@ -50,10 +54,10 @@ def main():
         with zipfile.ZipFile(args.apk) as bundle:
             assert bundle.testzip() is None, "Corrupt APK ZIP member"
             libraries = [name for name in bundle.namelist() if name.startswith("lib/") and name.endswith(".so")]
-            assert libraries == ["lib/arm64-v8a/librustymusicsheets.so"], f"Unexpected native libraries: {libraries}"
+            assert libraries == [f"lib/{args.abi}/librustymusicsheets.so"], f"Unexpected native libraries: {libraries}"
             data = bundle.read(libraries[0])
             assert data[:6] == b"\x7fELF\x02\x01", "Expected little-endian ELF64"
-            assert struct.unpack_from("<H", data, 18)[0] == 183, "Expected AArch64 ELF"
+            assert struct.unpack_from("<H", data, 18)[0] == {"arm64-v8a": 183, "x86_64": 62}[args.abi], "Unexpected ELF architecture"
             offset = struct.unpack_from("<Q", data, 32)[0]
             entry_size, count = struct.unpack_from("<HH", data, 54)
             alignments = []
@@ -75,7 +79,7 @@ def main():
     print("Verified APK:", args.apk)
     print("Bytes:", args.apk.stat().st_size)
     print("SHA256:", hashlib.sha256(args.apk.read_bytes()).hexdigest())
-    print("API 26 minimum; target API 36; ARM64; debug-signed; no broad storage permission.")
+    print(f"API 26 minimum; target API 36; {args.abi}; debug-signed; no broad storage permission.")
     print("Device execution has NOT been verified by this script.")
 
 
