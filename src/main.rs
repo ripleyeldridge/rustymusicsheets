@@ -19,6 +19,10 @@ fn run() -> Result<()> {
                   rustymusicsheets --import PATH   Import PDF/PNG/JPEG or a folder recursively\n\
                   rustymusicsheets --list          List scores in the library\n\
                   rustymusicsheets --detect-instruments [ID]  Create instrument proposals\n\
+                  rustymusicsheets --omr SOURCE OUTPUT_DIR [--audiveris EXE]  Recognize to MusicXML (Linux)\n\
+                  rustymusicsheets --inspect-musicxml FILE  List recognized parts and warnings\n\
+                  rustymusicsheets --midi FILE OUTPUT.mid [--parts P1,P2] [--program P1=43]\n\
+                    [--tempo-scale 0.8] [--play] [--play-seconds 5] [--soundfont FILE] [--fluidsynth EXE]\n\
                   rustymusicsheets --check         Check PDF and OCR helper programs\n\
                   rustymusicsheets --smoke-test    Open the UI for three seconds\n\n\
                   Library/config/cache respect XDG directory variables.",
@@ -40,6 +44,11 @@ fn run() -> Result<()> {
             println!("{tool}: available");
         }
         return Ok(());
+    }
+    if let Some(command @ ("--omr" | "--inspect-musicxml" | "--midi")) =
+        command.as_deref().and_then(|s| s.to_str())
+    {
+        return rustymusicsheets::music_cli::run(command, args.collect());
     }
     let paths = Paths::discover()?;
     match command.as_deref().and_then(|s| s.to_str()) {

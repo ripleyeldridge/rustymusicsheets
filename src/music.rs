@@ -1,0 +1,1404 @@
+use crate::{
+    app::expand_path,
+    model::{Paths, Score},
+    notation::{self, Composition, MidiOptions},
+    omr::{RecognitionArtifacts, RecognitionJob, RecognitionUpdate, Settings},
+    playback::{State, Transport},
+};
+use anyhow::{bail, Context, Result};
+use crossbeam_channel::{bounded, Receiver};
+use eframe::egui::{self, Color32};
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::BTreeMap,
+    io::{Read, Write},
+    path::{Path, PathBuf},
+};
+
+const MAX_EXPORT: u64 = 64 * 1024 * 1024;
+
+#[derive(Serialize, Deserialize)]
+struct SavedResults {
+    hash: String,
+    movements: Vec<PathBuf>,
+}
+
+fn midi_volume(percent: u8) -> u8 {
+    ((u16::from(percent.min(100)) * 127 + 50) / 100) as u8
+}
+fn clock(seconds: f64) -> String {
+    let seconds = seconds.max(0.0).floor() as u64;
+    format!("{}:{:02}", seconds / 60, seconds % 60)
+}
+
+fn full_volume() -> u8 {
+    100
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedMix {
+    selected: BTreeMap<String, bool>,
+    programs: BTreeMap<String, u8>,
+    volumes: BTreeMap<String, u8>,
+    tempo_scale: f64,
+    #[serde(default = "full_volume")]
+    master_volume: u8,
+}
+
+struct Loaded {
+    composition: Composition,
+    path: PathBuf,
+    source_stamp: SourceStamp,
+    music_hash: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SourceStamp {
+    size: u64,
+    modified: std::time::SystemTime,
+}
+
+fn source_stamp(path: &Path) -> Result<SourceStamp> {
+    let metadata = std::fs::metadata(path)?;
+    anyhow::ensure!(metadata.is_file(), "Backing score is not a regular file");
+    Ok(SourceStamp {
+        size: metadata.len(),
+        modified: metadata.modified()?,
+    })
+}
+#[derive(Default)]
+pub struct Music {
+    pub open: bool,
+    binding: Option<(i64, String)>,
+    source: Option<PathBuf>,
+    source_stamp: Option<SourceStamp>,
+    job: Option<RecognitionJob>,
+    loading: Option<Receiver<Result<Loaded, String>>>,
+    playback: Option<Transport>,
+    synth_settings: Option<(String, String)>,
+    composition: Option<Composition>,
+    xml: Option<PathBuf>,
+    movements: Vec<PathBuf>,
+    movement: usize,
+    selected: BTreeMap<String, bool>,
+    programs: BTreeMap<String, u8>,
+    volumes: BTreeMap<String, u8>,
+    mix_path: Option<PathBuf>,
+    mix_dirty: Option<std::time::Instant>,
+    pub controls_active: bool,
+    tempo_scale: f64,
+    master_volume: u8,
+    load_path: String,
+    xml_destination: String,
+    midi_destination: String,
+    notice: String,
+    error: Option<String>,
+}
+
+impl Music {
+    pub fn open_for(&mut self, score: &Score, source: &Path, paths: &Paths, ctx: &egui::Context) {
+        self.open = true;
+        self.prepare_for(score, source, paths, ctx);
+    }
+
+    pub fn prepare_for(
+        &mut self,
+        score: &Score,
+        source: &Path,
+        paths: &Paths,
+        ctx: &egui::Context,
+    ) {
+        let binding = Some((score.id, score.hash.clone()));
+        if self.binding != binding || self.source.as_deref() != Some(source) {
+            self.reset();
+            self.binding = binding;
+            self.source = Some(source.to_owned());
+            self.tempo_scale = 1.0;
+            self.master_volume = 100;
+            self.xml_destination.clear();
+            self.midi_destination = paths
+                .data
+                .join("exports")
+                .join(format!(
+                    "{}-selection.mid",
+                    &score.hash[..score.hash.len().min(12)]
+                ))
+                .display()
+                .to_string();
+            match read_results(paths, &score.hash) {
+                Ok(Some(movements)) => {
+                    self.movements = movements;
+                    if self.movements.len() == 1 {
+                        self.start_load(self.movements[0].clone(), false, paths, ctx);
+                    } else {
+                        self.notice =
+                            "Choose a recognized movement and click Load movement.".into();
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => self.error = Some(format!("Saved OMR results: {error:#}")),
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        let _ = self.save_mix();
+        self.stop();
+        self.source = None;
+        self.source_stamp = None;
+        self.job.take();
+        self.loading.take();
+        self.composition = None;
+        self.xml = None;
+        self.movements.clear();
+        self.movement = 0;
+        self.selected.clear();
+        self.programs.clear();
+        self.volumes.clear();
+        self.mix_path = None;
+        self.mix_dirty = None;
+        self.controls_active = false;
+        self.notice.clear();
+        self.error = None;
+        self.load_path.clear();
+    }
+
+    pub fn invalidate_unless(&mut self, current: Option<(i64, String)>) {
+        if self.binding.is_some() && self.binding != current {
+            self.reset();
+            self.binding = None;
+            self.open = false;
+        }
+    }
+
+    pub fn stop(&mut self) {
+        self.playback.take();
+        self.synth_settings = None;
+    }
+
+    pub fn poll(&mut self, paths: &Paths, ctx: &egui::Context) {
+        if self
+            .mix_dirty
+            .is_some_and(|at| at.elapsed() >= std::time::Duration::from_millis(250))
+        {
+            if let Err(error) = self.save_mix() {
+                self.error = Some(format!("Saving part mix: {error:#}"));
+            }
+        }
+        if let (Some(source), Some(stamp)) = (&self.source, &self.source_stamp) {
+            if source_stamp(source).ok().as_ref() != Some(stamp) {
+                self.stop();
+                self.composition = None;
+                self.xml = None;
+                self.source_stamp = None;
+                self.error = Some("The backing score changed or is unavailable. Rescan and reopen Music / OMR before using these results.".into());
+            }
+        }
+        let updates = self.job.as_mut().map(|job| job.poll()).unwrap_or_default();
+        for update in updates {
+            match update {
+                RecognitionUpdate::Progress(message) => self.notice = message,
+                RecognitionUpdate::Finished(result) => {
+                    self.job.take();
+                    match result {
+                        Ok(artifacts) => {
+                            if self.binding.as_ref().map(|b| &b.1) != Some(&artifacts.source_hash) {
+                                continue;
+                            }
+                            if let Err(error) = save_results(paths, &artifacts) {
+                                self.error = Some(format!("Saving result index: {error:#}"));
+                            }
+                            self.movements = artifacts.movements;
+                            self.movement = 0;
+                            self.notice = format!(
+                                "Recognition produced {} movement(s). Review before relying on playback.",
+                                self.movements.len()
+                            );
+                            if self.movements.len() == 1 {
+                                self.start_load(self.movements[0].clone(), false, paths, ctx);
+                            }
+                        }
+                        Err(error) => self.error = Some(error),
+                    }
+                }
+            }
+        }
+        if let Some(result) = self.loading.as_ref().and_then(|rx| rx.try_recv().ok()) {
+            self.loading = None;
+            match result {
+                Ok(loaded) => {
+                    self.stop();
+                    self.master_volume = 100;
+                    self.source_stamp = Some(loaded.source_stamp);
+                    self.selected = loaded
+                        .composition
+                        .parts
+                        .iter()
+                        .map(|part| (part.id.clone(), true))
+                        .collect();
+                    self.volumes = loaded
+                        .composition
+                        .parts
+                        .iter()
+                        .map(|part| (part.id.clone(), 100))
+                        .collect();
+                    self.mix_path = self.binding.as_ref().map(|(_, hash)| {
+                        paths
+                            .data
+                            .join("omr-mix")
+                            .join(hash)
+                            .join(format!("{}.json", loaded.music_hash))
+                    });
+                    self.programs = loaded
+                        .composition
+                        .parts
+                        .iter()
+                        .map(|part| (part.id.clone(), part.program))
+                        .collect();
+                    self.error = None;
+                    if let Err(error) = self.load_mix() {
+                        self.error = Some(format!("Saved part mix ignored: {error:#}"));
+                    }
+                    let extension = loaded
+                        .path
+                        .extension()
+                        .and_then(|v| v.to_str())
+                        .unwrap_or("mxl");
+                    self.xml_destination = paths
+                        .data
+                        .join("exports")
+                        .join(format!("recognized-score.{extension}"))
+                        .display()
+                        .to_string();
+                    self.xml = Some(loaded.path);
+                    self.composition = Some(loaded.composition);
+                    self.notice =
+                        "Music loaded. Select parts and instruments; recognition is unverified."
+                            .into();
+                }
+                Err(error) => self.error = Some(error),
+            }
+        }
+        if let Some(snapshot) = self.playback.as_ref().map(Transport::snapshot) {
+            if snapshot.state == State::Failed {
+                self.stop();
+                self.error = snapshot.error;
+            }
+        }
+    }
+
+    fn start_load(&mut self, path: PathBuf, copy: bool, paths: &Paths, ctx: &egui::Context) {
+        if self.loading.is_some() {
+            return;
+        }
+        if let Err(error) = self.save_mix() {
+            self.error = Some(format!("Saving previous movement's mix: {error:#}"));
+            return;
+        }
+        self.stop();
+        let root = paths.data.join("omr-corrected");
+        let Some((_, hash)) = &self.binding else {
+            return;
+        };
+        let Some(source) = self.source.clone() else {
+            return;
+        };
+        let hash = hash.clone();
+        let (tx, rx) = bounded(1);
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let result = (|| -> Result<Loaded> {
+                let cancel = std::sync::atomic::AtomicBool::new(false);
+                let stamp = source_stamp(&source)?;
+                anyhow::ensure!(
+                    crate::folder::hash_file(&source, &cancel)? == hash,
+                    "Backing score changed; rescan before loading notation"
+                );
+                let path = if copy {
+                    std::fs::create_dir_all(&root)?;
+                    let extension = path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(str::to_ascii_lowercase)
+                        .filter(|e| ["mxl", "xml", "musicxml"].contains(&e.as_str()))
+                        .context("Choose a .mxl, .musicxml, or .xml file")?;
+                    let mut file = tempfile::Builder::new()
+                        .suffix(&format!(".{extension}"))
+                        .tempfile_in(root)?;
+                    let mut input = std::fs::File::open(&path)?;
+                    let copied = std::io::copy(
+                        &mut Read::by_ref(&mut input).take(MAX_EXPORT + 1),
+                        &mut file,
+                    )?;
+                    anyhow::ensure!(
+                        copied <= MAX_EXPORT,
+                        "MusicXML exceeds the 64 MiB size limit"
+                    );
+                    file.flush()?;
+                    // Parse the private copy before keeping it, not a mutable external path.
+                    let composition = notation::load(file.path())?;
+                    let music_hash = crate::folder::hash_file(file.path(), &cancel)?;
+                    anyhow::ensure!(
+                        source_stamp(&source)? == stamp
+                            && crate::folder::hash_file(&source, &cancel)? == hash,
+                        "Backing score changed while loading notation"
+                    );
+                    let (_, path) = file.keep()?;
+                    return Ok(Loaded {
+                        composition,
+                        path,
+                        source_stamp: stamp,
+                        music_hash,
+                    });
+                } else {
+                    path
+                };
+                let composition = notation::load(&path)?;
+                let music_hash = crate::folder::hash_file(&path, &cancel)?;
+                anyhow::ensure!(
+                    source_stamp(&source)? == stamp
+                        && crate::folder::hash_file(&source, &cancel)? == hash,
+                    "Backing score changed while loading notation"
+                );
+                Ok(Loaded {
+                    composition,
+                    path,
+                    source_stamp: stamp,
+                    music_hash,
+                })
+            })();
+            let _ = tx.send(result.map_err(|error| format!("Loading MusicXML: {error:#}")));
+            repaint.request_repaint();
+        });
+        self.loading = Some(rx);
+        self.notice = "Loading musical notation…".into();
+    }
+
+    fn options(&self) -> MidiOptions {
+        MidiOptions {
+            selected_parts: Some(
+                self.selected
+                    .iter()
+                    .filter(|(_, on)| **on)
+                    .map(|(id, _)| id.clone())
+                    .collect(),
+            ),
+            programs: self.programs.clone(),
+            volumes: self
+                .volumes
+                .iter()
+                .map(|(id, percent)| (id.clone(), midi_volume(*percent)))
+                .collect(),
+            tempo_scale: self.tempo_scale,
+        }
+    }
+
+    fn midi(&self) -> Result<Vec<u8>> {
+        notation::to_midi(
+            self.composition
+                .as_ref()
+                .context("Load musical notation first")?,
+            &self.options(),
+        )
+    }
+
+    fn save_mix(&mut self) -> Result<()> {
+        if self.mix_dirty.is_none() {
+            return Ok(());
+        }
+        let Some(path) = &self.mix_path else {
+            return Ok(());
+        };
+        std::fs::create_dir_all(path.parent().context("Missing mix directory")?)?;
+        let mut file = tempfile::NamedTempFile::new_in(path.parent().unwrap())?;
+        serde_json::to_writer(
+            &mut file,
+            &SavedMix {
+                selected: self.selected.clone(),
+                programs: self.programs.clone(),
+                volumes: self.volumes.clone(),
+                tempo_scale: self.tempo_scale,
+                master_volume: self.master_volume,
+            },
+        )?;
+        file.as_file().sync_all()?;
+        file.persist(path)?;
+        self.mix_dirty = None;
+        Ok(())
+    }
+
+    fn load_mix(&mut self) -> Result<()> {
+        let Some(path) = &self.mix_path else {
+            return Ok(());
+        };
+        if !path.exists() {
+            return Ok(());
+        }
+        let file = std::fs::File::open(path)?;
+        anyhow::ensure!(file.metadata()?.len() <= 64 * 1024, "Oversized saved mix");
+        let mix: SavedMix = serde_json::from_reader(file)?;
+        anyhow::ensure!(
+            mix.selected.len() <= 128
+                && mix.programs.len() <= 128
+                && mix.volumes.len() <= 128
+                && mix.programs.values().all(|v| *v <= 127)
+                && mix.volumes.values().all(|v| *v <= 100)
+                && mix.tempo_scale.is_finite()
+                && (0.1..=4.0).contains(&mix.tempo_scale),
+            "Invalid saved mix"
+        );
+        anyhow::ensure!(mix.master_volume <= 100, "Invalid saved master volume");
+        for (id, value) in mix.selected {
+            if let Some(current) = self.selected.get_mut(&id) {
+                *current = value;
+            }
+        }
+        for (id, value) in mix.programs {
+            if let Some(current) = self.programs.get_mut(&id) {
+                *current = value;
+            }
+        }
+        for (id, value) in mix.volumes {
+            if let Some(current) = self.volumes.get_mut(&id) {
+                *current = value;
+            }
+        }
+        self.tempo_scale = mix.tempo_scale;
+        self.master_volume = mix.master_volume;
+        Ok(())
+    }
+
+    fn command_result(&mut self, result: Result<()>) {
+        if let Err(error) = result {
+            self.error = Some(format!("Playback: {error:#}"));
+        }
+    }
+
+    fn recognize(
+        &mut self,
+        score: &Score,
+        source: &Path,
+        paths: &Paths,
+        settings: &Settings,
+        ctx: &egui::Context,
+    ) {
+        self.stop();
+        let repaint = ctx.clone();
+        match RecognitionJob::start(
+            source.to_owned(),
+            score.hash.clone(),
+            paths.data.clone(),
+            settings.clone(),
+            move || repaint.request_repaint(),
+        ) {
+            Ok(job) => {
+                self.job = Some(job);
+                self.notice = "Recognizing music…".into();
+                self.error = None;
+            }
+            Err(error) => self.error = Some(format!("{error:#}")),
+        }
+    }
+
+    fn start_transport(&mut self, settings: &Settings) -> Result<()> {
+        self.start_transport_mode(settings, true)
+    }
+    fn start_transport_mode(&mut self, settings: &Settings, play: bool) -> Result<()> {
+        let score = self
+            .composition
+            .as_ref()
+            .context("Recognize or load music first")?
+            .clone();
+        self.playback = Some(Transport::start_with_master(
+            settings.clone(),
+            score,
+            self.options(),
+            play,
+            self.master_volume,
+        )?);
+        self.synth_settings = Some((
+            settings.fluidsynth_executable.clone(),
+            settings.soundfont.clone(),
+        ));
+        self.error = None;
+        Ok(())
+    }
+
+    fn transport_ui(&mut self, ui: &mut egui::Ui, settings: &Settings, compact: bool) {
+        let engine = (
+            settings.fluidsynth_executable.clone(),
+            settings.soundfont.clone(),
+        );
+        if self.playback.is_some() && self.synth_settings.as_ref() != Some(&engine) {
+            self.stop();
+            self.notice =
+                "Synth engine settings changed. Press Play to load the new SoundFont/engine."
+                    .into();
+        }
+        let snapshot = self.playback.as_ref().map(Transport::snapshot);
+        let state = snapshot.as_ref().map(|s| s.state);
+        let ready = self.composition.is_some() && self.loading.is_none() && self.job.is_none();
+        let seekable =
+            ready && state != Some(State::Starting) && self.selected.values().any(|on| *on);
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .add_enabled(seekable, egui::Button::new("Rewind 5s"))
+                .clicked()
+            {
+                let result = self.seek_transport(settings, -5.0);
+                self.command_result(result);
+            }
+            let playing = state == Some(State::Playing);
+            let label = if playing {
+                "Pause"
+            } else if compact {
+                "Play"
+            } else {
+                "Play selected parts"
+            };
+            if ui
+                .add_enabled(
+                    ready
+                        && state != Some(State::Starting)
+                        && (playing || self.selected.values().any(|on| *on)),
+                    egui::Button::new(label),
+                )
+                .clicked()
+            {
+                let result = if let Some(transport) = &self.playback {
+                    if playing {
+                        transport.pause()
+                    } else {
+                        transport.play()
+                    }
+                } else {
+                    self.start_transport(settings)
+                };
+                self.command_result(result);
+            }
+            if ui
+                .add_enabled(seekable, egui::Button::new("Fast-forward 5s"))
+                .clicked()
+            {
+                let result = self.seek_transport(settings, 5.0);
+                self.command_result(result);
+            }
+            if ui
+                .add_enabled(
+                    self.playback.is_some(),
+                    egui::Button::new(if compact { "Stop" } else { "Stop audio" }),
+                )
+                .clicked()
+            {
+                if state == Some(State::Starting) {
+                    self.stop();
+                } else {
+                    let result = self.playback.as_ref().unwrap().stop();
+                    self.command_result(result);
+                }
+            }
+            if let Some(snapshot) = snapshot {
+                ui.label(format!(
+                    "{} / {} · {:?}",
+                    clock(snapshot.position),
+                    clock(snapshot.duration),
+                    snapshot.state
+                ));
+            }
+        });
+        self.master_volume_ui(ui, ready);
+    }
+
+    fn master_volume_ui(&mut self, ui: &mut egui::Ui, ready: bool) {
+        if ui.add_enabled(ready, egui::Slider::new(&mut self.master_volume, 0..=100)
+            .text("Master volume %"))
+            .on_hover_text("Controls all instruments together without changing their individual levels. Playback output only.")
+            .changed() {
+            self.mix_dirty = Some(std::time::Instant::now());
+            if let Some(transport) = &self.playback {
+                let result = transport.master_volume(self.master_volume);
+                self.command_result(result);
+            }
+        }
+    }
+
+    fn seek_transport(&mut self, settings: &Settings, seconds: f64) -> Result<()> {
+        if self.playback.is_none() {
+            self.start_transport_mode(settings, false)?;
+        }
+        self.playback.as_ref().unwrap().seek(seconds)
+    }
+
+    fn mixer_ui(&mut self, ui: &mut egui::Ui) {
+        let parts: Vec<_> = self
+            .composition
+            .as_ref()
+            .map(|c| {
+                c.parts
+                    .iter()
+                    .map(|p| {
+                        (
+                            p.id.clone(),
+                            p.name.clone(),
+                            p.staves,
+                            p.notes.len(),
+                            p.program,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (id, name, staves, notes, default_program) in parts {
+            let mut changed = false;
+            ui.push_id(&id, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    changed |= ui
+                        .checkbox(self.selected.entry(id.clone()).or_insert(true), &name)
+                        .changed();
+                    ui.label(format!("{staves} staff/staves · {notes} notes"));
+                });
+                changed |= ui
+                    .add(
+                        egui::Slider::new(self.volumes.entry(id.clone()).or_insert(100), 0..=100)
+                            .text("Volume %"),
+                    )
+                    .changed();
+                let program = self.programs.entry(id.clone()).or_insert(default_program);
+                ui.horizontal_wrapped(|ui| {
+                    let mut display = u16::from(*program) + 1;
+                    ui.label("GM instrument:");
+                    if ui
+                        .add(egui::DragValue::new(&mut display).range(1..=128))
+                        .changed()
+                    {
+                        *program = (display - 1) as u8;
+                        changed = true;
+                    }
+                    egui::ComboBox::from_id_salt("instrument")
+                        .selected_text(program_label(*program))
+                        .show_ui(ui, |ui| {
+                            for (value, name) in [
+                                (0, "Piano"),
+                                (40, "Violin"),
+                                (41, "Viola"),
+                                (42, "Cello"),
+                                (43, "Contrabass"),
+                                (48, "Strings"),
+                                (73, "Flute"),
+                            ] {
+                                changed |= ui.selectable_value(program, value, name).changed();
+                            }
+                        });
+                });
+            });
+            if changed {
+                self.mix_dirty = Some(std::time::Instant::now());
+                if let Some(transport) = &self.playback {
+                    let result = transport.mix(
+                        &id,
+                        self.selected[&id],
+                        midi_volume(self.volumes[&id]),
+                        self.programs[&id],
+                    );
+                    self.command_result(result);
+                }
+            }
+        }
+        if ui
+            .add(egui::Slider::new(&mut self.tempo_scale, 0.25..=2.0).text("Tempo multiplier"))
+            .changed()
+        {
+            self.mix_dirty = Some(std::time::Instant::now());
+            if let Some(transport) = &self.playback {
+                let result = transport.tempo(self.tempo_scale);
+                self.command_result(result);
+            }
+        }
+        ui.label("Part choices, volumes and instruments are saved for this recognized movement. Changes apply live.");
+    }
+
+    pub fn performance_controls(
+        &mut self,
+        ui: &mut egui::Ui,
+        score: &Score,
+        source: &Path,
+        paths: &Paths,
+        settings: &Settings,
+        busy: bool,
+    ) {
+        self.prepare_for(score, source, paths, ui.ctx());
+        ui.horizontal_wrapped(|ui| {
+            ui.strong("Accompaniment");
+            if self.composition.is_none()
+                && self.job.is_none()
+                && self.loading.is_none()
+                && (self.movements.is_empty() || self.error.is_some())
+                && ui
+                    .add_enabled(
+                        !busy && cfg!(target_os = "linux"),
+                        egui::Button::new("Recognize music"),
+                    )
+                    .clicked()
+            {
+                self.recognize(score, source, paths, settings, ui.ctx());
+            }
+            if let Some(job) = &self.job {
+                ui.spinner();
+                ui.label("Recognizing…");
+                if ui.button("Cancel recognition").clicked() {
+                    job.cancel();
+                }
+            } else if self.loading.is_some() {
+                ui.spinner();
+                ui.label("Loading recognized music…");
+            } else if self.composition.is_some() {
+                ui.label("Recognized · unverified");
+            }
+            let response = ui.menu_button("Parts / volume", |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height(300.0)
+                    .show(ui, |ui| self.mixer_ui(ui));
+            });
+            self.controls_active = response.inner.is_some();
+            if ui.button("Music settings / results").clicked() {
+                self.open = true;
+            }
+        });
+        if self.movements.len() > 1 {
+            ui.horizontal_wrapped(|ui| {
+                egui::ComboBox::from_id_salt("performance_movement")
+                    .selected_text(format!("Movement {}", self.movement + 1))
+                    .show_ui(ui, |ui| {
+                        for (index, path) in self.movements.iter().enumerate() {
+                            ui.selectable_value(
+                                &mut self.movement,
+                                index,
+                                path.file_name().unwrap_or_default().to_string_lossy(),
+                            );
+                        }
+                    });
+                if ui
+                    .add_enabled(
+                        self.loading.is_none() && self.job.is_none(),
+                        egui::Button::new("Load movement"),
+                    )
+                    .clicked()
+                {
+                    if let Some(path) = self.movements.get(self.movement) {
+                        self.start_load(path.clone(), false, paths, ui.ctx());
+                    }
+                }
+            });
+        }
+        self.transport_ui(ui, settings, true);
+        if let Some(error) = &self.error {
+            ui.colored_label(Color32::LIGHT_RED, error);
+        }
+    }
+
+    /// Returns true when the caller should persist edited settings.
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        score: Option<(&Score, &Path)>,
+        paths: &Paths,
+        settings: &mut Settings,
+        library_busy: bool,
+    ) -> bool {
+        if !self.open {
+            return false;
+        }
+        let mut open = self.open;
+        let mut save_settings = false;
+        egui::Window::new("Music / OMR")
+            .open(&mut open)
+            .default_size([620.0, 560.0])
+            .min_width(280.0)
+            .max_width(ctx.screen_rect().width().max(280.0) - 16.0)
+            .vscroll(true)
+            .show(ctx, |ui| {
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                if !cfg!(target_os = "linux") {
+                    ui.label("Audiveris recognition and FluidSynth playback are currently Linux-only.");
+                    return;
+                }
+                let Some((score, source)) = score else {
+                    ui.label("Open a library score first.");
+                    return;
+                };
+                ui.heading(&score.title);
+                ui.colored_label(Color32::YELLOW, "OMR output is unverified. Review notes, rhythm, repeats, and part grouping.");
+                ui.label("Original scores and library metadata are never rewritten. Audio uses an external FluidSynth process, not a VST host.");
+                ui.collapsing("Engine settings", |ui| {
+                    settings_ui(ui, settings);
+                    save_settings = ui.button("Save music settings").clicked();
+                });
+                let idle = self.job.is_none() && self.loading.is_none() && !library_busy;
+                ui.horizontal_wrapped(|ui| {
+                    if ui.add_enabled(idle, egui::Button::new("Recognize with Audiveris")).clicked() {
+                        self.stop();
+                        let repaint = ctx.clone();
+                        match RecognitionJob::start(
+                            source.to_owned(), score.hash.clone(), paths.data.clone(),
+                            settings.clone(), move || repaint.request_repaint(),
+                        ) {
+                            Ok(job) => {
+                                self.job = Some(job);
+                                self.notice = "Starting Audiveris… This can take several minutes.".into();
+                                self.error = None;
+                            }
+                            Err(error) => self.error = Some(format!("{error:#}")),
+                        }
+                    }
+                    if let Some(job) = &self.job {
+                        ui.spinner();
+                        if ui.button("Cancel recognition").clicked() {
+                            job.cancel();
+                        }
+                    }
+                    if self.loading.is_some() {
+                        ui.spinner();
+                    }
+                });
+                if library_busy {
+                    ui.label("Wait for import, folder movement, or rescan before recognizing.");
+                }
+                if !self.notice.is_empty() {
+                    ui.label(&self.notice);
+                }
+                if let Some(error) = &self.error {
+                    ui.colored_label(Color32::LIGHT_RED, error);
+                }
+                if self.movements.len() > 1 {
+                    egui::ComboBox::from_id_salt("omr_movement")
+                        .selected_text(format!("Movement {}", self.movement + 1))
+                        .show_ui(ui, |ui| {
+                            for (index, path) in self.movements.iter().enumerate() {
+                                ui.selectable_value(&mut self.movement, index, path.file_name().unwrap_or_default().to_string_lossy());
+                            }
+                        });
+                    if ui.add_enabled(idle, egui::Button::new("Load movement")).clicked() {
+                        if let Some(path) = self.movements.get(self.movement) {
+                            self.start_load(path.clone(), false, paths, ctx);
+                        }
+                    }
+                }
+                ui.collapsing("Load corrected or existing MusicXML", |ui| {
+                    ui.label("Paste a .mxl / .musicxml / .xml path. A private copy is loaded; the original is untouched.");
+                    ui.text_edit_singleline(&mut self.load_path);
+                    if ui.add_enabled(idle && !self.load_path.trim().is_empty(), egui::Button::new("Load MusicXML")).clicked() {
+                        self.start_load(expand_path(self.load_path.trim()), true, paths, ctx);
+                    }
+                });
+                let Some(composition) = &self.composition else { return; };
+                ui.separator();
+                ui.heading(if composition.title.is_empty() { "Recognized parts" } else { &composition.title });
+                ui.label(format!("{} part(s) · {} quarter-note beats including expanded repeats",
+                    composition.parts.len(), composition.duration_ticks as f64 / f64::from(notation::TICKS_PER_QUARTER)));
+                if composition.tempos.is_empty() {
+                    ui.label("No recognized tempo: playback defaults to 120 BPM before scaling.");
+                } else {
+                    ui.label(format!("Initial playback tempo: {:.1} BPM", composition.tempos[0].bpm * self.tempo_scale));
+                }
+                ui.collapsing("Playback limitations and recognition warnings", |ui| {
+                    for warning in &composition.warnings {
+                        ui.colored_label(Color32::YELLOW, warning);
+                    }
+                    ui.label("Pause/resume and ±5-second seeking are available below. No automatic score following, metronome, or VST hosting. MusicXML preserves notation; synth playback is an approximation.");
+                });
+                self.mixer_ui(ui);
+                self.transport_ui(ui,settings,false);
+                ui.separator();
+                ui.label("MusicXML destination (same format as the recognized file):");
+                ui.text_edit_singleline(&mut self.xml_destination);
+                if ui.add_enabled(idle, egui::Button::new("Export MusicXML")).clicked() {
+                    let result = self.xml.as_ref().context("No recognized MusicXML").and_then(|source| {
+                        let destination = expand_path(self.xml_destination.trim());
+                        let compressed = source.extension().is_some_and(|e| e.eq_ignore_ascii_case("mxl"));
+                        let target_compressed = destination.extension().is_some_and(|e| e.eq_ignore_ascii_case("mxl"));
+                        anyhow::ensure!(compressed == target_compressed, "Use .mxl for compressed MusicXML; .musicxml or .xml for plain XML");
+                        prepare_export_dir(paths)?;
+                        copy_new(source, &destination)
+                    });
+                    self.export_result(result);
+                }
+                ui.label("MIDI destination (selected parts, instruments, and tempo):");
+                ui.text_edit_singleline(&mut self.midi_destination);
+                if ui.add_enabled(idle, egui::Button::new("Export selected MIDI")).clicked() {
+                    let result = self.midi().and_then(|bytes| {
+                        prepare_export_dir(paths)?;
+                        write_new(&expand_path(self.midi_destination.trim()), &bytes)
+                    });
+                    self.export_result(result);
+                }
+                ui.label("Existing destination files are never overwritten. Choose a different filename to export again.");
+            });
+        self.open = open;
+        save_settings
+    }
+
+    fn export_result(&mut self, result: Result<()>) {
+        match result {
+            Ok(()) => {
+                self.notice = "Export saved; source files remain untouched.".into();
+                self.error = None;
+            }
+            Err(error) => self.error = Some(format!("Export: {error:#}")),
+        }
+    }
+}
+
+pub fn settings_ui(ui: &mut egui::Ui, settings: &mut Settings) {
+    ui.label("Audiveris executable (path only, no shell arguments):");
+    ui.text_edit_singleline(&mut settings.audiveris_executable);
+    ui.label("FluidSynth executable:");
+    ui.text_edit_singleline(&mut settings.fluidsynth_executable);
+    ui.label("SoundFont (.sf2 / .sf3):");
+    ui.text_edit_singleline(&mut settings.soundfont);
+    ui.label("Install Audiveris separately, including its Tesseract language data. Recognition runs locally. Audiveris is AGPLv3; FluidSynth is LGPL.");
+}
+
+fn program_label(program: u8) -> String {
+    match program {
+        0 => "Piano".into(),
+        40 => "Violin".into(),
+        41 => "Viola".into(),
+        42 => "Cello".into(),
+        43 => "Contrabass".into(),
+        48 => "Strings".into(),
+        73 => "Flute".into(),
+        _ => format!("GM {}", u16::from(program) + 1),
+    }
+}
+
+fn prepare_export_dir(paths: &Paths) -> Result<()> {
+    std::fs::create_dir_all(paths.data.join("exports"))?;
+    Ok(())
+}
+
+pub fn write_new(destination: &Path, bytes: &[u8]) -> Result<()> {
+    anyhow::ensure!(
+        !destination.as_os_str().is_empty(),
+        "Enter a destination filename"
+    );
+    let parent = destination
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    file.write_all(bytes)?;
+    file.as_file().sync_all()?;
+    file.persist_noclobber(destination)
+        .map_err(|error| error.error)
+        .with_context(|| {
+            format!(
+                "Cannot create {}; existing files are not overwritten",
+                destination.display()
+            )
+        })?;
+    Ok(())
+}
+
+pub fn copy_new(source: &Path, destination: &Path) -> Result<()> {
+    let mut bytes = Vec::new();
+    std::fs::File::open(source)?
+        .take(MAX_EXPORT + 1)
+        .read_to_end(&mut bytes)?;
+    anyhow::ensure!(bytes.len() as u64 <= MAX_EXPORT, "Export exceeds 64 MiB");
+    write_new(destination, &bytes)
+}
+
+fn index_path(paths: &Paths, hash: &str) -> Result<PathBuf> {
+    if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+        bail!("Invalid score hash");
+    }
+    Ok(paths.data.join("omr-index").join(format!("{hash}.json")))
+}
+
+pub fn save_results(paths: &Paths, artifacts: &RecognitionArtifacts) -> Result<()> {
+    let destination = index_path(paths, &artifacts.source_hash)?;
+    std::fs::create_dir_all(destination.parent().unwrap())?;
+    let mut file = tempfile::NamedTempFile::new_in(destination.parent().unwrap())?;
+    serde_json::to_writer(
+        &mut file,
+        &SavedResults {
+            hash: artifacts.source_hash.clone(),
+            movements: artifacts.movements.clone(),
+        },
+    )?;
+    file.as_file().sync_all()?;
+    file.persist(destination)?;
+    Ok(())
+}
+
+fn read_results(paths: &Paths, hash: &str) -> Result<Option<Vec<PathBuf>>> {
+    let path = index_path(paths, hash)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let file = std::fs::File::open(path)?;
+    anyhow::ensure!(
+        file.metadata()?.len() <= 64 * 1024,
+        "Result index exceeds size limit"
+    );
+    let saved: SavedResults = serde_json::from_reader(file)?;
+    anyhow::ensure!(
+        saved.hash == hash && !saved.movements.is_empty() && saved.movements.len() <= 128,
+        "Invalid result index"
+    );
+    let root = paths.data.join("omr").join(hash).canonicalize()?;
+    for movement in &saved.movements {
+        let resolved = movement.canonicalize()?;
+        anyhow::ensure!(
+            resolved.starts_with(&root) && resolved.is_file(),
+            "Result is outside this score's OMR directory"
+        );
+    }
+    Ok(Some(saved.movements))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    const XML: &str = r#"<score-partwise version="4.0"><part-list>
+    <score-part id="P1"><part-name>Cello</part-name><midi-instrument id="I1"><midi-program>43</midi-program></midi-instrument></score-part>
+    <score-part id="P2"><part-name>Piano</part-name></score-part></part-list>
+    <part id="P1"><measure number="1"><attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes><note><pitch><step>C</step><octave>3</octave></pitch><duration>4</duration></note></measure></part>
+    <part id="P2"><measure number="1"><attributes><divisions>1</divisions><staves>2</staves></attributes><note><pitch><step>E</step><octave>4</octave></pitch><duration>4</duration><voice>1</voice><staff>1</staff></note><backup><duration>4</duration></backup><note><pitch><step>C</step><octave>3</octave></pitch><duration>4</duration><voice>2</voice><staff>2</staff></note></measure></part></score-partwise>"#;
+
+    fn fixture() -> (tempfile::TempDir, Paths, Score, PathBuf) {
+        let root = tempfile::tempdir().unwrap();
+        let paths = Paths {
+            data: root.path().join("data"),
+            cache: root.path().join("cache"),
+            config: root.path().join("config"),
+            music: None,
+        };
+        paths.create().unwrap();
+        let source = root.path().join("score.pdf");
+        std::fs::write(&source, b"generated source stand-in").unwrap();
+        let hash =
+            crate::folder::hash_file(&source, &std::sync::atomic::AtomicBool::new(false)).unwrap();
+        let score = Score {
+            id: 1,
+            hash,
+            title: "Generated score".into(),
+            ..Default::default()
+        };
+        (root, paths, score, source)
+    }
+
+    fn finish_load(music: &mut Music, paths: &Paths, ctx: &egui::Context) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while music.loading.is_some() {
+            music.poll(paths, ctx);
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn loads_private_musicxml_and_keeps_piano_staves_together() {
+        let (root, paths, score, source) = fixture();
+        let xml = root.path().join("corrected.musicxml");
+        std::fs::write(&xml, XML).unwrap();
+        let ctx = egui::Context::default();
+        let mut music = Music::default();
+        music.open_for(&score, &source, &paths, &ctx);
+        music.start_load(xml.clone(), true, &paths, &ctx);
+        finish_load(&mut music, &paths, &ctx);
+        assert!(music.error.is_none(), "{:?}", music.error);
+        let parts = &music.composition.as_ref().unwrap().parts;
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[1].staves, 2);
+        assert_eq!(parts[1].notes.len(), 2);
+        assert_ne!(music.xml.as_ref().unwrap(), &xml);
+        music.selected.insert("P1".into(), false);
+        let midi = music.midi().unwrap();
+        assert_eq!(u16::from_be_bytes([midi[10], midi[11]]), 2);
+        assert_eq!(std::fs::read_to_string(xml).unwrap(), XML);
+        std::fs::write(&source, b"changed backing score").unwrap();
+        music.poll(&paths, &ctx);
+        assert!(music.composition.is_none());
+        assert!(music
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("backing score changed"));
+    }
+
+    #[test]
+    fn loading_rejects_changed_source() {
+        let (root, paths, score, source) = fixture();
+        let xml = root.path().join("corrected.musicxml");
+        std::fs::write(&xml, XML).unwrap();
+        let ctx = egui::Context::default();
+        let mut music = Music::default();
+        music.open_for(&score, &source, &paths, &ctx);
+        std::fs::write(&source, b"source changed before loading").unwrap();
+        music.start_load(xml, true, &paths, &ctx);
+        finish_load(&mut music, &paths, &ctx);
+        assert!(music.composition.is_none());
+        assert!(music
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("Backing score changed"));
+    }
+
+    #[test]
+    fn older_preferences_gain_default_music_settings() {
+        let preferences: crate::model::Preferences = serde_json::from_str(
+            r#"{"next_key":"PageDown","previous_key":"PageUp","recursive":true}"#,
+        )
+        .unwrap();
+        assert!(!preferences.music.audiveris_executable.is_empty());
+        assert_eq!(preferences.music.fluidsynth_executable, "fluidsynth");
+    }
+
+    #[test]
+    fn older_saved_mix_defaults_to_full_master_volume() {
+        let mix: SavedMix =
+            serde_json::from_str(r#"{"selected":{},"programs":{},"volumes":{},"tempo_scale":1.0}"#)
+                .unwrap();
+        assert_eq!(mix.master_volume, 100);
+    }
+
+    #[test]
+    fn performance_loads_cached_music_without_opening_settings_and_restores_mix() {
+        let (_root, paths, score, source) = fixture();
+        let xml = paths
+            .data
+            .join("omr")
+            .join(&score.hash)
+            .join("run-generated/score.musicxml");
+        std::fs::create_dir_all(xml.parent().unwrap()).unwrap();
+        std::fs::write(&xml, XML).unwrap();
+        save_results(
+            &paths,
+            &RecognitionArtifacts {
+                source_hash: score.hash.clone(),
+                movements: vec![xml],
+            },
+        )
+        .unwrap();
+        let ctx = egui::Context::default();
+        let mut music = Music::default();
+        music.prepare_for(&score, &source, &paths, &ctx);
+        finish_load(&mut music, &paths, &ctx);
+        assert!(!music.open);
+        assert!(music.job.is_none());
+        assert_eq!(music.composition.as_ref().unwrap().parts[1].staves, 2);
+        music.selected.insert("P1".into(), false);
+        music.volumes.insert("P2".into(), 37);
+        music.master_volume = 45;
+        music.programs.insert("P1".into(), 42);
+        music.mix_dirty = Some(std::time::Instant::now());
+        music.save_mix().unwrap();
+        let mut reloaded = Music::default();
+        reloaded.prepare_for(&score, &source, &paths, &ctx);
+        finish_load(&mut reloaded, &paths, &ctx);
+        assert!(!reloaded.selected["P1"]);
+        assert_eq!(reloaded.volumes["P2"], 37);
+        assert_eq!(reloaded.master_volume, 45);
+        assert_eq!(reloaded.options().volumes["P2"], 47);
+        assert_eq!(reloaded.programs["P1"], 42);
+        let mut labels = std::collections::HashSet::new();
+        for _ in 0..4 {
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(640.0, 360.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::TopBottomPanel::bottom("performance_test").show(ctx, |ui| {
+                        reloaded.performance_controls(
+                            ui,
+                            &score,
+                            &source,
+                            &paths,
+                            &Settings::default(),
+                            false,
+                        )
+                    });
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        ui.label("Score stays visible");
+                    });
+                },
+            );
+            for shape in output.shapes {
+                if let egui::Shape::Text(text) = shape.shape {
+                    let visible = shape
+                        .clip_rect
+                        .intersect(egui::Rect::from_min_size(text.pos, text.galley.size()));
+                    if visible.height() > 8.0 && visible.width() > 10.0 {
+                        labels.insert(text.galley.job.text.clone());
+                    }
+                }
+            }
+        }
+        for label in [
+            "Play",
+            "Stop",
+            "Rewind 5s",
+            "Fast-forward 5s",
+            "Parts / volume",
+            "Master volume %",
+        ] {
+            assert!(
+                labels.contains(label),
+                "Missing performance control {label}: {labels:?}"
+            );
+        }
+        assert!(!labels.contains("Recognize music"));
+        assert!(!reloaded.open);
+    }
+
+    #[test]
+    fn unrecognized_performance_shows_recognition_and_rejects_invalid_mix() {
+        let (_root, paths, score, source) = fixture();
+        let ctx = egui::Context::default();
+        let mut music = Music::default();
+        let mut visible = false;
+        for _ in 0..3 {
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    music.performance_controls(
+                        ui,
+                        &score,
+                        &source,
+                        &paths,
+                        &Settings::default(),
+                        false,
+                    )
+                });
+            });
+            visible|=output.shapes.iter().any(|shape|matches!(&shape.shape,egui::Shape::Text(t) if t.galley.job.text=="Recognize music"));
+        }
+        assert!(visible);
+        let file = paths.data.join("invalid-mix.json");
+        std::fs::write(
+            &file,
+            r#"{"selected":{},"programs":{},"volumes":{"P1":255},"tempo_scale":1.0}"#,
+        )
+        .unwrap();
+        music.mix_path = Some(file);
+        assert!(music.load_mix().is_err());
+    }
+
+    #[test]
+    fn music_controls_remain_reachable_in_a_small_reader_window() {
+        let (root, paths, score, source) = fixture();
+        let xml = root.path().join("corrected.musicxml");
+        std::fs::write(&xml, XML).unwrap();
+        let ctx = egui::Context::default();
+        let mut music = Music::default();
+        music.open_for(&score, &source, &paths, &ctx);
+        music.start_load(xml, true, &paths, &ctx);
+        finish_load(&mut music, &paths, &ctx);
+        let mut settings = Settings::default();
+        let mut seen = std::collections::HashSet::new();
+        for frame in 0..35 {
+            let events = if frame > 3 {
+                vec![
+                    egui::Event::PointerMoved(egui::pos2(280.0, 180.0)),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: egui::vec2(0.0, -90.0),
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]
+            } else {
+                vec![]
+            };
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(640.0, 360.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    music.show(ctx, Some((&score, &source)), &paths, &mut settings, false);
+                },
+            );
+            for shape in output.shapes {
+                if let egui::Shape::Text(text) = shape.shape {
+                    let visible = shape
+                        .clip_rect
+                        .intersect(egui::Rect::from_min_size(text.pos, text.galley.size()));
+                    if visible.height() > 8.0 && visible.width() > 20.0 {
+                        seen.insert(text.galley.job.text.clone());
+                    }
+                }
+            }
+        }
+        for label in [
+            "Recognize with Audiveris",
+            "Play selected parts",
+            "Stop audio",
+            "Export MusicXML",
+            "Export selected MIDI",
+        ] {
+            assert!(
+                seen.contains(label),
+                "Unreachable music control: {label}; saw {seen:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn exports_never_overwrite_existing_files() {
+        let root = tempfile::tempdir().unwrap();
+        let destination = root.path().join("music.mid");
+        write_new(&destination, b"MThd first").unwrap();
+        assert!(write_new(&destination, b"replacement").is_err());
+        assert_eq!(std::fs::read(destination).unwrap(), b"MThd first");
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn changed_score_invalidates_loaded_music_and_pending_work() {
+        let mut music = Music {
+            open: true,
+            binding: Some((1, "old".into())),
+            notice: "Loaded".into(),
+            ..Default::default()
+        };
+        music.invalidate_unless(Some((1, "new".into())));
+        assert!(!music.open);
+        assert!(music.binding.is_none());
+        assert!(music.notice.is_empty());
+    }
+
+    #[test]
+    fn result_index_rejects_traversal_and_foreign_artifacts() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = Paths {
+            data: root.path().join("data"),
+            cache: root.path().join("cache"),
+            config: root.path().join("config"),
+            music: None,
+        };
+        paths.create().unwrap();
+        assert!(index_path(&paths, "../../outside").is_err());
+        let hash = "a".repeat(64);
+        std::fs::create_dir_all(paths.data.join("omr").join(&hash)).unwrap();
+        let outside = root.path().join("outside.musicxml");
+        std::fs::write(&outside, "<score-partwise/>").unwrap();
+        save_results(
+            &paths,
+            &RecognitionArtifacts {
+                source_hash: hash.clone(),
+                movements: vec![outside],
+            },
+        )
+        .unwrap();
+        assert!(read_results(&paths, &hash).is_err());
+    }
+}

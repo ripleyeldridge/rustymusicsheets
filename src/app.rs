@@ -9,6 +9,7 @@ use crate::{
         Instrument,
     },
     model::{Entry, Group, Paths, Preferences, Score},
+    music::Music,
     picker,
     power::{KeepAwake, PowerStatus},
     reader::{Reader, Turn},
@@ -110,6 +111,7 @@ pub struct MusicApp {
     instrument_review: Review,
     auto_detection_pending: std::collections::HashSet<i64>,
     help: Help,
+    music: Music,
 }
 
 impl MusicApp {
@@ -211,6 +213,7 @@ impl MusicApp {
             instrument_review: Review::default(),
             auto_detection_pending: std::collections::HashSet::new(),
             help: Help::default(),
+            music: Music::default(),
         })
     }
 
@@ -358,6 +361,12 @@ impl MusicApp {
     }
 
     fn load_score(&mut self, id: i64, page: Option<u32>) {
+        self.music.invalidate_unless(
+            self.scores
+                .iter()
+                .find(|s| s.id == id)
+                .map(|s| (s.id, s.hash.clone())),
+        );
         self.persist_page();
         if let Some(score) = self.scores.iter().find(|s| s.id == id) {
             self.reader
@@ -728,6 +737,28 @@ impl MusicApp {
                 self.start_detection(pending, true, false, ctx);
             }
         }
+        self.music.invalidate_unless(
+            self.scores
+                .iter()
+                .find(|s| Some(s.id) == self.reader.score_id)
+                .map(|s| (s.id, s.hash.clone())),
+        );
+        self.music.poll(&self.paths, ctx);
+        if !self.performance {
+            self.music.controls_active = false;
+        }
+        if self.performance {
+            if let Some(score) = self
+                .scores
+                .iter()
+                .find(|s| Some(s.id) == self.reader.score_id)
+                .cloned()
+            {
+                if let Ok(source) = self.db.pdf_path(&self.paths, &score.hash) {
+                    self.music.prepare_for(&score, &source, &self.paths, ctx);
+                }
+            }
+        }
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
@@ -742,6 +773,10 @@ impl MusicApp {
             return;
         }
         if ctx.input(|i| i.key_pressed(Key::Escape)) {
+            if self.music.open || self.music.controls_active {
+                self.music.open = false;
+                return;
+            }
             self.performance = false;
             self.fullscreen = false;
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
@@ -754,6 +789,8 @@ impl MusicApp {
             || self.text_input_active
             || (self.left_editor.is_some() && !self.performance)
             || self.setlist_manager.is_some()
+            || self.music.open
+            || self.music.controls_active
         {
             return;
         }
@@ -1616,6 +1653,11 @@ impl MusicApp {
 
     fn reader_controls(&mut self, ui: &mut egui::Ui, score: &Score) {
         ui.horizontal_wrapped(|ui| {
+            if ui.button("Music / OMR").clicked() {
+                if let Some(source) = self.result(self.db.pdf_path(&self.paths, &score.hash)) {
+                    self.music.open_for(score, &source, &self.paths, ui.ctx());
+                }
+            }
             if ui.button("◀ Previous").clicked() {
                 self.turn(false);
             }
@@ -1869,10 +1911,14 @@ impl MusicApp {
                 ui.label("Default eng; examples for installed extra data: eng+deu or eng+fra.");
                 ui.checkbox(&mut self.prefs.detect_on_import, "Detect new imports and fill clear unassigned values");
                 ui.separator();
+                ui.heading("Music recognition and MIDI playback (Linux)");
+                crate::music::settings_ui(ui, &mut self.prefs.music);
+                ui.label("Open a score in Reader, then Music / OMR. Save preferences to retain engine settings.");
+                ui.separator();
                 ui.label(format!("Music folder: {}", self.paths.score_dir().display()));
                 ui.label(format!("Metadata: {}", self.paths.data.display()));
                 ui.label(format!("Version {} — PDF library / reader milestone.", env!("CARGO_PKG_VERSION")));
-                ui.label("Annotations, audio, MIDI, sync and full feature parity are not implemented yet.");
+                ui.label("Annotations, VST hosting, sync and full feature parity are not implemented yet.");
             });
     }
 
@@ -1992,6 +2038,33 @@ impl MusicApp {
 
     fn status_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
+            if self.performance && !self.help.open {
+                if let Some(score) = self
+                    .scores
+                    .iter()
+                    .find(|s| Some(s.id) == self.reader.score_id)
+                    .cloned()
+                {
+                    if let Ok(source) = self.db.pdf_path(&self.paths, &score.hash) {
+                        let busy =
+                            self.import_task.is_some() || self.rescanning || self.changing_folder;
+                        egui::ScrollArea::vertical()
+                            .id_salt("performance_music")
+                            .max_height(150.0)
+                            .show(ui, |ui| {
+                                self.music.performance_controls(
+                                    ui,
+                                    &score,
+                                    &source,
+                                    &self.paths,
+                                    &self.prefs.music,
+                                    busy,
+                                );
+                            });
+                        ui.separator();
+                    }
+                }
+            }
             ui.horizontal_wrapped(|ui| {
                 if let Some(summary) = &self.detection_summary {
                     ui.label(format!(
@@ -2132,6 +2205,24 @@ impl eframe::App for MusicApp {
         if !self.help.open {
             self.manage_setlists(ctx);
             self.dialogs(ctx);
+            let score = self
+                .scores
+                .iter()
+                .find(|s| Some(s.id) == self.reader.score_id)
+                .cloned();
+            let path = score
+                .as_ref()
+                .and_then(|s| self.db.pdf_path(&self.paths, &s.hash).ok());
+            let busy = self.import_task.is_some() || self.rescanning || self.changing_folder;
+            if self.music.show(
+                ctx,
+                score.as_ref().zip(path.as_deref()),
+                &self.paths,
+                &mut self.prefs.music,
+                busy,
+            ) {
+                self.result(self.paths.save_preferences(&self.prefs));
+            }
         }
         if self.smoke_deadline.is_some_and(|at| Instant::now() >= at) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -2143,6 +2234,7 @@ impl eframe::App for MusicApp {
 
 impl Drop for MusicApp {
     fn drop(&mut self) {
+        self.music.invalidate_unless(None);
         self.detection_job.take();
         self.keep_awake.take();
         self.persist_page();
@@ -2169,6 +2261,36 @@ pub fn expand_path(path: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accompaniment_mixer_keys_do_not_turn_pages_or_exit_performance() {
+        let (_root, ctx, mut app) = test_app();
+        let id = app
+            .db
+            .insert("generated-mixer", "Mixer score", 4, "")
+            .unwrap();
+        app.reload();
+        app.load_score(id, Some(1));
+        app.performance = true;
+        app.music.controls_active = true;
+        for key in [Key::PageDown, Key::ArrowRight, Key::Escape] {
+            let _ = ctx.run(
+                egui::RawInput {
+                    events: vec![egui::Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                    ..Default::default()
+                },
+                |ctx| app.shortcuts(ctx),
+            );
+            assert_eq!(app.reader.page, 1);
+            assert!(app.performance);
+        }
+    }
 
     fn test_app() -> (tempfile::TempDir, egui::Context, MusicApp) {
         let root = tempfile::tempdir().unwrap();

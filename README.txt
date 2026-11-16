@@ -46,7 +46,7 @@ machine. The UI uses OpenGL and supports X11 and Wayland.
 Help and About
 --------------
 Open Help > Help contents, or press F1, for the built-in offline user guide.
-The clickable topic tree contains 27 subjects grouped into getting started,
+The clickable topic tree contains 28 subjects grouped into getting started,
 library/files, browsing/metadata, instruments/OCR, setlists, reading/performance,
 settings/data, troubleshooting/reference, and About.
 Search help matches every entered word across titles, keywords, and article
@@ -233,6 +233,71 @@ Save or cancel dirty metadata drafts before detection or applying proposals.
 Changed files invalidate old proposals; rescan and detect them again.
 Manual metadata is retained if file contents are replaced, while automatic
 instrument assignments are cleared. Detection never modifies the score file.
+
+Music recognition and MIDI playback (Linux)
+------------------------------------------
+Open a library score in Reader and click Music / OMR. Install Audiveris separately
+from https://github.com/Audiveris/audiveris/releases and configure its executable
+in Engine settings or Settings, for example /opt/audiveris/bin/Audiveris.
+Recent packages include Java. Audiveris requires its own OCR language setup;
+install English in its language manager, or use TESSDATA_PREFIX with compatible
+full Tesseract tessdata models (distro LSTM-only models may not work).
+Install FluidSynth and a SoundFont (e.g. sudo apt install fluidsynth
+fluid-soundfont-gm), choose the .sf2/.sf3 path and save preferences.
+
+Recognize with Audiveris runs offline in the background and can be cancelled.
+If several movements are exported, choose one and Load movement. Review the
+unverified notation: pitch/rhythm, ties, repeats and part names can be wrong.
+The original score and assigned metadata are never rewritten. Tick the parts
+to hear; the piano's two staves remain one part. Choose GM instrument numbers
+1-128 (Piano 1, Cello 43), set a tempo multiplier, and Play selected parts.
+Each part has independent Volume % (0-100), and its checkbox mutes/unmutes it.
+Master volume % below the transport controls adjusts all instruments together
+(0% mute, 100% normal), preserving individual part balances. It applies live,
+is remembered per movement, and does not change exported MIDI levels.
+Volume, instrument and tempo changes apply live without restarting. Choices are
+remembered per recognized movement in app-data/omr-mix/.
+Play changes to Pause while playing. Pause freezes position and silences voices;
+Play resumes there. Rewind 5s / Fast-forward 5s seek by five playback seconds,
+clamped to the score. Seeking while paused stays paused; seeking before Play
+prepares a silent starting point. Stop audio resets to the beginning. Held notes
+are reconstructed on resume/seek, restarting their instrument envelopes.
+
+Performance mode retains an Accompaniment strip: Recognize music (if needed),
+progress/cancel, Play/Pause, Rewind 5s, Fast-forward 5s and Stop, plus position.
+Saved recognition loads automatically without opening settings. Parts / volume
+opens the live mixer; both piano staves stay together. Live mixing supports up
+to 15 musical parts. Multiple movements require an explicit Load movement.
+Music settings / results opens full settings/review/export controls. Closing
+that window leaves accompaniment running. Changing/removing the score, changed
+backing files or exiting stops it. Page turning is independent of playback.
+
+Export MusicXML preserves recognized notation; compressed files remain .mxl.
+Export selected MIDI uses selected parts, instruments, channel volumes and tempo. Existing
+destination files are never overwritten. Load corrected or existing MusicXML
+loads a private copy from .mxl/.musicxml/.xml, useful after external corrections.
+Successful artifacts/projects/logs are saved under app-data/omr/<hash>/run-*/;
+omr-index keeps references for reuse. Include app data in backups. Failed reruns
+keep previous results; backing-score changes invalidate loaded playback.
+
+Playback interprets partwise MusicXML with chords, voices, multi-staff parts,
+rests, transposition, ties, tempo changes, basic repeats and first/second endings.
+Read warnings for fixed velocity and unsupported expression/pedal, grace notes,
+advanced navigation/nested repeats. There is no notation editor, score following,
+looping, metronome or VST host. GUI transport uses a background sequencer and persistent
+external FluidSynth process, not an embedded synth. Other target OSes do not
+support the recognition/audio workflow yet.
+Audiveris is AGPLv3, FluidSynth LGPL, and SoundFonts have separate licenses;
+these optional engines/data are not bundled or relicensed with the MIT app.
+
+Standalone commands (do not open/change the library database):
+    rustymusicsheets --omr SOURCE.pdf OUTPUT_DIR --audiveris /opt/audiveris/bin/Audiveris
+    rustymusicsheets --inspect-musicxml OUTPUT_FILE.mxl
+    rustymusicsheets --midi OUTPUT_FILE.mxl piano.mid --parts P2
+    rustymusicsheets --midi OUTPUT_FILE.mxl cello.mid --parts P1 --program P1=43 --play --play-seconds 5
+Use the exact generated movement paths printed by --omr, and actual part IDs
+from --inspect-musicxml. Optional MIDI flags: --tempo-scale 0.8, --soundfont FILE,
+--fluidsynth EXE. CLI helpers use defaults/flags, not GUI preferences.
 
 Manage setlists and collections
 -------------------------------

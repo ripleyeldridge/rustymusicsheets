@@ -151,6 +151,30 @@ CLI --import does not schedule automatic detection. Use --detect-instruments sep
 
 In Settings, use Initial pages from 1–6 and installed Tesseract language codes such as eng or eng+deu. Install both language-data packages for a combination. Save preferences to retain these settings.
 
+@music|Music recognition and playback|Audiveris, MusicXML, and selected-part MIDI|omr audio fluidsynth soundfont cello piano export tempo
+Master volume % below the playback controls adjusts all instruments together (0% mute, 100% normal output). It applies immediately without restarting playback or changing the individual part levels, and is remembered per recognized movement. Available in both the performance Accompaniment strip and Music / OMR. Master volume affects playback output only, not exported MIDI levels.
+Linux only: open a score in Reader and click Music / OMR. This is musical-notation recognition, separate from Instrument detection, which only reads text labels. Scores are not uploaded and original PDFs/images and assigned metadata remain unchanged.
+
+Install Audiveris separately from its official GitHub releases; recent Linux packages bundle Java. Under Engine settings, configure an executable name or absolute path (for example /opt/audiveris/bin/Audiveris), NOT a shell command with arguments. Install Audiveris English OCR language data through its own language management, or launch with TESSDATA_PREFIX pointing at compatible full Tesseract tessdata models. Existing distro LSTM-only data may not be suitable. Audiveris is AGPLv3 and remains separate from this MIT application.
+
+Install FluidSynth and a SoundFont, for example on Ubuntu: sudo apt install fluidsynth fluid-soundfont-gm. Select an existing .sf2/.sf3 SoundFont; common system banks are detected automatically. Save music settings here or Save preferences in Settings. FluidSynth is an external LGPL sound engine, not an embedded synthesizer or VST host; SoundFonts retain their own licenses.
+
+Click Recognize with Audiveris and wait; the UI remains available. Cancel recognition stops the helper. If multiple movements were exported, choose one and Load movement rather than silently discarding others. Review notation in Audiveris or another notation editor. Recognition is unverified: names, pitches, rhythm, ties and repeats can be wrong. A cello melody may be called Voice; choose Cello explicitly for playback.
+
+Tick the parts to hear and choose their GM instruments (one-based numbers 1–128; Piano 1, Cello 43). A two-staff piano part stays together. Each part has independent Volume % (0–100); unchecking a part mutes it. Volume, mute, instrument and tempo changes apply live without restarting the timeline. These choices are automatically saved per recognized movement under app-data/omr-mix/, not in your score or assigned metadata.
+
+Play selected parts changes to Pause while playing. Pause silences active voices and freezes position; Play resumes there. Rewind 5s and Fast-forward 5s move by five playback seconds and clamp to the beginning/end. Seeking while paused remains paused; seeking before the first Play prepares a silent starting position. Stop audio resets position to zero. Resuming/seeking reconstructs held notes and restarts their envelopes, so this is musical-position seeking rather than sample-exact audio seeking. Up to 15 musical parts are supported in the live mixer.
+
+In Performance, the bottom Accompaniment strip automatically loads the current score's saved recognition. Recognize music appears if music is not loaded yet; recognition progress and Cancel remain available. Choose Load movement explicitly for multi-movement results. Use Rewind 5s, Play/Pause, Fast-forward 5s and Stop without leaving fullscreen, and open Parts / volume for the live part mixer. Music settings / results opens the full music window. Closing it leaves accompaniment running; changing/removing the score, changed backing files or exiting stops the synth. Musical playback does not follow the reader page or automatically turn pages.
+
+Enter output filenames and use Export MusicXML or Export selected MIDI. Existing files are never overwritten. Compressed MusicXML uses .mxl; plain XML uses .musicxml or .xml. MusicXML exports the recognized source notation, including all parts; MIDI contains the selected parts, instruments, independent channel volumes and tempo. Load corrected or existing MusicXML reads a private copy edited externally without changing the score document or library metadata.
+
+Successful OMR artifacts, editable .omr projects and engine logs are under app-data/omr/<source-hash>/run-*/. An omr-index stores result references for reopening after restart. Back up these with app data. Failed/cancelled output is discarded; a failed rerun does not replace existing successful results. Backing-score hash changes invalidate old results; rescan/reopen before retrying. Temporary playback MIDI is removed on stop/exit.
+
+Basic playback supports partwise MusicXML, chords/voices, rests, multi-staff parts, transposition, ties, tempo changes, repeats and first/second endings. Check warnings for approximations: fixed note velocity with per-part volume, unsupported expression/pedal, grace notes, complex navigation or nested repeats. There is no notation editor, VST hosting, automatic score following, looping, or metronome. Android/Windows recognition/audio are not implemented. GUI transport uses a background sequencer and persistent FluidSynth command process; CLI playback remains one-shot.
+
+CLI --omr SOURCE OUTPUT_DIR [--audiveris EXE] prints generated MusicXML paths. --inspect-musicxml FILE lists parts/warnings. --midi FILE OUTPUT.mid [--parts P1,P2] [--program P1=43] [--tempo-scale 0.8] exports selected MIDI. Add --play, optionally --play-seconds 5, --soundfont FILE or --fluidsynth EXE. CLI music commands use explicit paths/defaults rather than GUI preferences and do not open the library database.
+
 @lists|Setlists and collections|Create, rename, duplicate, and delete lists|manager collection group unordered repeat setlist
 Click Setlists in the toolbar, or select a group in Library and choose Manage list…. Use Existing list to select a saved group.
 
@@ -194,7 +218,9 @@ Rescan cleanup of a missing score removes its bookmarks with its metadata. A met
 @performance|Reader and performance|Performance mode and fullscreen|stage touch tap exit f11 escape
 Open a score, then click Performance. The app enters fullscreen Reader and hides library/editing controls. Tap/click page halves or use page-turn keys/pedals. Setlist playback continues across score boundaries.
 
-The bottom bar retains Exit performance. Escape leaves performance/fullscreen; F11 toggles fullscreen. Fullscreen and Performance are distinct: F11 alone does not hide the normal controls.
+The bottom bar retains Exit performance and Accompaniment controls. Saved recognition loads automatically; otherwise use Recognize music with your saved engine settings. Play/Pause, Rewind 5s, Fast-forward 5s, Stop and Parts / volume work while the score remains visible. See Music recognition and playback for setup and limitations.
+
+Escape closes an open music window or Parts / volume mixer before leaving performance/fullscreen; F11 toggles fullscreen. Fullscreen and Performance are distinct: F11 alone does not hide the normal controls.
 
 F1 can open Help even during performance; Close help or Escape returns to the previous reading view without turning a page. Opening Help does not discard the active setlist snapshot.
 
@@ -283,7 +309,7 @@ Picker missing? Install optional Zenity, paste a path, or use drag-and-drop. Mis
 @limits|Reference and troubleshooting|Current limitations|annotations midi audio sync printing export crop rotate mobilesheets
 This release is a functional native reader/library milestone, not full MobileSheets feature parity.
 
-Not implemented: annotations, crop/rotation/page reordering, links/repeats within scores, vertical/half-page display, audio/metronome, MIDI, ChordPro/text, image-sequence assembly, printing/export, portable backup/restore, cloud integration, and multi-device sync.
+Not implemented: annotations, crop/rotation/page reordering, in-score navigation links, vertical/half-page display, metronome, VST hosting, ChordPro/text, image-sequence assembly, document printing/export, portable backup/restore, cloud integration, and multi-device sync. Experimental Linux OMR, MusicXML/MIDI export and selected-part playback are described in the Music recognition and playback topic.
 
 No compatibility is claimed for MobileSheets proprietary formats or device protocols. PDF/PNG/JPEG documents remain unchanged; instrument metadata stays in the local SQLite library rather than being embedded in the documents.
 

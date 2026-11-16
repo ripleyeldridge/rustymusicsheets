@@ -86,6 +86,8 @@ pub struct Preferences {
     pub detect_on_import: bool,
     #[serde(default)]
     pub detection_options: crate::instruments::DetectionOptions,
+    #[serde(default)]
+    pub music: crate::omr::Settings,
 }
 
 impl Default for Preferences {
@@ -98,6 +100,7 @@ impl Default for Preferences {
             keep_awake: false,
             detect_on_import: false,
             detection_options: crate::instruments::DetectionOptions::default(),
+            music: crate::omr::Settings::default(),
         }
     }
 }
