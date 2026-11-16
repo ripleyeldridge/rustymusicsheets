@@ -102,6 +102,20 @@ scripts/tests/fixtures/duplicate-status-ci.png is a cropped, generated-only
 status footer from CI run 43464956647, not a personal document or phone
 screenshot. It covers the false-negative introduced by hard thresholding.
 
+Negative fixtures require the Action needed heading followed by their full
+expected rejection signature, not merely a generic error word. Whitespace/
+punctuation and OCR-joined words are tolerated, but missing negations, a
+different error, or a missing heading still fail. The denied-grant case
+requires both metadata failure and read-grant context.
+Recognition tries original pixels before enlargement and a grayscale
+fallback with the ImageMagick channel mask explicitly reset. This avoids
+the red/cyan input produced by the old channel-only transform on hosted CI.
+Each bounded attempt retains its screenshot, OCR transcript and match
+result under visual_errors. App-liveness, DB integrity and unchanged-row
+checks remain mandatory after the visible error is confirmed.
+scripts/tests/fixtures/corrupt-error-ci.png contains only the generated
+error heading/message from run 43474256410; it is not personal device data.
+
 Readiness failures preserve am-start results, a bounded history of sanitized
 focus-component/lock/PID observations, the last state, and app-PID logcat
 where available. No raw global window dump, lock-screen image, or unrelated

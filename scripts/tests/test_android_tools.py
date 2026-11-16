@@ -214,6 +214,99 @@ class ImportSummaryTests(unittest.TestCase):
             self.assertEqual(attempts[0]["recipe"], "original")
 
 
+class HandledErrorTests(unittest.TestCase):
+    def setUp(self):
+        self.smoke = module("handled_error_smoke", "android-smoke.py")
+        self.message = "Action needed\nImage contents do not match the file extension"
+
+    def test_correct_corrupt_dialog_allows_wrapping_and_punctuation(self):
+        for text in (
+            self.message,
+            "ACTION NEEDED: Image contents do not match\nthe file extension.",
+            "Actionneeded\nImagecontents do notmatchthe fileextension",
+        ):
+            self.assertTrue(self.smoke.handled_error_visible(text, "corrupt"), text)
+
+    def test_header_and_complete_expected_reason_are_required(self):
+        for text in (
+            "Image contents do not match the file extension",
+            "Action needed",
+            "Action needed\nImage contents do match the file extension",
+            "Action needed\nImage contents do not match",
+            "Action needed\nPermission denied",
+            "Transaction needed\nImage contents do not match the file extension",
+        ):
+            self.assertFalse(self.smoke.handled_error_visible(text, "corrupt"), text)
+
+    def test_other_negative_fixtures_have_distinct_full_signatures(self):
+        messages = {
+            "oversized": "Image is empty or exceeds the 40-megapixel safety limit",
+            "oversized-metadata": "External document exceeds the import size limit",
+            "unsafe-name": "Document provider returned an unsafe display name",
+            "denied": "Cannot read document metadata; the provider or read grant may be unavailable: Java exception was thrown",
+        }
+        for fixture, message in messages.items():
+            self.assertTrue(self.smoke.handled_error_visible("Action needed\n" + message, fixture), fixture)
+            self.assertFalse(self.smoke.handled_error_visible(self.message, fixture), fixture)
+        self.assertFalse(self.smoke.handled_error_visible("Action needed Cannot read document metadata", "denied"))
+
+    def test_ocr_falls_back_and_keeps_original_and_successful_text(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(self.smoke.subprocess, "check_output", side_effect=["Action needed", self.message]), patch.object(self.smoke.subprocess, "run"):
+                result, attempts = self.smoke.recognize_handled_error(root / "input.png", root / "result", "corrupt")
+            self.assertTrue(result)
+            self.assertEqual([a["recipe"] for a in attempts], ["original", "enlarged"])
+            self.assertEqual((root / attempts[0]["text_file"]).read_text(), "Action needed")
+            self.assertEqual((root / attempts[1]["text_file"]).read_text(), self.message)
+
+    def test_wrong_error_never_passes_any_recipe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(self.smoke.subprocess, "check_output", return_value="Action needed Wrong error"), patch.object(self.smoke.subprocess, "run"):
+                result, attempts = self.smoke.recognize_handled_error(root / "input.png", root / "result", "corrupt")
+            self.assertFalse(result)
+            self.assertEqual(len(attempts), 3)
+            self.assertTrue(all((root / a["text_file"]).is_file() for a in attempts))
+
+    def test_error_wait_allows_delayed_dialog(self):
+        now = [0.0]
+        probes = iter([False, False, True])
+        self.assertTrue(self.smoke.wait_for_handled_error(
+            lambda: next(probes), "corrupt",
+            clock=lambda: now[0], sleep=lambda delay: now.__setitem__(0, now[0] + delay),
+        ))
+        self.assertEqual(now[0], 1.0)
+
+    def test_error_wait_fails_if_correct_dialog_never_appears(self):
+        now = [0.0]
+        with self.assertRaisesRegex(AssertionError, "handled corrupt error is not visibly confirmed"):
+            self.smoke.wait_for_handled_error(
+                lambda: False, "corrupt", seconds=1,
+                clock=lambda: now[0], sleep=lambda delay: now.__setitem__(0, now[0] + delay),
+            )
+
+    @unittest.skipUnless(shutil.which("tesseract") and shutil.which("convert"), "OCR tools required")
+    def test_generated_ci_error_dialog_is_recognized(self):
+        image = SCRIPTS / "tests/fixtures/corrupt-error-ci.png"
+        with tempfile.TemporaryDirectory() as directory:
+            result, attempts = self.smoke.recognize_handled_error(image, Path(directory) / "ci-error", "corrupt")
+            self.assertTrue(result)
+            self.assertEqual(attempts[0]["recipe"], "original")
+
+    @unittest.skipUnless(shutil.which("convert"), "ImageMagick required")
+    def test_monochrome_fallback_does_not_leave_red_cyan_channels(self):
+        image = SCRIPTS / "tests/fixtures/corrupt-error-ci.png"
+        with tempfile.TemporaryDirectory() as directory:
+            prefix = Path(directory) / "mono"
+            with patch.object(self.smoke.subprocess, "check_output", side_effect=["", "", self.message]):
+                result, attempts = self.smoke.recognize_handled_error(image, prefix, "corrupt")
+            self.assertTrue(result)
+            self.assertEqual(attempts[-1]["recipe"], "monochrome")
+            pixels = subprocess.check_output(["convert", str(prefix.with_name("mono-monochrome.png")), "-depth", "8", "rgb:-"])
+            self.assertTrue(all(pixels[i] == pixels[i + 1] == pixels[i + 2] for i in range(0, len(pixels), 3)))
+
+
 class SdkViewTests(unittest.TestCase):
     def test_extra_build_tools_cannot_override_the_pin_and_shared_sdk_is_unchanged(self):
         helper = module("sdk_view", "android-sdk-view.py")

@@ -18,6 +18,62 @@ APP = "org.ripleyeldridge.rustymusicsheets.smoketest"
 HELPER = "org.ripleyeldridge.rustymusicsheets.fixture"
 PACKAGES = (APP, HELPER)
 EXPECTED_DUPLICATE = {"imported": 0, "duplicates": 1, "removed": 0, "failed": 0}
+HANDLED_ERRORS = {
+    "corrupt": ("image contents do not match the file extension",),
+    "oversized": ("image is empty or exceeds the 40 megapixel safety limit",),
+    "oversized-metadata": ("external document exceeds the import size limit",),
+    "unsafe-name": ("document provider returned an unsafe display name",),
+    "denied": ("cannot read document metadata", "read grant may be unavailable"),
+}
+
+
+def handled_error_visible(text, fixture):
+    fragments = HANDLED_ERRORS[fixture]
+    normalized = " ".join(re.findall(r"\w+", text.casefold()))
+    header = re.search(r"(?<!\w)action\s*needed(?!\w)", normalized)
+    if header is None:
+        return False
+    body = normalized[header.end():]
+    return all(
+        re.search(r"(?<!\w)" + r"\s*".join(re.escape(word) for word in fragment.split()) + r"(?!\w)", body)
+        is not None for fragment in fragments
+    )
+
+
+def recognize_handled_error(image, prefix, fixture):
+    if fixture not in HANDLED_ERRORS:
+        raise ValueError("Unknown negative fixture")
+    attempts = []
+    for recipe in ("original", "enlarged", "monochrome"):
+        source = image
+        if recipe != "original":
+            source = prefix.with_name(prefix.name + "-" + recipe + ".png")
+            options = ["-resize", "400%"] if recipe == "enlarged" else [
+                "-channel", "R", "-separate", "+channel", "-type", "Grayscale",
+                "-threshold", "35%", "-negate", "-resize", "400%",
+            ]
+            subprocess.run(["convert", str(image), *options, str(source)], check=True, timeout=15)
+        text = subprocess.check_output(
+            ["tesseract", str(source), "stdout", "-l", "eng", "--psm", "11"],
+            text=True, env=dict(os.environ, OMP_THREAD_LIMIT="1"),
+            stderr=subprocess.DEVNULL, timeout=15,
+        )
+        transcript = prefix.with_name(prefix.name + "-" + recipe + ".txt")
+        transcript.write_text(text)
+        visible = handled_error_visible(text, fixture)
+        attempts.append({"recipe": recipe, "text_file": transcript.name, "matched": visible})
+        if visible:
+            return True, attempts
+    return False, attempts
+
+
+def wait_for_handled_error(probe, fixture, seconds=15, clock=time.monotonic, sleep=time.sleep):
+    deadline = clock() + seconds
+    while clock() < deadline:
+        if probe() is True:
+            return True
+        sleep(0.5)
+    raise AssertionError(f"Expected handled {fixture} error is not visibly confirmed; inspect visual_errors transcripts")
 
 
 def parse_import_summary(text):
@@ -173,6 +229,7 @@ def main():
         "launches": [],
         "readiness": [],
         "visual_status": [],
+        "visual_errors": [],
     }
 
     def stop():
@@ -283,6 +340,17 @@ def main():
             return summary
         return wait_for_duplicate(probe, name)
 
+    def confirmed_error(fixture):
+        shots = []
+        report["visual_errors"].append({"fixture": fixture, "shots": shots})
+        def probe():
+            prefix = args.output / f"{fixture}-error-{len(shots)}"
+            image = screenshot(prefix.name + ".png")
+            visible, attempts = recognize_handled_error(image, prefix, fixture)
+            shots.append({"image": image.name, "attempts": attempts})
+            return visible
+        return wait_for_handled_error(probe, fixture)
+
     try:
         for name, package in (("smoke-app.apk", APP), ("fixture-provider.apk", HELPER)):
             call("install", "--no-streaming", str(args.apks / name))
@@ -314,21 +382,11 @@ def main():
         confirmed_duplicate("pipe")
         assert len(snapshot("pipe-database")) == 3
         report["cases"].append({"fixture": "pipe", "result": "non-seekable descriptor imported and deduplicated"})
-        failures = {
-            "corrupt": "contents do not match",
-            "oversized": "megapixel",
-            "oversized-metadata": "size limit",
-            "unsafe-name": "unsafe display name",
-            "denied": "read grant",
-        }
-        for fixture, reason in failures.items():
+        for fixture in HANDLED_ERRORS:
             launch_fixture(fixture, 0)
             assert pid(), f"App crashed for {fixture}"
-            error = screenshot(fixture + "-error.png")
-            locator = args.output / (fixture + "-error-ocr.png")
-            subprocess.run(["convert", str(error), "-channel", "R", "-separate", "-threshold", "45%", "-negate", "-resize", "300%", str(locator)], check=True)
-            text = subprocess.check_output(["tesseract", str(locator), "stdout", "--psm", "11"], text=True, env=dict(os.environ, OMP_THREAD_LIMIT="1"), stderr=subprocess.DEVNULL).lower()
-            assert "action needed" in text and reason in text, f"Expected handled {fixture} error is not visible"
+            confirmed_error(fixture)
+            assert pid(), f"App exited after handling {fixture}"
             assert len(snapshot(fixture + "-database")) == 3, f"Invalid fixture inserted a record: {fixture}"
             report["cases"].append({"fixture": fixture, "result": "rejected without new record/crash"})
             print("PASS:", fixture, "rejected without new record or crash", flush=True)
