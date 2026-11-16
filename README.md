@@ -2,7 +2,7 @@
 A native Linux sheet-music library and performance reader, written in Rust with egui.
 **A headline feature: offline instrument detection that helps turn a folder of scores into an instrument-searchable library—even when the parts are scanned PDFs or standalone images.**
 
-**Version:** 0.3.0 preview (source checkout) · **Author:** [Ripley Eldridge](https://github.com/ripleyeldridge) · **Release year:** 2026 · **License:** [MIT](LICENSE)
+**Version:** 0.3.1 preview (source checkout) · **Author:** [Ripley Eldridge](https://github.com/ripleyeldridge) · **Release year:** 2026 · **License:** [MIT](LICENSE)
 
 ## 0.2.2 preview downloads
 The [0.2.2 prerelease](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.2.2) includes:
@@ -157,6 +157,7 @@ Automatic detection for new GUI imports is optional and off by default. It fills
 This is an **experimental, review-first OMR workflow**, separate from instrument-label detection. Audiveris recognizes printed notation into MusicXML; RustyMusicSheets interprets supported notation and drives a separately installed FluidSynth process. No scores are uploaded, and source documents and library metadata remain unchanged.
 
 ### Setup
+- Use **Browse…** beside the Audiveris, FluidSynth and SoundFont fields instead of typing filenames. MusicXML input and both export destination fields also have format-appropriate open/save dialogs. Library/import path controls provide file/folder selection. Text entry and paste remain available; Linux dialogs use optional Zenity.
 - Install [Audiveris](https://github.com/Audiveris/audiveris/releases) separately using its official Linux package. Recent releases include Java. Configure its executable in **Settings → Music recognition and MIDI playback**, or **Reader → Music / OMR → Engine settings**. An absolute path such as `/opt/audiveris/bin/Audiveris` works; a Flatpak command with arguments is not an executable path—use a launcher script if necessary.
 - Install FluidSynth and a SoundFont, for example `sudo apt install fluidsynth fluid-soundfont-gm`. Choose a `.sf2`/`.sf3` bank in settings; common system banks are detected automatically.
 - Audiveris needs its own OCR language setup, even if the application's existing Tesseract label detector works. Install English through Audiveris's language management, or point `TESSDATA_PREFIX` at compatible full [Tesseract tessdata](https://github.com/tesseract-ocr/tessdata) models before launching the app. LSTM-only distro models may not provide the legacy data required by Audiveris.
@@ -184,6 +185,12 @@ Enable **Follow score pages** below the transport controls in Performance or Mus
 This uses **Audiveris original source-sheet references and preserved page/system breaks**, not equal-duration page estimates or printed page-number labels. Covers and skipped sheets retain their physical PDF page indexes. If the metadata is missing, conflicting, reflowed inconsistently or outside the current document, the checkbox is disabled with an explanation; musical playback still works. Re-recognize the original PDF when necessary. Review matching page layout before enabling following, especially after editing MusicXML externally.
 
 Manual taps/pedals, Previous/Next, page-number jumps, Home/End and bookmark navigation turn following off until you explicitly re-enable it. Automatic changes preserve normal page rendering and remembered positions. In two-page mode, no turn occurs while the playing page is already visible. Pause freezes the clock; seeking while paused updates the target page. Stop does not force page 1, and finishing never starts a different setlist score. Visual following is suspended while Help or Library is visible and catches up on return to Reader.
+
+Set **Turn pages early by … measures** to a nonnegative integer for read-ahead. Zero retains boundary-based turning; one turns at the start of the last played measure before the next page, two turns two measures early, and so on. Counts use the repeat-expanded musical timeline, including variable measure lengths and tempo changes—not fixed seconds. Oversized values are capped so the current page is not skipped entirely. Preview targets remain stable across the actual page boundary and work for backward repeat turns and paused seeks. The setting is saved per recognized movement. For the two-page cello/piano test piece, one-measure lead moves the page-2 target from measure 19 (36 seconds at 120 BPM) to measure 18 (34 seconds).
+
+**Previous page / Next page buttons remain visible in Performance even without recognition or synth playback.** They respect document/setlist boundaries and two-page mode; using them disables auto-follow just like tapping or a pedal.
+
+Browse for MusicXML input or an export destination only fills the field: use **Load MusicXML**, **Export**, or **Save preferences** explicitly afterward. Export dialogs suggest the matching extension and add it when omitted; existing destination files are still never overwritten. Cancellation leaves fields unchanged. Settings fields require Unicode-representable filenames rather than silently replacing path bytes. A per-score chooser result is discarded if the score/movement changed while it was open.
 
 Use **Load corrected or existing MusicXML** to load a private copy of a `.mxl`, `.musicxml`, or `.xml` file edited externally, for example in Audiveris or MuseScore. This does not import a new library score or alter assigned instrument metadata.
 

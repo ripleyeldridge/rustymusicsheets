@@ -1,6 +1,52 @@
 use super::*;
 use std::cell::RefCell;
 
+#[test]
+fn save_requests_keep_suggested_names_and_add_only_the_correct_extension() {
+    let root = tempfile::tempdir().unwrap();
+    for (kind, extension) in [
+        (SelectionKind::SaveMxl, "mxl"),
+        (SelectionKind::SaveMusicXml, "musicxml"),
+        (SelectionKind::SaveMidi, "mid"),
+    ] {
+        let selected = root.path().join("Éléphant duet");
+        let fake = FakePicker {
+            seen: RefCell::new(None),
+            selected: Some(selected.clone()),
+            fail: false,
+        };
+        let preferred = root.path().join(format!("new-export.{extension}"));
+        let result = select_with(&fake, kind, &preferred, root.path())
+            .unwrap()
+            .unwrap();
+        assert_eq!(result, selected.with_extension(extension));
+        let request = fake.seen.borrow();
+        let request = request.as_ref().unwrap();
+        assert_eq!(request.filename.as_deref(), preferred.file_name());
+        assert_eq!(request.directory, root.path().canonicalize().unwrap());
+        assert!(
+            !result.exists(),
+            "Selecting a filename must not write an export"
+        );
+        assert!(normalize_save_path(kind, root.path().join("wrong.pdf")).is_err());
+    }
+    for kind in [
+        SelectionKind::Executable,
+        SelectionKind::SoundFont,
+        SelectionKind::MusicXml,
+    ] {
+        let fake = FakePicker {
+            seen: RefCell::new(None),
+            selected: None,
+            fail: false,
+        };
+        assert!(select_with(&fake, kind, root.path(), root.path())
+            .unwrap()
+            .is_none());
+        assert_eq!(fake.seen.borrow().as_ref().unwrap().kind, kind);
+    }
+}
+
 struct FakePicker {
     seen: RefCell<Option<Request>>,
     selected: Option<PathBuf>,

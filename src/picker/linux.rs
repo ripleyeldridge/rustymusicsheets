@@ -1,4 +1,4 @@
-use super::{FilePicker, Request, SelectionKind, SCORE_EXTENSIONS};
+use super::{FilePicker, Request, SelectionKind};
 use anyhow::{bail, Context, Result};
 use std::{
     ffi::OsString,
@@ -10,26 +10,42 @@ use std::{
 pub(super) struct Backend;
 
 fn command(request: &Request) -> Command {
-    let mut filename = request.directory.as_os_str().to_owned();
-    filename.push(std::path::MAIN_SEPARATOR_STR);
+    let filename = request
+        .filename
+        .as_ref()
+        .map(|name| request.directory.join(name))
+        .unwrap_or_else(|| request.directory.clone());
+    let mut filename = filename.into_os_string();
+    if request.filename.is_none() {
+        filename.push(std::path::MAIN_SEPARATOR_STR);
+    }
     let mut command = Command::new("zenity");
     command
         .current_dir(&request.directory)
-        .args([
-            "--file-selection",
-            "--title=RustyMusicSheets — Select music",
-        ])
+        .arg("--file-selection")
+        .arg(format!(
+            "--title=RustyMusicSheets — {}",
+            request.kind.title()
+        ))
         .arg("--filename")
         .arg(filename);
     if request.kind == SelectionKind::Folder {
         command.arg("--directory");
-    } else {
-        let filters = SCORE_EXTENSIONS
+    } else if !request.kind.extensions().is_empty() {
+        let filters = request
+            .kind
+            .extensions()
             .iter()
             .map(|extension| format!("*.{extension} *.{}", extension.to_ascii_uppercase()))
             .collect::<Vec<_>>()
             .join(" ");
-        command.arg(format!("--file-filter=Scores | {filters}"));
+        command.arg(format!(
+            "--file-filter={} | {filters}",
+            request.kind.title()
+        ));
+    }
+    if request.kind.is_save() {
+        command.arg("--save");
     }
     command
 }
@@ -70,12 +86,49 @@ mod tests {
     use std::os::unix::{ffi::OsStrExt, process::ExitStatusExt};
 
     #[test]
+    fn typed_open_and_save_flags_keep_unicode_names_and_correct_filters() {
+        let root = tempfile::tempdir().unwrap();
+        for kind in [
+            SelectionKind::Executable,
+            SelectionKind::SoundFont,
+            SelectionKind::MusicXml,
+            SelectionKind::SaveMxl,
+            SelectionKind::SaveMusicXml,
+            SelectionKind::SaveMidi,
+        ] {
+            let request = Request {
+                kind,
+                directory: root.path().to_owned(),
+                filename: Some("Été with spaces.mid".into()),
+            };
+            let command = command(&request);
+            let args: Vec<_> = command.get_args().collect();
+            assert_eq!(args.iter().any(|arg| *arg == "--save"), kind.is_save());
+            assert!(!args.iter().any(|arg| *arg == "--directory"));
+            assert!(args
+                .iter()
+                .any(|arg| *arg == root.path().join("Été with spaces.mid").as_os_str()));
+            for ext in kind.extensions() {
+                assert!(args
+                    .iter()
+                    .any(|arg| arg.to_string_lossy().contains(&format!("*.{ext}"))));
+            }
+            if kind == SelectionKind::Executable {
+                assert!(!args
+                    .iter()
+                    .any(|arg| arg.to_string_lossy().starts_with("--file-filter")));
+            }
+        }
+    }
+
+    #[test]
     fn command_keeps_directory_and_score_filters() {
         let root = tempfile::tempdir().unwrap();
         for kind in [SelectionKind::Score, SelectionKind::Folder] {
             let request = Request {
                 kind,
                 directory: root.path().to_owned(),
+                filename: None,
             };
             let command = command(&request);
             assert_eq!(command.get_current_dir(), Some(root.path()));
@@ -85,7 +138,7 @@ mod tests {
                 kind == SelectionKind::Folder
             );
             if kind == SelectionKind::Score {
-                for extension in SCORE_EXTENSIONS {
+                for extension in super::super::SCORE_EXTENSIONS {
                     assert!(args.iter().any(|a| a.contains(&format!("*.{extension}"))));
                 }
             }

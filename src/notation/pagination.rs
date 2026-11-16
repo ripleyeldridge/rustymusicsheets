@@ -141,6 +141,65 @@ pub(super) fn source_layout(root: Node<'_, '_>) -> Result<SourceLayout> {
 mod tests {
     use super::super::{parse_musicxml, PageTurn};
 
+    #[test]
+    fn lead_time_counts_played_measures_without_bouncing_or_skipping_pages() {
+        use super::super::PageMap;
+        let map = PageMap {
+            source_pages: vec![0, 1, 2],
+            turns: vec![
+                PageTurn { tick: 0, page: 0 },
+                PageTurn { tick: 400, page: 1 },
+                PageTurn { tick: 800, page: 0 },
+                PageTurn {
+                    tick: 1200,
+                    page: 2,
+                },
+            ],
+            measure_ticks: (0..16).map(|n| n * 100).collect(),
+        };
+        assert_eq!(map.page_at(399, 0), Some(0));
+        assert_eq!(map.page_at(400, 0), Some(1));
+        for tick in [300, 350, 399, 400, 450, 699] {
+            assert_eq!(map.page_at(tick, 1), Some(1));
+        }
+        assert_eq!(map.page_at(299, 1), Some(0));
+        assert_eq!(map.page_at(200, 2), Some(1));
+        for tick in [700, 750, 799, 800, 850] {
+            assert_eq!(map.page_at(tick, 1), Some(0));
+        }
+        assert_eq!(map.page_at(1100, 1), Some(2));
+        assert_eq!(map.page_at(0, 999), Some(0));
+        assert_eq!(map.page_at(99, 999), Some(0));
+        assert_eq!(map.page_at(100, 999), Some(1));
+        let short = PageMap {
+            source_pages: vec![0, 1, 2],
+            turns: vec![
+                PageTurn { tick: 0, page: 0 },
+                PageTurn { tick: 100, page: 1 },
+                PageTurn { tick: 200, page: 2 },
+            ],
+            measure_ticks: vec![0, 100, 200],
+        };
+        assert_eq!(short.page_at(99, 999), Some(0));
+        assert_eq!(short.page_at(100, 999), Some(1));
+    }
+
+    #[test]
+    fn variable_length_measures_are_not_approximated_with_fixed_seconds() {
+        use super::super::PageMap;
+        let map = PageMap {
+            source_pages: vec![0, 1],
+            turns: vec![
+                PageTurn { tick: 0, page: 0 },
+                PageTurn { tick: 900, page: 1 },
+            ],
+            measure_ticks: vec![0, 100, 350, 400, 900, 1000],
+        };
+        assert_eq!(map.page_at(399, 1), Some(0));
+        assert_eq!(map.page_at(400, 1), Some(1));
+        assert_eq!(map.page_at(350, 2), Some(1));
+    }
+
     fn xml(fields: &str, first: &str, second: Option<&str>) -> String {
         let extra = if second.is_some() {
             r#"<score-part id="P2"><part-name>Piano</part-name></score-part>"#
@@ -205,8 +264,10 @@ mod tests {
         let score = parse_musicxml(&xml(&fields, &first, None)).unwrap();
         assert!(score.parts[0].notes.is_empty());
         assert_eq!(score.duration_ticks, 3840);
+        let map = score.page_map.unwrap();
+        assert_eq!(map.measure_ticks, vec![0, 960, 1920, 2880]);
         assert_eq!(
-            score.page_map.unwrap().turns,
+            map.turns,
             [
                 PageTurn { tick: 0, page: 0 },
                 PageTurn { tick: 960, page: 1 },

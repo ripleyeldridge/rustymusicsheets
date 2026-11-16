@@ -4,11 +4,14 @@ use crate::{
     notation::{self, Composition, MidiOptions},
     omr::{RecognitionArtifacts, RecognitionJob, RecognitionUpdate, Settings},
     playback::{State, Transport},
+    text_input::TextEditFocusExt,
 };
 use anyhow::{bail, Context, Result};
 use crossbeam_channel::{bounded, Receiver};
 use eframe::egui::{self, Color32};
 use serde::{Deserialize, Serialize};
+mod paths;
+pub(crate) use paths::{PathField, PathRequest};
 use std::{
     collections::BTreeMap,
     io::{Read, Write},
@@ -45,6 +48,8 @@ struct SavedMix {
     master_volume: u8,
     #[serde(default)]
     follow_pages: bool,
+    #[serde(default)]
+    turn_lead_measures: u16,
 }
 
 struct Loaded {
@@ -92,6 +97,9 @@ pub struct Music {
     master_volume: u8,
     follow_pages: bool,
     source_pages: u32,
+    turn_lead_measures: u16,
+    path_request: Option<PathRequest>,
+    pub(crate) path_picker_active: bool,
     load_path: String,
     xml_destination: String,
     midi_destination: String,
@@ -129,6 +137,14 @@ impl Music {
         if self.composition.is_some() && !available {
             ui.small("Automatic page turning unavailable: missing, conflicting or out-of-range original-page mapping. Re-recognize the original score; see warnings.");
         }
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Turn pages early by");
+            let response=ui.add_enabled(available,egui::DragValue::new(&mut self.turn_lead_measures).range(0..=999));
+            self.controls_active |= response.text_edit_has_focus() || response.is_pointer_button_down_on();
+            if response.changed() {self.mix_dirty=Some(std::time::Instant::now());}
+            ui.label("measures");
+            response.on_hover_text("0 turns at the boundary. Counts played measures, including repeats. Lead is capped to avoid skipping an entire page.");
+        });
     }
 
     pub fn manual_page_turn(&mut self) {
@@ -153,7 +169,13 @@ impl Music {
         {
             return None;
         }
-        snapshot.source_page.filter(|page| *page < score.pages)
+        snapshot.source_page.filter(|page| *page < score.pages)?;
+        self.composition
+            .as_ref()?
+            .page_map
+            .as_ref()?
+            .page_at(snapshot.score_tick, self.turn_lead_measures)
+            .filter(|page| *page < score.pages)
     }
 
     pub fn prepare_for(
@@ -173,6 +195,7 @@ impl Music {
             self.source = Some(source.to_owned());
             self.source_pages = score.pages;
             self.follow_pages = false;
+            self.turn_lead_measures = 0;
             self.tempo_scale = 1.0;
             self.master_volume = 100;
             self.xml_destination.clear();
@@ -291,6 +314,9 @@ impl Music {
                 Ok(loaded) => {
                     self.stop();
                     self.master_volume = 100;
+                    self.follow_pages = false;
+                    self.turn_lead_measures = 0;
+                    self.tempo_scale = 1.0;
                     self.source_stamp = Some(loaded.source_stamp);
                     self.selected = loaded
                         .composition
@@ -485,6 +511,7 @@ impl Music {
                 tempo_scale: self.tempo_scale,
                 master_volume: self.master_volume,
                 follow_pages: self.follow_pages,
+                turn_lead_measures: self.turn_lead_measures,
             },
         )?;
         file.as_file().sync_all()?;
@@ -514,6 +541,7 @@ impl Music {
             "Invalid saved mix"
         );
         anyhow::ensure!(mix.master_volume <= 100, "Invalid saved master volume");
+        anyhow::ensure!(mix.turn_lead_measures <= 999, "Invalid page-turn lead");
         for (id, value) in mix.selected {
             if let Some(current) = self.selected.get_mut(&id) {
                 *current = value;
@@ -532,6 +560,7 @@ impl Music {
         self.tempo_scale = mix.tempo_scale;
         self.master_volume = mix.master_volume;
         self.follow_pages = mix.follow_pages;
+        self.turn_lead_measures = mix.turn_lead_measures;
         Ok(())
     }
 
@@ -898,10 +927,12 @@ impl Music {
                 ui.colored_label(Color32::YELLOW, "OMR output is unverified. Review notes, rhythm, repeats, and part grouping.");
                 ui.label("Original scores and library metadata are never rewritten. Audio uses an external FluidSynth process, not a VST host.");
                 ui.collapsing("Engine settings", |ui| {
-                    settings_ui(ui, settings);
+                    if let Some(field)=settings_ui(ui, settings, self.path_picker_active) {
+                        self.browse_settings(field,settings);
+                    }
                     save_settings = ui.button("Save music settings").clicked();
                 });
-                let idle = self.job.is_none() && self.loading.is_none() && !library_busy;
+                let idle = self.job.is_none() && self.loading.is_none() && !library_busy && !self.path_picker_active;
                 ui.horizontal_wrapped(|ui| {
                     if ui.add_enabled(idle, egui::Button::new("Recognize with Audiveris")).clicked() {
                         self.stop();
@@ -952,8 +983,10 @@ impl Music {
                     }
                 }
                 ui.collapsing("Load corrected or existing MusicXML", |ui| {
-                    ui.label("Paste a .mxl / .musicxml / .xml path. A private copy is loaded; the original is untouched.");
-                    ui.text_edit_singleline(&mut self.load_path);
+                    ui.label("Choose or paste a .mxl / .musicxml / .xml path. A private copy is loaded; the original is untouched.");
+                    if paths::entry(ui,PathField::LoadMusicXml,&mut self.load_path,idle) {
+                        self.request_path(PathField::LoadMusicXml,&self.load_path.clone());
+                    }
                     if ui.add_enabled(idle && !self.load_path.trim().is_empty(), egui::Button::new("Load MusicXML")).clicked() {
                         self.start_load(expand_path(self.load_path.trim()), true, paths, ctx);
                     }
@@ -978,7 +1011,11 @@ impl Music {
                 self.transport_ui(ui,settings,false);
                 ui.separator();
                 ui.label("MusicXML destination (same format as the recognized file):");
-                ui.text_edit_singleline(&mut self.xml_destination);
+                let compressed=self.xml.as_ref().and_then(|path|path.extension()).is_some_and(|ext|ext.eq_ignore_ascii_case("mxl"));
+                let target=PathField::ExportMusicXml(compressed);
+                if paths::entry(ui,target,&mut self.xml_destination,idle) {
+                    self.request_path(target,&self.xml_destination.clone());
+                }
                 if ui.add_enabled(idle, egui::Button::new("Export MusicXML")).clicked() {
                     let result = self.xml.as_ref().context("No recognized MusicXML").and_then(|source| {
                         let destination = expand_path(self.xml_destination.trim());
@@ -991,7 +1028,9 @@ impl Music {
                     self.export_result(result);
                 }
                 ui.label("MIDI destination (selected parts, instruments, and tempo):");
-                ui.text_edit_singleline(&mut self.midi_destination);
+                if paths::entry(ui,PathField::ExportMidi,&mut self.midi_destination,idle) {
+                    self.request_path(PathField::ExportMidi,&self.midi_destination.clone());
+                }
                 if ui.add_enabled(idle, egui::Button::new("Export selected MIDI")).clicked() {
                     let result = self.midi().and_then(|bytes| {
                         prepare_export_dir(paths)?;
@@ -1016,14 +1055,36 @@ impl Music {
     }
 }
 
-pub fn settings_ui(ui: &mut egui::Ui, settings: &mut Settings) {
+pub(crate) fn settings_ui(
+    ui: &mut egui::Ui,
+    settings: &mut Settings,
+    busy: bool,
+) -> Option<PathField> {
+    let mut selected = None;
     ui.label("Audiveris executable (path only, no shell arguments):");
-    ui.text_edit_singleline(&mut settings.audiveris_executable);
+    if paths::entry(
+        ui,
+        PathField::Audiveris,
+        &mut settings.audiveris_executable,
+        !busy,
+    ) {
+        selected = Some(PathField::Audiveris);
+    }
     ui.label("FluidSynth executable:");
-    ui.text_edit_singleline(&mut settings.fluidsynth_executable);
+    if paths::entry(
+        ui,
+        PathField::FluidSynth,
+        &mut settings.fluidsynth_executable,
+        !busy,
+    ) {
+        selected = Some(PathField::FluidSynth);
+    }
     ui.label("SoundFont (.sf2 / .sf3):");
-    ui.text_edit_singleline(&mut settings.soundfont);
+    if paths::entry(ui, PathField::SoundFont, &mut settings.soundfont, !busy) {
+        selected = Some(PathField::SoundFont);
+    }
     ui.label("Install Audiveris separately, including its Tesseract language data. Recognition runs locally. Audiveris is AGPLv3; FluidSynth is LGPL.");
+    selected
 }
 
 fn program_label(program: u8) -> String {
@@ -1231,6 +1292,7 @@ mod tests {
                 .unwrap();
         assert_eq!(mix.master_volume, 100);
         assert!(!mix.follow_pages);
+        assert_eq!(mix.turn_lead_measures, 0);
     }
 
     #[test]
@@ -1442,6 +1504,7 @@ mod tests {
                     page: 1,
                 },
             ],
+            measure_ticks: vec![0, 960, 1920, 2880],
         });
         music.composition = Some(composition);
         let mut snapshot = Snapshot {
@@ -1450,10 +1513,21 @@ mod tests {
             duration: 2.0,
             error: None,
             source_page: Some(1),
+            score_tick: 1920,
         };
         assert_eq!(music.follow_page_at(&score, &snapshot), None);
         music.follow_pages = true;
+        music.turn_lead_measures = 0;
         assert_eq!(music.follow_page_at(&score, &snapshot), Some(1));
+        snapshot.score_tick = 960;
+        snapshot.source_page = Some(0);
+        assert_eq!(music.follow_page_at(&score, &snapshot), Some(0));
+        music.turn_lead_measures = 1;
+        for _ in 0..3 {
+            assert_eq!(music.follow_page_at(&score, &snapshot), Some(1));
+        }
+        snapshot.score_tick = 1920;
+        snapshot.source_page = Some(1);
         snapshot.state = State::Paused;
         assert_eq!(music.follow_page_at(&score, &snapshot), Some(1));
         for state in [
@@ -1484,6 +1558,7 @@ mod tests {
         music.follow_pages = false;
         music.load_mix().unwrap();
         assert!(music.follow_pages);
+        assert_eq!(music.turn_lead_measures, 1);
         music.source_pages = 1;
         assert!(!music.page_follow_available());
         assert_eq!(music.follow_page_at(&score, &snapshot), None);

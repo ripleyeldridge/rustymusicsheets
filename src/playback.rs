@@ -31,6 +31,7 @@ pub struct Snapshot {
     pub duration: f64,
     pub error: Option<String>,
     pub source_page: Option<u32>,
+    pub score_tick: u64,
 }
 
 #[derive(Debug)]
@@ -87,6 +88,7 @@ impl Transport {
                 duration: timeline.duration / options.tempo_scale,
                 error: None,
                 source_page: None,
+                score_tick: 0,
             }));
             let cancelled = Arc::new(AtomicBool::new(false));
             let process = Arc::new(Mutex::new(None));
@@ -206,6 +208,7 @@ struct Timeline {
     events: Vec<Event>,
     duration: f64,
     pages: Vec<(f64, u32)>,
+    tempo_points: Vec<(u64, f64, f64)>,
 }
 
 impl Timeline {
@@ -252,6 +255,7 @@ impl Timeline {
                         .collect()
                 })
                 .unwrap_or_default(),
+            tempo_points: Vec::new(),
         };
         let total_notes: usize = score.parts.iter().map(|p| p.notes.len()).sum();
         ensure!(total_notes <= 250_000, "Too many live playback notes");
@@ -328,12 +332,23 @@ impl Timeline {
                 }
             }
         }
+        timeline.tempo_points = points;
         timeline.events.sort_by(|a, b| {
             a.at.total_cmp(&b.at)
                 .then((a.velocity != 0).cmp(&(b.velocity != 0)))
         });
         Ok(timeline)
     }
+    fn score_tick(&self, position: f64) -> u64 {
+        let index = self
+            .tempo_points
+            .partition_point(|(_, at, _)| *at <= position)
+            .saturating_sub(1);
+        let (tick, seconds, bpm) = self.tempo_points[index];
+        (tick as f64 + (position - seconds).max(0.0) * bpm / 60.0 * f64::from(TICKS_PER_QUARTER))
+            .floor() as u64
+    }
+
     fn source_page(&self, position: f64) -> Option<u32> {
         self.pages
             .partition_point(|(at, _)| *at <= position)

@@ -8,12 +8,29 @@ fn real_synth_page_follow_smoke() {
     let path = std::env::var_os("RMS_TEST_MUSICXML").expect("Set RMS_TEST_MUSICXML");
     let score = crate::notation::load(std::path::Path::new(&path)).unwrap();
     let timeline = Timeline::new(&score, &MidiOptions::default()).unwrap();
+    let map = score
+        .page_map
+        .clone()
+        .expect("Original-page metadata required");
     let pages = timeline
         .pages
         .windows(2)
         .find(|p| p[0].1 != p[1].1)
         .expect("Need two original pages");
     let (boundary, first, second) = (pages[1].0, pages[0].1, pages[1].1);
+    let transition = map.turns.iter().find(|turn| turn.page == second).unwrap();
+    let measure = map.measure_ticks.binary_search(&transition.tick).unwrap();
+    let preview_tick = map.measure_ticks[measure - 1];
+    let index = timeline
+        .tempo_points
+        .partition_point(|(tick, _, _)| *tick <= preview_tick)
+        .saturating_sub(1);
+    let (tick, seconds, bpm) = timeline.tempo_points[index];
+    let preview_seconds =
+        seconds + (preview_tick - tick) as f64 / f64::from(TICKS_PER_QUARTER) * 60.0 / bpm;
+    assert_eq!(map.page_at(preview_tick, 0), Some(first));
+    assert_eq!(map.page_at(preview_tick, 1), Some(second));
+    println!("One-measure read-ahead: {preview_seconds:.3}s, actual page boundary: {boundary:.3}s");
     assert!(boundary > 0.1);
     let mut reader = crate::reader::Reader::default();
     reader.load(
@@ -35,16 +52,24 @@ fn real_synth_page_follow_smoke() {
     transport.pause().unwrap();
     wait(&transport, |s| s.state == State::Paused);
     transport.seek(boundary - 0.05).unwrap();
-    wait(&transport, |s| {
+    let before = wait(&transport, |s| {
         s.state == State::Paused && s.position >= boundary - 0.06 && s.source_page == Some(first)
     });
+    assert!(reader.follow_page(map.page_at(before.score_tick, 1).unwrap()));
+    assert_eq!(
+        reader.page, second,
+        "Reader previews before the synth reaches the next page"
+    );
     transport.play().unwrap();
     let snapshot = wait(&transport, |s| {
         s.state == State::Playing && s.source_page == Some(second)
     });
-    assert!(reader.follow_page(snapshot.source_page.unwrap()));
+    assert!(
+        !reader.follow_page(map.page_at(snapshot.score_tick, 1).unwrap()),
+        "Preview must not bounce at the actual page boundary"
+    );
     assert_eq!(reader.page, second);
-    transport.seek(-1.0).unwrap();
+    transport.seek(-(boundary - preview_seconds + 0.5)).unwrap();
     let snapshot = wait(&transport, |s| s.source_page == Some(first));
     assert!(reader.follow_page(snapshot.source_page.unwrap()));
     assert_eq!(reader.page, first);
@@ -73,6 +98,7 @@ fn source_pages_use_the_transport_clock_across_pauses_seeks_and_tempo_changes() 
                 page: 0,
             },
         ],
+        measure_ticks: (0..32).map(|n| n * 960).collect(),
     });
     let timeline = Timeline::new(&c, &MidiOptions::default()).unwrap();
     assert_eq!(timeline.source_page(3.99), Some(0));
@@ -89,10 +115,12 @@ fn source_pages_use_the_transport_clock_across_pauses_seeks_and_tempo_changes() 
     wait(&transport, |s| {
         s.position == 5.0 && s.source_page == Some(1)
     });
+    assert_eq!(transport.snapshot().score_tick, 9 * 960);
     transport.tempo(0.5).unwrap();
     wait(&transport, |s| {
         s.position == 10.0 && s.source_page == Some(1)
     });
+    assert_eq!(transport.snapshot().score_tick, 9 * 960);
     transport.seek(8.0).unwrap();
     wait(&transport, |s| {
         s.position == 18.0 && s.source_page == Some(0)

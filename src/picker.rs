@@ -1,4 +1,5 @@
-use anyhow::Result;
+use anyhow::{ensure, Result};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "linux")]
@@ -24,12 +25,47 @@ pub const SCORE_EXTENSIONS: &[&str] = &["pdf", "png", "jpg", "jpeg"];
 pub enum SelectionKind {
     Score,
     Folder,
+    Executable,
+    SoundFont,
+    MusicXml,
+    SaveMxl,
+    SaveMusicXml,
+    SaveMidi,
+}
+
+impl SelectionKind {
+    pub fn is_save(self) -> bool {
+        matches!(self, Self::SaveMxl | Self::SaveMusicXml | Self::SaveMidi)
+    }
+    pub fn extensions(self) -> &'static [&'static str] {
+        match self {
+            Self::Score => SCORE_EXTENSIONS,
+            Self::SoundFont => &["sf2", "sf3"],
+            Self::MusicXml => &["mxl", "musicxml", "xml"],
+            Self::SaveMxl => &["mxl"],
+            Self::SaveMusicXml => &["musicxml", "xml"],
+            Self::SaveMidi => &["mid", "midi"],
+            Self::Executable | Self::Folder => &[],
+        }
+    }
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Score => "Select music",
+            Self::Folder => "Select folder",
+            Self::Executable => "Select executable",
+            Self::SoundFont => "Select SoundFont",
+            Self::MusicXml => "Select MusicXML",
+            Self::SaveMxl | Self::SaveMusicXml => "Save MusicXML",
+            Self::SaveMidi => "Save MIDI",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Request {
     pub kind: SelectionKind,
     pub directory: PathBuf,
+    pub filename: Option<OsString>,
 }
 
 /// Implementations return None for user cancellation, and Err for reported failures.
@@ -55,10 +91,52 @@ fn select_with(
     preferred: &Path,
     home: &Path,
 ) -> Result<Option<PathBuf>> {
-    backend.select(&Request {
-        kind,
-        directory: initial_directory(preferred, home),
-    })
+    let directory = if kind.is_save() && !preferred.is_dir() {
+        preferred
+            .parent()
+            .and_then(|parent| parent.ancestors().find(|p| p.is_dir()))
+            .and_then(|parent| parent.canonicalize().ok())
+            .unwrap_or_else(|| initial_directory(preferred, home))
+    } else {
+        initial_directory(preferred, home)
+    };
+    let filename = if kind != SelectionKind::Folder && (kind.is_save() || preferred.is_file()) {
+        preferred.file_name().map(|name| name.to_owned())
+    } else {
+        None
+    };
+    backend
+        .select(&Request {
+            kind,
+            directory,
+            filename,
+        })?
+        .map(|path| normalize_save_path(kind, path))
+        .transpose()
+}
+
+fn normalize_save_path(kind: SelectionKind, mut path: PathBuf) -> Result<PathBuf> {
+    if kind.is_save() {
+        ensure!(
+            path.file_name().is_some() && !path.is_dir(),
+            "Choose an output filename, not a folder"
+        );
+        if path.extension().is_none() {
+            path.set_extension(kind.extensions()[0]);
+        }
+        ensure!(
+            path.extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| kind
+                    .extensions()
+                    .iter()
+                    .any(|allowed| e.eq_ignore_ascii_case(allowed))),
+            "Choose a {} filename ({})",
+            kind.title(),
+            kind.extensions().join(", ")
+        );
+    }
+    Ok(path)
 }
 
 fn fallback_directory() -> PathBuf {

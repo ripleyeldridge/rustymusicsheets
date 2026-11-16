@@ -43,6 +43,40 @@ pub struct PageTurn {
 pub struct PageMap {
     pub source_pages: Vec<u32>,
     pub turns: Vec<PageTurn>,
+    pub measure_ticks: Vec<u64>,
+}
+
+impl PageMap {
+    pub fn page_at(&self, tick: u64, lead_measures: u16) -> Option<u32> {
+        let index = self
+            .turns
+            .partition_point(|turn| turn.tick <= tick)
+            .checked_sub(1)?;
+        let current = &self.turns[index];
+        let Some(next) = self.turns.get(index + 1) else {
+            return Some(current.page);
+        };
+        if lead_measures == 0 {
+            return Some(current.page);
+        }
+        let Ok(boundary) = self.measure_ticks.binary_search(&next.tick) else {
+            return Some(current.page);
+        };
+        let start = self
+            .measure_ticks
+            .partition_point(|at| *at <= current.tick)
+            .saturating_sub(1);
+        // Never preview so early that the current page is skipped entirely.
+        let earliest = start.saturating_add(1).min(boundary);
+        let preview = boundary
+            .saturating_sub(usize::from(lead_measures))
+            .max(earliest);
+        Some(if tick >= self.measure_ticks[preview] {
+            next.page
+        } else {
+            current.page
+        })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -389,6 +423,7 @@ pub fn parse_musicxml(xml: &str) -> Result<Composition> {
         }
     }
     let mut page_turns = Vec::new();
+    let mut measure_ticks = Vec::new();
     for (index, (part, measures)) in composition.parts.iter_mut().zip(&all_measures).enumerate() {
         let duration = expand_part(
             measures,
@@ -401,14 +436,24 @@ pub fn parse_musicxml(xml: &str) -> Result<Composition> {
             } else {
                 None
             },
+            if index == 0 {
+                Some(&mut measure_ticks)
+            } else {
+                None
+            },
         )?;
         composition.duration_ticks = composition.duration_ticks.max(duration);
     }
     if let Some(layout) = layout {
-        composition.page_map = Some(PageMap {
-            source_pages: layout.source_pages,
-            turns: page_turns,
-        });
+        if measure_ticks.windows(2).any(|pair| pair[0] >= pair[1]) {
+            warn(&mut composition.warnings,"Automatic page turning unavailable: measure durations are below timeline resolution");
+        } else {
+            composition.page_map = Some(PageMap {
+                source_pages: layout.source_pages,
+                turns: page_turns,
+                measure_ticks,
+            });
+        }
     }
     composition.tempos.sort_by_key(|t| t.tick);
     composition
@@ -898,6 +943,7 @@ fn expand_part(
     warnings: &mut Vec<String>,
     event_count: &mut usize,
     mut page_turns: Option<&mut Vec<PageTurn>>,
+    mut measure_ticks: Option<&mut Vec<u64>>,
 ) -> Result<u64> {
     let mut pc = 0usize;
     let mut start = 0usize;
@@ -928,6 +974,11 @@ fn expand_part(
         }
         let include = measure.endings.is_empty() || measure.endings.contains(&pass);
         if include {
+            if measure.source_page.is_some() {
+                if let Some(starts) = measure_ticks.as_deref_mut() {
+                    starts.push(ticks(beat)?);
+                }
+            }
             if let (Some(page), Some(turns)) = (measure.source_page, page_turns.as_deref_mut()) {
                 if turns.last().is_none_or(|last| last.page != page) {
                     turns.push(PageTurn {

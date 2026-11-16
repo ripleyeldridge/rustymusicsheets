@@ -389,6 +389,7 @@ fn bounded_input_decompression_and_expansion() {
         &mut Vec::new(),
         &mut (MAX_EVENTS - 2),
         None,
+        None,
     )
     .is_err());
 }

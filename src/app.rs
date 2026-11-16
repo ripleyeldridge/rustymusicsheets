@@ -59,6 +59,12 @@ enum ImportMessage {
     FolderReady(Paths),
 }
 
+enum PickerTarget {
+    Import,
+    Library,
+    Music(crate::music::PathRequest),
+}
+
 pub struct MusicApp {
     document_access: Arc<dyn DocumentAccess>,
     paths: Paths,
@@ -78,6 +84,7 @@ pub struct MusicApp {
     import_task: Option<ImportTask>,
     report: Option<Report>,
     picker: Option<Receiver<Result<Option<PathBuf>, String>>>,
+    picker_target: Option<PickerTarget>,
     editing: Option<Score>,
     group_name: String,
     new_collection: bool,
@@ -187,6 +194,7 @@ impl MusicApp {
             import_task: None,
             report: None,
             picker: None,
+            picker_target: None,
             editing: None,
             group_name: String::new(),
             new_collection: false,
@@ -603,7 +611,6 @@ impl MusicApp {
         if self.picker.is_some() {
             return;
         }
-        let (tx, rx) = bounded(1);
         let preferred = if self.picker_sets_library {
             expand_path(self.library_folder_input.trim())
         } else if !self.import_path.trim().is_empty() {
@@ -611,19 +618,39 @@ impl MusicApp {
         } else {
             self.paths.score_dir()
         };
+        let kind = if folder {
+            picker::SelectionKind::Folder
+        } else {
+            picker::SelectionKind::Score
+        };
+        let target = if self.picker_sets_library {
+            PickerTarget::Library
+        } else {
+            PickerTarget::Import
+        };
+        self.start_picker(kind, preferred, target, ctx);
+    }
+
+    fn start_picker(
+        &mut self,
+        kind: picker::SelectionKind,
+        preferred: PathBuf,
+        target: PickerTarget,
+        ctx: &egui::Context,
+    ) {
+        if self.picker.is_some() {
+            return;
+        }
+        let (tx, rx) = bounded(1);
         let home = picker::home_directory();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let kind = if folder {
-                picker::SelectionKind::Folder
-            } else {
-                picker::SelectionKind::Score
-            };
             let result = picker::select(kind, &preferred, &home).map_err(|e| format!("{e:#}"));
             let _ = tx.send(result);
             ctx.request_repaint();
         });
         self.picker = Some(rx);
+        self.picker_target = Some(target);
     }
 
     fn poll(&mut self, ctx: &egui::Context) {
@@ -685,14 +712,19 @@ impl MusicApp {
         }
         if let Some(result) = self.picker.as_ref().and_then(|rx| rx.try_recv().ok()) {
             self.picker = None;
+            let target = self.picker_target.take().unwrap_or(PickerTarget::Import);
             match result {
-                Ok(Some(path)) => {
-                    if self.picker_sets_library {
-                        self.change_music_folder(path, ctx);
-                    } else {
+                Ok(Some(path)) => match target {
+                    PickerTarget::Library => self.change_music_folder(path, ctx),
+                    PickerTarget::Import => {
+                        self.import_path = path.to_str().unwrap_or("").to_owned();
                         self.start_import(vec![path], ctx);
                     }
-                }
+                    PickerTarget::Music(request) => {
+                        let result = self.music.apply_path(request, path, &mut self.prefs.music);
+                        self.result(result);
+                    }
+                },
                 Ok(None) => {}
                 Err(error) => self.error = Some(error),
             }
@@ -745,6 +777,7 @@ impl MusicApp {
                 .map(|s| (s.id, s.hash.clone())),
         );
         self.music.poll(&self.paths, ctx);
+        self.music.path_picker_active = self.picker.is_some();
         if !self.performance {
             self.music.controls_active = false;
         }
@@ -802,6 +835,7 @@ impl MusicApp {
             || self.setlist_manager.is_some()
             || self.music.open
             || self.music.controls_active
+            || self.picker.is_some()
         {
             return;
         }
@@ -1534,15 +1568,32 @@ impl MusicApp {
                                 self.choose(false, ctx);
                             }
                         });
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             self.text_input_active |= ui
                                 .add(
                                     egui::TextEdit::singleline(&mut self.import_path)
                                         .id_salt("import_path")
                                         .hint_text("Or paste a PDF / folder path")
-                                        .desired_width((ui.available_width() - 90.0).max(80.0)),
+                                        .desired_width((ui.available_width() - 180.0).max(40.0)),
                                 )
                                 .text_edit_has_focus();
+                            ui.add_enabled_ui(
+                                self.import_task.is_none() && self.picker.is_none(),
+                                |ui| {
+                                    ui.menu_button("Browse…", |ui| {
+                                        if ui.button("Score file…").clicked() {
+                                            self.picker_sets_library = false;
+                                            self.choose(false, ctx);
+                                            ui.close_menu();
+                                        }
+                                        if ui.button("Folder…").clicked() {
+                                            self.picker_sets_library = false;
+                                            self.choose(true, ctx);
+                                            ui.close_menu();
+                                        }
+                                    });
+                                },
+                            );
                             if ui
                                 .add_enabled(
                                     self.import_task.is_none(),
@@ -1927,7 +1978,9 @@ impl MusicApp {
                 ui.checkbox(&mut self.prefs.detect_on_import, "Detect new imports and fill clear unassigned values");
                 ui.separator();
                 ui.heading("Music recognition and MIDI playback (Linux)");
-                crate::music::settings_ui(ui, &mut self.prefs.music);
+                if let Some(field)=crate::music::settings_ui(ui, &mut self.prefs.music,self.picker.is_some()) {
+                    self.music.browse_settings(field,&self.prefs.music);
+                }
                 ui.label("Open a score in Reader, then Music / OMR. Save preferences to retain engine settings.");
                 ui.separator();
                 ui.label(format!("Music folder: {}", self.paths.score_dir().display()));
@@ -2054,6 +2107,28 @@ impl MusicApp {
     fn status_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             if self.performance && !self.help.open {
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .add_enabled(
+                            self.reader.can_turn(false),
+                            egui::Button::new("◀ Previous page"),
+                        )
+                        .clicked()
+                    {
+                        self.turn(false);
+                    }
+                    if ui
+                        .add_enabled(self.reader.can_turn(true), egui::Button::new("Next page ▶"))
+                        .clicked()
+                    {
+                        self.turn(true);
+                    }
+                    ui.label(format!(
+                        "Page {} / {}",
+                        self.reader.page + 1,
+                        self.reader.pages
+                    ));
+                });
                 if let Some(score) = self
                     .scores
                     .iter()
@@ -2239,6 +2314,16 @@ impl eframe::App for MusicApp {
                 self.result(self.paths.save_preferences(&self.prefs));
             }
         }
+        if !self.help.open && self.picker.is_none() {
+            if let Some(request) = self.music.take_path_request() {
+                self.start_picker(
+                    request.field.kind(),
+                    request.preferred.clone(),
+                    PickerTarget::Music(request),
+                    ctx,
+                );
+            }
+        }
         if self.smoke_deadline.is_some_and(|at| Instant::now() >= at) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
@@ -2276,6 +2361,108 @@ pub fn expand_path(path: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn music_chooser_results_update_only_the_requested_field_and_cancel_is_harmless() {
+        let (root, ctx, mut app) = test_app();
+        app.picker_sets_library = true;
+        let bank = root.path().join("Chosen étude.sf2");
+        std::fs::write(&bank, b"generated bank").unwrap();
+        for selected in [Some(bank.clone()), None] {
+            let settings = app.prefs.music.clone();
+            app.music
+                .browse_settings(crate::music::PathField::SoundFont, &settings);
+            let request = app.music.take_path_request().unwrap();
+            let (tx, rx) = bounded(1);
+            app.picker = Some(rx);
+            app.picker_target = Some(PickerTarget::Music(request));
+            tx.send(Ok(selected)).unwrap();
+            app.poll(&ctx);
+            assert_eq!(app.prefs.music.soundfont, bank.to_str().unwrap());
+            assert!(app.picker.is_none());
+            assert!(app.import_task.is_none());
+            assert!(app.scores.is_empty());
+        }
+        assert!(
+            !app.paths.config.join("preferences.json").exists(),
+            "Browse must not save settings implicitly"
+        );
+    }
+
+    #[test]
+    fn performance_manual_page_buttons_work_without_synth_or_recognition() {
+        let (_root, ctx, mut app) = test_app();
+        let id = app
+            .db
+            .insert("manual-performance", "Manual score", 3, "")
+            .unwrap();
+        app.reload();
+        app.load_score(id, Some(0));
+        app.performance = true;
+        fn draw(
+            app: &mut MusicApp,
+            ctx: &egui::Context,
+            events: Vec<egui::Event>,
+        ) -> egui::FullOutput {
+            ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(640.0, 360.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    app.status_bar(ctx);
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        ui.label("Score");
+                    });
+                },
+            )
+        }
+        fn click(app: &mut MusicApp, ctx: &egui::Context, label: &str) {
+            for _ in 0..3 {
+                draw(app, ctx, vec![]);
+            }
+            let output = draw(app, ctx, vec![]);
+            let pos = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == label => {
+                        let rect = shape
+                            .clip_rect
+                            .intersect(egui::Rect::from_min_size(text.pos, text.galley.size()));
+                        (rect.height() > 8.0).then(|| rect.center())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("Missing manual page control {label}"));
+            for pressed in [true, false] {
+                draw(
+                    app,
+                    ctx,
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+        }
+        assert!(!app.reader.can_turn(false));
+        assert!(app.reader.can_turn(true));
+        click(&mut app, &ctx, "Next page ▶");
+        assert_eq!(app.reader.page, 1);
+        click(&mut app, &ctx, "◀ Previous page");
+        assert_eq!(app.reader.page, 0);
+        assert!(app.performance);
+    }
 
     #[test]
     fn accompaniment_mixer_keys_do_not_turn_pages_or_exit_performance() {

@@ -93,6 +93,18 @@ impl Reader {
         true
     }
 
+    pub fn can_turn(&self, forward: bool) -> bool {
+        if self.score_id.is_none() || self.pages == 0 {
+            return false;
+        }
+        if forward {
+            self.page.saturating_add(if self.two_pages { 2 } else { 1 }) < self.pages
+                || self.sequence_index.saturating_add(1) < self.sequence.len()
+        } else {
+            self.page > 0 || (self.sequence_index > 0 && !self.sequence.is_empty())
+        }
+    }
+
     pub fn turn(&mut self, forward: bool) -> Turn {
         if self.score_id.is_none() || self.pages == 0 {
             return Turn::Boundary;

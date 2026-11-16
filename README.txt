@@ -1,4 +1,4 @@
-RustyMusicSheets 0.3.0 preview
+RustyMusicSheets 0.3.1 preview
 ===================
 
 A native Rust desktop sheet-music library and PDF/image performance reader for Linux.
@@ -242,6 +242,11 @@ in Engine settings or Settings, for example /opt/audiveris/bin/Audiveris.
 Recent packages include Java. Audiveris requires its own OCR language setup;
 install English in its language manager, or use TESSDATA_PREFIX with compatible
 full Tesseract tessdata models (distro LSTM-only models may not work).
+Use Browse… beside executable/SoundFont paths, corrected MusicXML input and export
+destinations to avoid typing filenames. Input/output selection fills the field;
+Load MusicXML, Export and Save preferences remain explicit actions. Save dialogs
+add the matching extension when omitted; existing files are never overwritten.
+Cancellation leaves fields unchanged, and stale score/movement results are rejected.
 Install FluidSynth and a SoundFont (e.g. sudo apt install fluidsynth
 fluid-soundfont-gm), choose the .sf2/.sf3 path and save preferences.
 
@@ -281,6 +286,14 @@ Manual page turns/jumps/bookmarks disable following until re-enabled. Two-page
 mode retains already-visible pages. Pause freezes the clock; paused seeks update
 the target. Stop does not reset the displayed page, and completion cannot jump
 to another setlist score. Help/Library suspend visual following until Reader.
+Set Turn pages early by … measures (integer 0-999) for musician read-ahead.
+0 turns at the boundary; 1 previews at the start of the last played measure
+before the page; 2 previews two measures before. Counts follow the repeat-expanded
+score and tempo changes, not fixed seconds. Oversized lead is capped so no entire
+page is skipped. Preview pages stay stable across the actual boundary and work
+with backward repeats and paused seeks. The setting is saved per movement.
+Performance always shows Previous page / Next page buttons, even without
+recognition or the synth. They respect spreads/setlists and disable auto-follow.
 
 Export MusicXML preserves recognized notation; compressed files remain .mxl.
 Export selected MIDI uses selected parts, instruments, channel volumes and tempo. Existing
