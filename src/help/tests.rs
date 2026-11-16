@@ -26,6 +26,43 @@ fn frame(
     )
 }
 
+#[test]
+fn current_docs_and_embedded_music_reference_remain_consistent() {
+    let article = |id| topics().iter().find(|topic| topic.id == id).unwrap().body;
+    for term in [
+        "Master volume",
+        "Turn pages early by",
+        "Browse",
+        "Previous page / Next page",
+    ] {
+        assert!(
+            article("music").contains(term),
+            "Missing music documentation: {term}"
+        );
+        assert!(!search(term).is_empty(), "Feature not searchable: {term}");
+    }
+    let manual = include_str!("../../assets/rustymusicsheets.1").replace(r"\-", "-");
+    for flag in [
+        "--omr",
+        "--inspect-musicxml",
+        "--midi",
+        "--program",
+        "--play-seconds",
+        "--soundfont",
+        "--fluidsynth",
+    ] {
+        assert!(
+            article("cli").contains(flag),
+            "Missing embedded command: {flag}"
+        );
+        assert!(manual.contains(flag), "Missing man-page command: {flag}");
+    }
+    assert!(manual.contains(&format!("RustyMusicSheets {VERSION}")));
+    assert!(include_str!("../../README.md").contains(&format!("**Version:** {VERSION}")));
+    assert!(include_str!("../../README.txt")
+        .starts_with(&format!("RustyMusicSheets {VERSION} preview")));
+}
+
 fn visible_text(output: &egui::FullOutput, needle: &str) -> Option<egui::Pos2> {
     output.shapes.iter().find_map(|shape| {
         if let egui::Shape::Text(label) = &shape.shape {

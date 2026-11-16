@@ -86,7 +86,7 @@ cargo build --locked --release. Tests generate their own fixtures; Linux
 power tests start isolated session-bus daemons, not the user's real session.
 It also runs the integrated stdlib Python tooling tests:
   python3 -m unittest discover -s scripts/tests -p 'test_*.py'
-The lead's scripts/tests files must be integrated alongside this workflow.
+The scripts/tests checks ship with this workflow; keep their interfaces in sync.
 
 The Android job invokes scripts/build-android.sh and then
 scripts/verify-android-apk.py with the selected SDK/NDK. The verifier checks
@@ -123,9 +123,8 @@ Optional isolated emulator coverage
 Pull requests run this job; outside a PR, choose workflow_dispatch with
 run_emulator=true. New workflow-dispatch definitions must first exist on the
 default branch; PR checks do not require promoting this work to a release.
-It requires the integration lead's M0 scripts and android/test-harness files
-alongside this workflow. They must be integrated together: they are not in
-the original def8341 baseline. Exact reviewed interfaces:
+The M0 scripts and android/test-harness files are integrated in the repository
+and must stay synchronized with this workflow. Their interfaces are:
   RMS_ANDROID_TARGET=x86_64-linux-android ./scripts/build-android.sh
   python3 scripts/generate-android-fixtures.py --output target/android-tests/fixtures
   python3 scripts/build-android-smoke.py --apk target/debug/apk/RustyMusicSheets.apk --fixtures target/android-tests/fixtures --output target/android-tests/apks --abi x86_64
@@ -173,15 +172,22 @@ rather than claiming a byte-identical image. The action also installs its
 own build-tools 35.0.0 for emulator setup; app packaging/verification still
 explicitly use 36.0.0. Review these additional SDK licenses as well.
 
-Tracked follow-up: M0-CI-EMULATOR (wired; hosted execution pending)
-----------------------------------------------------------------
-Owner: M0 integration lead. The exact CLI is now supplied and the optional
-job is wired. The lead reports a local API 35 x86_64/KVM end-to-end pass;
-that does not establish a successful GitHub-hosted workflow run.
-After integrating the scripts/harness and these CI files, run the manual
-job and inspect report.json complete=true and the action conclusion before
-claiming hosted emulator coverage. The default ARM64 job explicitly reports
-that it performs no device tests; emulator evidence is separately labeled.
+Hosted API 35 baseline (verified 2026-11-16)
+-------------------------------------------
+Run 43894732361 at source fd9f5348edd555bda5e3dd09a99e34f9fa4b5a32 passed
+host, ARM64 build/static verification and the isolated emulator job:
+    https://github.com/ripleyeldridge/rustymusicsheets/actions/runs/43894732361
+The retained generated-only report was inspected: complete=true, API 35,
+x86_64, KVM/4 KiB pages, all ten import/deduplication/rejection cases complete.
+This establishes that historical M0 baseline, not a pass for every later commit.
+Require a successful current run and complete report for future changes.
+Actions evidence expires after the configured retention period; reproduce
+the run when needed rather than assuming old artifact links remain available.
+
+Main pushes normally skip the emulator job; a successful main ARM64 job is
+not emulator or ARM64 device execution. Outside PRs, dispatch explicitly
+with run_emulator=true. Issue/roadmap closure is tracked separately from
+these technical results; this does not start or complete M1.
 
 Continue tracking API 26, representative intermediate/current APIs,
 ARM64/available Pixel hardware, lifecycle and an actual 16 KiB-page runtime.
@@ -196,6 +202,7 @@ The retained artifact had no fatal app log or foreground/launch diagnostics,
 so it does not prove either an app crash or a timing-only cause.
 Readiness polling now waits for observed live/unlocked/focused state,
 preserves bounded component-only observations and launch results, and still
-fails without screenshots if the state never becomes safe. The exact
-hosted foreground cause remains unproven until a follow-up run provides
-those diagnostics. Local cold-boot smoke is not a replacement for that run.
+fails without screenshots if the state never becomes safe. The later
+successful baseline demonstrates the updated readiness/import flow, but
+does not retroactively prove the original foreground failure's exact cause.
+Local cold-boot smoke and hosted results remain separately identified evidence.

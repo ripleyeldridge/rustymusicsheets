@@ -1,9 +1,24 @@
 RustyMusicSheets 0.3.1 preview
 ===================
 
-A native Rust desktop sheet-music library and PDF/image performance reader for Linux.
-This is milestone 1 of a larger functional replacement for MobileSheets, NOT
-full feature parity yet.
+A native Rust desktop sheet-music library and PDF/image performance reader for Linux,
+with optional offline OMR, accompaniment and measure-based page read-ahead.
+This is an evolving preview, NOT full MobileSheets feature parity.
+
+Downloads and install
+---------------------
+Current Linux preview and release notes:
+    https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.3.1
+Download rustymusicsheets_0.3.1-1_amd64.deb and SHA256SUMS from that page.
+In their shared download directory, after confirming amd64/glibc compatibility:
+    sha256sum -c SHA256SUMS
+    sudo apt install ./rustymusicsheets_0.3.1-1_amd64.deb
+
+This native Ubuntu 26.10 build requires glibc 2.43 or newer; it does not support
+Ubuntu 22.04/24.04. Build on the target distribution when needed. Do not force
+dependencies or replace system glibc. Stable v0.2.1 remains available separately.
+There is no Android APK in v0.3.1; the separate v0.2.3 debug foundation preview
+is not desktop feature parity. See android/README.txt and its signing warnings.
 
 Build and run
 -------------
@@ -53,9 +68,10 @@ Search help matches every entered word across titles, keywords, and article
 text, case-insensitively. Click a result to read it; Clear restores all topics.
 Topics and articles scroll independently in wide windows. Compact windows
 offer Topics/Article buttons so both remain usable at 640x360.
-Close help or Escape returns to the previous workspace without changing
-reading position, list playback, filters, or metadata drafts. Page-turn keys
+Close help or Escape returns to the previous workspace without discarding
+filters or metadata drafts. Page-turn keys
 are suspended while help is open; background library jobs can continue.
+If synth page following is enabled, Reader catches up to playback on return.
 Help > Keyboard shortcuts opens the key/pedal reference directly.
 Help > About RustyMusicSheets shows the compiled application version,
 author Ripley Eldridge, release year 2026, and MIT license.
@@ -341,6 +357,10 @@ in Library and click "Manage list…".
   confirming deletes only the group and its membership records.
 - "Play setlist" starts at the beginning; "Play here" starts at that entry.
 
+These Play actions select the reader's document sequence, not synth audio.
+Start accompaniment separately for the current piece; synth completion does
+not automatically launch another score.
+
 Membership/order changes save immediately. Naming changes use Rename.
 Edits do not alter an already-playing snapshot: start playback again to use
 the new order. Clicking a score in the ordinary library list still opens it
@@ -426,11 +446,12 @@ PageUp / ArrowLeft: previous page
 Home / End: first / last page of this score
 F1: open help
 F11 (outside help): toggle fullscreen
-Esc: close help, otherwise leave performance/fullscreen
+Esc: close help or an open music window/mixer, otherwise leave performance/fullscreen
 
 Click/tap the left or right half of a displayed page to turn backward/forward.
-Performance hides the library and editing controls. The bottom bar retains an
-exit button. Setlist navigation continues across score boundaries; reaching
+Performance hides the library and editing controls. The bottom bar retains
+Previous/Next, Exit performance and optional accompaniment controls.
+Manual setlist navigation continues across score boundaries; reaching
 the end displays an explicit message.
 
 Settings allow alternative next/previous keys for keyboard-emulating USB or
@@ -443,6 +464,9 @@ Command-line options
     rustymusicsheets --list
     rustymusicsheets --detect-instruments
     rustymusicsheets --detect-instruments 12
+    rustymusicsheets --omr SOURCE OUTPUT_DIR --audiveris EXE
+    rustymusicsheets --inspect-musicxml FILE
+    rustymusicsheets --midi FILE OUTPUT.mid --parts P2 --tempo-scale 0.8
     rustymusicsheets --check
     rustymusicsheets --smoke-test
 
@@ -452,6 +476,13 @@ three seconds. Use XDG_DATA_HOME/XDG_CONFIG_HOME/XDG_CACHE_HOME to isolate
 a test library.
 --detect-instruments creates proposals for all scores or the specified ID;
 review/apply them in the GUI. --check verifies PDF and OCR helper executables.
+Music commands do not open the library database. --inspect-musicxml emits JSON
+with parts, warnings, tempos and original-page mapping when available. MIDI
+options: --parts P1,P2, repeated --program P1=43 (one-based GM 1-128),
+--tempo-scale, --play, --play-seconds, --soundfont and --fluidsynth.
+--play-seconds requires --play; CLI playback remains one-shot, not the GUI
+transport. CLI engines use defaults/explicit options, not GUI preferences.
+No chooser, per-movement GUI mix or page-follow preference is applied by CLI.
 
 Data and backups
 ----------------
@@ -465,6 +496,9 @@ The program honors the corresponding XDG environment variables.
 Your selected music folder stores the scores; the database and preferences
 remain in the XDG locations above. The folder choice is saved atomically
 with score locations in the SQLite database.
+Recognition data/logs, result references, private corrected MusicXML and saved
+mixes live in app-data/omr/, omr-index/, omr-corrected/ and omr-mix/.
+Include them in backups; SQLite-only snapshots do not contain recognized music.
 
 Until portable backup/restore is implemented, close the application and copy
 the selected music folder AND the entire data and config directories.
@@ -484,10 +518,15 @@ Validation
     cargo test --locked
     cargo clippy --locked --all-targets -- -D warnings
     cargo build --locked --release
+    python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 
 Tests generate their own small PDFs/images and use actual Poppler and Tesseract
 with English language data, including OCR on scanned PDFs, PNG, and JPEG.
-They do not import or modify your personal documents.
+They do not import or modify your personal documents. Real-audio checks are
+ignored by default. To explicitly test an appropriate own/public-domain
+Audiveris export with original-page metadata (this plays a short passage):
+    RMS_TEST_MUSICXML="/absolute/path/to/score.mxl" cargo test --locked --lib playback::tests::real_synth_page_follow_smoke -- --ignored --nocapture
+Do not commit private scores or derived notation/audio as fixtures.
 
 Desktop launcher
 ----------------
@@ -514,9 +553,11 @@ Build a native package without installing it or requiring root:
 
 This requires Python 3.9+, Cargo/Rust, dpkg-deb, dpkg-shlibdeps (dpkg-dev),
 and binutils. The result is written to:
-    dist/rustymusicsheets_0.2.2-1_<architecture>.deb
+    dist/rustymusicsheets_0.3.1-1_<architecture>.deb
+--revision 2 selects Debian revision 2; the application version comes from
+Cargo.toml. Numeric application versions must match the root Cargo.lock entry.
 
-To package an already-built release executable:
+To package an already-built release executable ONLY after verifying it is current:
     python3 scripts/build-deb.py --skip-build
 
 The builder installs the binary under /usr/bin, launcher under
@@ -537,17 +578,46 @@ Do not force-install it or replace the reader's glibc to bypass dependencies.
 
 After confirming compatibility, install the package with APT so dependencies
 are resolved:
-    sudo apt install ./dist/rustymusicsheets_0.2.2-1_amd64.deb
+    sudo apt install ./dist/rustymusicsheets_0.3.1-1_amd64.deb
 
 Replace the filename with the package matching your reader's architecture.
 Personal music-library data and preferences are not shipped in the package.
 Uninstalling the application does not delete your library.
 
-Not implemented in milestone 1
-------------------------------
-Annotations, crop/rotation/page reordering, links/repeats within scores,
-vertical/half-page display, audio/metronome, MIDI, ChordPro/text, image-sequence assembly,
-printing/export, portable backups, cloud integration, and multi-device sync.
-Those are later milestones, not hidden or simulated features in this release.
+Publishing releases (maintainers)
+---------------------------------
+See README.md, "Publishing a release", for the complete checked command sequence.
+Do not replay it against already-published v0.3.1; choose an unused next version.
+1. Update Cargo.toml, only the root Cargo.lock package version, current guide
+   headings and the man-page header. Runtime version displays derive from Cargo.
+2. Run validation, review, merge as needed, and commit BEFORE building/tagging.
+   Work from clean main and record the exact build commit.
+3. Build with scripts/build-deb.py (not --skip-build for a new version). Optional
+   SOURCE_DATE_EPOCH from the commit pins package dates, not the entire build.
+4. Inspect package version, architecture, actual glibc dependencies, extracted
+   executable --help/--check, guides and license notices. Exclude private data.
+5. Stage distributables under ignored dist/releases/vVERSION and generate
+   SHA256SUMS there. Do not commit binaries, SDKs, keys or generated score data.
+6. Tag the built commit with an annotated tag; confirm it matches, then push
+   main and the tag atomically without force. Do not move old published tags
+   or relabel old-version binaries as a new application version.
+7. Create a GitHub draft with --verify-tag --prerelease --latest=false and
+   attach the package/checksum. Add feature, compatibility and verification notes.
+8. Download all draft assets to a fresh directory, verify SHA256SUMS there and
+   compare with local originals before publishing. Stable/latest promotion is
+   separate. A tag push by itself builds/publishes no release assets.
+Android is a separate optional build with its own source/signature/static/device
+checks; follow android/README.txt, TESTING.txt and CI.txt. Development signatures
+are not production trust and may prevent lossless updates. Never uninstall a
+valuable library to bypass a signature mismatch. Build records are unsigned.
+
+Current limitations
+--------------------
+Annotations, crop/rotation/page reordering, in-score navigation links,
+vertical/half-page display, metronome, VST hosting, microphone-based tracking,
+ChordPro/text, image-sequence assembly, document printing/export, portable
+backup/restore, cloud integration and multi-device sync are not implemented.
+Linux MusicXML/MIDI export, synth transport/mixing and optional original-page
+following ARE available as described above. OMR and playback need review.
 There is no compatibility claim for MobileSheets proprietary formats or
 device protocols.

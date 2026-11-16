@@ -2,15 +2,16 @@
 A native Linux sheet-music library and performance reader, written in Rust with egui.
 **A headline feature: offline instrument detection that helps turn a folder of scores into an instrument-searchable library—even when the parts are scanned PDFs or standalone images.**
 
-**Version:** 0.3.1 preview (source checkout) · **Author:** [Ripley Eldridge](https://github.com/ripleyeldridge) · **Release year:** 2026 · **License:** [MIT](LICENSE)
+**Version:** 0.3.1 preview · **Author:** [Ripley Eldridge](https://github.com/ripleyeldridge) · **Release year:** 2026 · **License:** [MIT](LICENSE)
 
-## 0.2.2 preview downloads
-The [0.2.2 prerelease](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.2.2) includes:
-- [Linux amd64 `.deb`](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.2.2/rustymusicsheets_0.2.2-1_amd64.deb), requiring glibc 2.43 or newer.
-- [Experimental Android ARM64 debug APK](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.2.2/rustymusicsheets_0.2.2-foundation_arm64_debug.apk), minimum API 26 and target API 36.
-- [SHA256SUMS](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.2.2/SHA256SUMS) for both downloads.
+## Latest preview: v0.3.1
+- [Release notes](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.3.1)
+- [Linux amd64 `.deb` — 0.3.1-1](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.3.1/rustymusicsheets_0.3.1-1_amd64.deb)
+- [SHA256SUMS](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.3.1/SHA256SUMS)
 
-**Android is a foundation preview, not a full PDF sheet-music release.** It supports the initial Open with PNG/JPEG import path, local metadata and offline Help. Native PDF/OCR, the in-app picker, document-tree watching, and keep-awake integration are not implemented. Startup was checked on a Pixel 8 Pro; the user confirmed the inset-corrected layout works. Broader import/device testing is still needed. This APK uses a development/debug signature and is not a production-signed Play Store build. The existing [stable Linux 0.2.1 release](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.2.1) remains available.
+This is a **Linux preview**, requiring **glibc 2.43 or newer**; it is not compatible with Ubuntu 22.04/24.04. The tag, application version and package source for v0.3.1 agree. The [stable v0.2.1 release](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.2.1) remains available.
+
+There is **no Android APK attached to v0.3.1**. The separate [v0.2.3 Android foundation preview](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.2.3) is experimental, debug-signed, and does not have Linux feature parity. Initial Open with PNG/JPEG, private imports, metadata and Help are supported; native PDF/OCR, the in-app picker, synth playback and Android keep-awake remain incomplete. Debug builds may use different signing keys: preserve existing data and do not uninstall merely to bypass a signature mismatch. See [Android setup and boundaries](android/README.txt).
 
 ## Why this exists
 > I vibe-coded the fuck out of this because I couldn't find a suitable Linux sheet-music reader for what I needed and I have a full-time coding job so I don't have time to write the whole thing myself.
@@ -31,6 +32,9 @@ This project was built with substantial AI assistance. It is a working, evolving
 - **Keep the reader awake**, optionally requesting temporary screen-idle and suspend protection without changing permanent desktop settings.
 - **Find instructions inside the app** using a searchable, clickable offline help tree.
 - **Recognize printed music and audition selected parts on Linux** using optional Audiveris and FluidSynth helpers, with MusicXML/MIDI export, instrument choices, and tempo scaling.
+- **Balance accompaniment live** with per-part selection/volume, a master volume slider, play/pause, seek and stop; settings are remembered per recognized movement.
+- **Read ahead during playback** using optional original-score page following with an integer measure lead. Manual Previous/Next remains available in Performance without the synth.
+- **Choose paths instead of typing them** using Browse dialogs for music engines, SoundFonts, MusicXML input and export destinations.
 
 Original score documents are not rewritten by metadata editing or detection. Instrument metadata is stored in the local library database, **not embedded into the PDFs/images**. Scores are not uploaded for OCR.
 ## Spotlight: offline instrument detection
@@ -52,23 +56,14 @@ See [Scan, review, apply](#instrument-detection-scan-review-apply) for the workf
 
 ## Install
 ### Option 1: Ubuntu/Debian package
-Download the existing stable native package (or use the preview downloads above):
-
-**[RustyMusicSheets 0.2.1-2 — Ubuntu 26.10 amd64 (.deb)](https://github.com/ripleyeldridge/rustymusicsheets/raw/refs/heads/main/packages/rustymusicsheets_0.2.1-2_amd64.deb)**
-
-Then install it using APT so dependencies are resolved:
-
-```bash
-sudo apt install ./rustymusicsheets_0.2.1-2_amd64.deb
-```
-
-For an optional integrity check, download [SHA256SUMS](https://github.com/ripleyeldridge/rustymusicsheets/raw/refs/heads/main/packages/SHA256SUMS) into the same directory as the `.deb` and run:
+Download the [v0.3.1 preview package](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.3.1/rustymusicsheets_0.3.1-1_amd64.deb) and [SHA256SUMS](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.3.1/SHA256SUMS) into the **same directory**. Verify there, then install with APT so dependencies are resolved:
 
 ```bash
 sha256sum -c SHA256SUMS
+sudo apt install ./rustymusicsheets_0.3.1-1_amd64.deb
 ```
 
-Development builds are generated in the ignored `dist/` directory. The selected downloadable build and checksum are tracked under [`packages/`](packages/). Build from source below if this package does not match your system.
+These commands are for a compatible reader; check the architecture and runtime requirement below first. New downloads are published as GitHub Release assets. Development builds live in ignored `dist/`; [`packages/`](packages/) contains older selected packages, not the current preview. Build from source if the package does not match your system.
 
 **Compatibility matters:** the current native amd64 build targets the confirmed **Ubuntu 26.10 x86_64** reader and requires **glibc 2.43 or newer**. It is **not compatible with Ubuntu 22.04/24.04**. A `.deb` is not a universal Linux binary: use a matching package or build on your target distribution. Do not force-install incompatible packages or replace system glibc.
 
@@ -103,7 +98,7 @@ To build a native Debian package without installing it or requiring root:
 python3 scripts/build-deb.py
 ```
 
-Packaging also requires Python 3.9+, dpkg-dev, dpkg-deb, and binutils. The resulting package is written to `dist/`.
+Packaging also requires Python 3.9+, dpkg-dev, dpkg-deb, and binutils. The builder performs a locked release build and writes `dist/rustymusicsheets_0.3.1-1_<architecture>.deb`. `--revision 2` selects Debian revision 2; `--skip-build` is only for a separately verified, current release executable. See [Publishing a release](#publishing-a-release) for commit/tag/checksum requirements.
 
 ## Start the app
 **After installing the package:** launch **RustyMusicSheets** from your desktop application menu, or run:
@@ -137,7 +132,7 @@ Press **F1**, or choose **Help → Help contents**, for the built-in offline use
 - **Search help** searches topic titles, keywords, and article text. Click a result to read it; **Clear** restores the full tree.
 - **Help → Keyboard shortcuts** opens the keyboard and pedal reference.
 - **Help → About RustyMusicSheets** shows the version, author, release year, license, and GitHub profile link.
-- **Close help** or **Escape** returns to your previous view without losing reading position or metadata drafts.
+- **Close help** or **Escape** returns without losing metadata drafts; enabled synth page following catches up to playback when Reader returns.
 
 Help is embedded in the executable and works without an internet connection. The [detailed text guide](README.txt) is also available in this repository. Installed packages include documentation under `/usr/share/doc/rustymusicsheets/`.
 
@@ -262,6 +257,92 @@ cargo build --locked --release
 ```
 
 Tests generate their own score fixtures. PDF/OCR integration tests require Poppler, Tesseract, and English language data.
+
+Also run the Python tooling checks:
+
+```bash
+python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+```
+
+The ordinary Rust suite uses generated scores and fake synth/dialog helpers. Real-audio smoke tests are intentionally ignored by default and do not run merely because CI is green. With FluidSynth, a SoundFont and a private/public-domain Audiveris export available, an explicit check is:
+
+```bash
+RMS_TEST_MUSICXML="/absolute/path/to/score.mxl" cargo test --locked --lib playback::tests::real_synth_page_follow_smoke -- --ignored --nocapture
+```
+
+This check plays a short passage and requires consistent original-page metadata with a multi-measure page before the next page. Do not commit personal scores or generated notation/audio as test fixtures.
+
+## Publishing a release
+These are **maintainer instructions**, not actions performed automatically by the application or CI. Run them from the repository root after review/merge. The v0.3.1 release already exists: choose an unused next version before following this procedure. Publishing a tag alone neither builds assets nor creates a GitHub Release.
+
+1. Update the root application version in `Cargo.toml` and its own `Cargo.lock` entry, current README headings and the man-page header. Do not replace dependency versions or regenerate the whole lockfile. CLI/About and cargo-apk derive application version metadata from Cargo; numeric Android updates need an increasing major/minor/patch, not just an alpha/beta suffix.
+2. Run the validation commands above, review changes, and commit them **before building/tagging**. Start from clean `main`; record the exact source commit. `--skip-build` cannot establish that an old binary matches a new version.
+3. Build and inspect a native package, without cross-target/output-directory overrides; the builder expects `target/release/rustymusicsheets`. `SOURCE_DATE_EPOCH` fixes package metadata timestamps, not all compiler/dependency inputs; this is not a bit-for-bit reproducibility claim.
+
+```bash
+VERSION=0.3.2  # example next version; must match the committed Cargo version
+REVISION=1
+TAG="v$VERSION"
+REPO=ripleyeldridge/rustymusicsheets
+COMMIT="$(git rev-parse HEAD)"
+ARCH="$(dpkg --print-architecture)"
+PACKAGE="rustymusicsheets_${VERSION}-${REVISION}_${ARCH}.deb"
+ASSET_DIR="dist/releases/$TAG"
+
+git status --short
+git tag --list "$TAG"
+git ls-remote --tags origin "refs/tags/$TAG"
+```
+
+The working tree must be clean and both tag checks must show that the proposed tag is unused. Check the committed application version before building:
+
+```bash
+cargo metadata --locked --no-deps --format-version 1 |
+  python3 -c 'import json,sys; p=next(p for p in json.load(sys.stdin)["packages"] if p["name"]=="rustymusicsheets"); assert p["version"]==sys.argv[1], p["version"]' "$VERSION" &&
+SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$COMMIT")" python3 scripts/build-deb.py --revision "$REVISION" &&
+dpkg-deb --field "dist/$PACKAGE" Package Version Architecture Depends
+```
+
+Stop if the tree is dirty, a tag already exists, or package version/architecture/dependencies are wrong. Extract with `dpkg-deb -x` into a temporary directory and check the **packaged** executable's `--help` version and `--check` output. Inspect the included Help/README/licenses. Never claim older-glibc compatibility just because a build succeeded. Ensure no scores, audio, SDKs, keys or personal configuration entered the archive.
+
+4. Stage only distributable files and checksums. Leave `dist/` and `target/` out of source commits.
+
+```bash
+mkdir -p "$ASSET_DIR"
+cp "dist/$PACKAGE" "$ASSET_DIR/"
+(cd "$ASSET_DIR" && sha256sum "$PACKAGE" > SHA256SUMS && sha256sum -c SHA256SUMS)
+```
+
+5. Confirm the source has not changed, create an annotated tag on the built commit, and push branch/tag without force:
+
+```bash
+test "$(git branch --show-current)" = main &&
+test "$(git rev-parse HEAD)" = "$COMMIT" &&
+test -z "$(git status --porcelain)" &&
+git tag -a "$TAG" "$COMMIT" -m "RustyMusicSheets $VERSION" &&
+git push --atomic origin main "refs/tags/$TAG"
+test "$(git rev-parse "$TAG^{}")" = "$COMMIT"
+```
+
+Do not move an existing published tag to fix a version mismatch. Prefer a new version; if binaries must be corrected separately, identify their actual build commit and matching source in the release notes. Do not silently rename old-version binaries as a new version.
+
+6. Create a draft preview with verified-tag protection. Add accurate changes, compatibility, optional engine dependencies and verification/signing notes in the draft before publishing.
+
+```bash
+gh release create "$TAG" "$ASSET_DIR/$PACKAGE" "$ASSET_DIR/SHA256SUMS" \
+  --repo "$REPO" --verify-tag --draft --prerelease --latest=false \
+  --title "RustyMusicSheets $TAG Preview" \
+  --notes "Built from $COMMIT. Complete the feature, compatibility and verification notes before publishing."
+VERIFY_DIR="$(mktemp -d)"
+gh release download "$TAG" --repo "$REPO" --dir "$VERIFY_DIR"
+(cd "$VERIFY_DIR" && sha256sum -c SHA256SUMS)
+cmp "$ASSET_DIR/$PACKAGE" "$VERIFY_DIR/$PACKAGE"
+cmp "$ASSET_DIR/SHA256SUMS" "$VERIFY_DIR/SHA256SUMS"
+```
+
+Only after download verification and notes review, publish with `gh release edit "$TAG" --repo "$REPO" --draft=false --prerelease --latest=false`. Promoting a preview to stable/latest is a separate deliberate decision. For an existing release, verify replacement uploads before deleting superseded assets and refresh both notes and checksums.
+
+Android assets are optional and **not part of the Linux `.deb` build**. Follow `android/README.txt`, `android/TESTING.txt` and `android/CI.txt`; verify APK version, exact source commit, signature, ABI, manifest and ZIP/ELF alignment, and include a clearly labelled build record. Static checks are not device execution or a production signer. A CI/local debug key may not update a previous APK in place; never uninstall a valuable library just to bypass signing. List every distributable asset in `SHA256SUMS` except that checksum file itself, and never upload signing material, SDKs or private smoke evidence.
 
 ## Author and license
 Created by **[Ripley Eldridge](https://github.com/ripleyeldridge)**, 2026.

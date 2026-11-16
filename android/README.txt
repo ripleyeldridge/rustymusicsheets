@@ -1,11 +1,19 @@
 RustyMusicSheets Android foundation
 =================================
 
-This is the experimental Android foundation distributed with the 0.2.2
-prerelease, NOT a production Android release or desktop feature parity.
-Work toward M0 now includes generated fixtures, isolated provider/import/
-rendering smoke tests and a draft CI workflow; see TESTING.txt and CI.txt.
-Hosted CI must pass before the next roadmap milestone is considered ready.
+This is the experimental Android foundation introduced with the 0.2.2
+preview, NOT a production Android release or desktop feature parity.
+Current source includes the foundation, but v0.3.1 ships only a Linux .deb.
+The separate published Android preview is available in the v0.2.3 release:
+    https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.2.3
+Its corrected APK reports 0.2.3 and is locally debug-signed; release notes
+identify the actual build commit. Do not assume Linux OMR, synth, page-follow
+or desktop Browse features are implemented on Android.
+
+M0 includes generated fixtures, isolated provider/import/rendering tests and
+integrated CI. A historical hosted API 35 x86_64 baseline passed all ten
+cases; see TESTING.txt and CI.txt for exact source/run and matrix limits.
+Current changes still need their own checks before milestone review.
 
 Implemented
 -----------
@@ -58,10 +66,12 @@ The generated APK is target/debug/apk/RustyMusicSheets.apk. Verify it with:
 
     python3 scripts/verify-android-apk.py target/debug/apk/RustyMusicSheets.apk
 
-A verified development copy and SHA256SUMS were saved under dist/android:
-    rustymusicsheets_0.2.2-foundation_arm64_debug.apk
-
-That filename is not a production/release-signed Android release.
+The manifest version is derived from Cargo.toml, not the output basename.
+Inspect the versionName/versionCode and native ABI of every APK before
+distribution; do not rename an old APK to imply a new application version.
+Older copies under dist/android/ are historical artifacts and need not match
+the current source. The canonical fresh-build output above is debug, not a
+production/release-signed artifact.
 
 cargo-apk selects this package's cdylib. Debug packaging can create a local
 debug keystore. Do not commit signing keys or passwords; provide release
@@ -78,21 +88,23 @@ The debug APK and a safe-area update were installed on an authorized Pixel 8
 Pro (API 37, ARM64, 4 KiB pages). Activity startup and continued process
 execution were checked. After the system-inset correction was installed,
 the user confirmed that the layout works on their Pixel. Broader rendering,
-document-provider, rotation and keyboard tests are still needed. The 0.2.2
-APK is rebuilt from the same layout implementation with updated version
-metadata; this does not establish Android release parity.
+document-provider, rotation and keyboard tests are still needed. Historical
+0.2.2 builds reused that layout implementation with updated version metadata;
+neither that startup check nor a later version-only rebuild establishes
+current Android device coverage or release parity.
 
-Manual device checks once an APK can be built
---------------------------------------------
-1. Install a debug APK on a test device or emulator.
-   With one authorized ARM64 device connected, from the repository root:
+Manual device checks for a new build
+------------------------------------
+1. Prefer the isolated test harness in TESTING.txt. For an ordinary debug APK,
+   use a dedicated authorized test device/emulator with no valuable library,
+   or an explicitly verified compatible signer and independent data backup.
+   Select its serial explicitly, from the repository root:
 
        source scripts/android-env.sh
        adb devices -l
-       adb install -r dist/android/rustymusicsheets_0.2.2-foundation_arm64_debug.apk
-       adb shell am start -W -n org.ripleyeldridge.rustymusicsheets/android.app.NativeActivity
+       adb -s YOUR_TEST_SERIAL install -r target/debug/apk/RustyMusicSheets.apk
+       adb -s YOUR_TEST_SERIAL shell am start -W -n org.ripleyeldridge.rustymusicsheets/android.app.NativeActivity
 
-   For multiple devices select an explicit serial using adb -s SERIAL.
    Do not uninstall an existing app to bypass a signing mismatch; that can
    delete its private library. Use the original signing key or a test device.
 2. Launch normally and check Library, Help, rotation, background/resume,
@@ -129,3 +141,18 @@ Remaining mobile work
 - Document-tree providers, rescanning semantics and lifecycle-safe tasks.
 - Tablet/phone layout refinement, Back navigation, process-death restoration,
   signing/distribution and real-device/16 KiB native-library verification.
+- Android-native musical notation recognition, synth playback/mixing and
+  synth-driven page following; current music helper processes are Linux-only.
+
+Distributing development artifacts
+----------------------------------
+The Linux .deb builder does not build an APK, and a tag push does not publish
+one. Before attaching an APK to a GitHub Release, verify its application version,
+exact build commit, signing identity, API/ABI/manifest and ZIP/ELF alignment.
+Include checksums and a clearly labelled local or CI build record; unsigned
+provenance is not a cryptographic attestation. Retain the distinction between
+static verification, isolated x86_64 emulator tests and actual ARM64 hardware.
+Complete notice/signing/device gates in CI.txt still apply.
+Do not publish harness APKs, SDK/NDK files, keys, AVDs or personal documents.
+Local debug and ephemeral CI keys can differ and block in-place upgrades;
+preserve data and signing continuity rather than telling users to uninstall.

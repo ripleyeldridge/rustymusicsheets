@@ -3,7 +3,7 @@ Android M0 test baseline
 
 Status
 ------
-This implements the local M0 slice of the approved Android roadmap.
+This documents the M0 baseline of the approved Android roadmap.
 It does not complete M1 (in-app picking), PDF/OCR, or production readiness.
 Tracking: GitHub #1 umbrella, #2 M0, #3 M1.
 
@@ -19,8 +19,17 @@ Both test packages are removed after each normal run.
 This is not ARM64 runtime or 16 KiB-page runtime validation. API 26,
 intermediate/current APIs, physical ARM64 hardware, tablets, lifecycle,
 pedals, and broader providers remain in the device matrix. A local run and
-workflow syntax validation are NOT a clean hosted CI pass. Keep M0/#2 open
-until the hosted build and emulator evidence pass.
+workflow syntax validation alone are NOT a clean hosted CI pass.
+
+Hosted baseline verified on 2026-11-16: run 43894732361 at source
+fd9f5348edd555bda5e3dd09a99e34f9fa4b5a32 passed host, ARM64 build/static
+verification and isolated API 35 x86_64 smoke. The retained generated report
+has complete=true and all ten cases complete (API 35, x86_64, 4 KiB pages):
+    https://github.com/ripleyeldridge/rustymusicsheets/actions/runs/43894732361
+This is historical evidence, not an automatic pass for the current source
+or the remaining device matrix. Rerun for relevant changes; track issue
+closure separately. Main pushes skip emulator execution unless the workflow
+is explicitly dispatched with run_emulator=true; see CI.txt.
 
 Safety boundaries
 -----------------

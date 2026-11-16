@@ -1,4 +1,4 @@
-.TH RUSTYMUSICSHEETS 1 "November 2026" "RustyMusicSheets 0.2.2" "User Commands"
+.TH RUSTYMUSICSHEETS 1 "November 2026" "RustyMusicSheets 0.3.1" "User Commands"
 .SH NAME
 rustymusicsheets \- sheet music library and performance reader
 .SH SYNOPSIS
@@ -25,8 +25,53 @@ Create offline instrument proposals for all scores, or the specified score ID.
 Uses PDF text extraction first, then Tesseract OCR when needed.
 Review and apply proposals in Library options; this command does not assign them.
 .TP
+.BI "\-\-omr " "SOURCE OUTPUT_DIR"
+Recognize printed music using the optional Audiveris executable on Linux.
+Use
+.BI "\-\-audiveris " EXE
+to override its executable path/name, without shell arguments.
+Print the generated MusicXML movement paths; do not assume a fixed output filename.
+.TP
+.BI "\-\-inspect\-musicxml " FILE
+Print JSON describing MusicXML parts, tempos, warnings, and original-page
+references when available. Accepts compressed .mxl and plain .musicxml/.xml.
+.TP
+.BI "\-\-midi " "MUSICXML OUTPUT.mid"
+Export a new Standard MIDI File from supported MusicXML.
+Existing output files are not overwritten. The following options apply:
+.RS
+.TP
+.BI "\-\-parts " P1,P2
+Select MusicXML part IDs. Omit to select all; use inspection output for actual IDs.
+.TP
+.BI "\-\-program " P1=43
+Override a part's one-based General MIDI instrument (1\-128).
+May be repeated for different parts. Piano is 1; cello is 43.
+.TP
+.BI "\-\-tempo\-scale " FACTOR
+Multiply the musical tempo; supported range is 0.1\-4.0, default 1.0.
+.TP
+.B \-\-play
+Play exported MIDI through the external FluidSynth executable.
+.TP
+.BI "\-\-play\-seconds " SECONDS
+Stop playback after 0.1\-3600 seconds. Requires \-\-play.
+Without this limit, playback continues until the file finishes.
+.TP
+.BI "\-\-soundfont " FILE
+Choose the .sf2/.sf3 sound bank used for CLI playback.
+.TP
+.BI "\-\-fluidsynth " EXE
+Override the CLI synth executable path/name.
+.RE
+.PP
+The three music commands above use explicit files/directories without opening
+the library database. CLI engines use defaults/arguments, not saved GUI preferences.
+CLI playback is one-shot; it does not expose the GUI transport or page following.
+.TP
 .B \-\-check
 Check availability of Poppler PDF helpers and Tesseract.
+This does not check Audiveris, FluidSynth, SoundFonts or all OCR language data.
 .TP
 .B \-\-smoke\-test
 Open the desktop interface and close it after three seconds.
@@ -40,16 +85,66 @@ Base directory for saved preferences.
 .TP
 .B XDG_CACHE_HOME
 Base directory reserved for disposable application cache data.
+.TP
+.B TESSDATA_PREFIX
+Optional OCR language-data directory inherited by the external helpers.
+Audiveris may need full compatible Tesseract models rather than distro
+LSTM-only models. Configure its own language data separately when needed.
 .SH FILES
 .I ~/.local/share/rustymusicsheets/
 .br
 .I ~/.config/rustymusicsheets/preferences.json
 .PP
 A selected music folder stores score files separately from application metadata.
+GUI recognition artifacts/logs, result indexes and saved movement mixes live
+under the data directory in omr/, omr-index/ and omr-mix/.
+Back up the complete data/config directories and original music folder with
+the application closed; a SQLite metadata backup is not a score backup.
+.SH MUSIC AND PERFORMANCE
+Install Audiveris, FluidSynth and a SoundFont separately for optional Linux
+music recognition/playback; these are not embedded in the application.
+Instrument-label detection is text classification, not note transcription.
+Audiveris is AGPLv3, FluidSynth LGPL, and SoundFonts have separate licenses.
+.PP
+Open Reader's Music / OMR window, or Performance's Accompaniment strip.
+Recognize music when needed; saved recognition loads automatically in Performance.
+Multiple exported movements require an explicit choice.
+Browse controls choose engine, SoundFont, MusicXML input and export paths.
+Input/output selection fills a field; load/export/save actions remain explicit.
+Cancellation preserves fields; exports do not overwrite existing files.
+.PP
+Play/Pause, Rewind 5s, Fast-forward 5s and Stop control the persistent GUI synth.
+Pause freezes position; resume/seek reconstruct held notes and restart envelopes.
+Stop resets musical position, not the displayed page.
+Parts / volume controls up to 15 pitched parts, with independent mute, instrument
+and 0\-100% level. Both staves of a piano part stay together.
+Master volume scales all instruments without changing their balance.
+Master gain affects playback output, not exported MIDI part levels.
+Mix settings are saved per recognized movement.
+.PP
+Enable Follow score pages for optional automatic original-score page turning.
+Consistent Audiveris source-sheet/page/system metadata is required; page duration
+is not guessed and printed page labels are not PDF indexes.
+Turn pages early by ... measures accepts an integer from 0\-999, default zero.
+It follows played measures through repeats/endings and tempo changes.
+Oversized lead is capped to avoid skipping a whole page.
+Two-page mode keeps the current spread while the target page is visible.
+.PP
+Previous/Next page buttons remain available in Performance without the synth.
+Manual taps, pedals, page jumps and bookmark navigation disable auto-follow
+until re-enabled. Paused seeks can update the page; Stop/completion never
+automatically starts another setlist score. Help/Library suspend visual following.
+.PP
+Recognition and musical performance are unverified approximations: review pitches,
+rhythm, ties, repeats, part names and pagination. Expression, pedal, grace notes,
+advanced navigation and nested repeats may be unsupported or approximated.
+There is no VST host, microphone score tracking, looping or metronome.
+Android OMR/synth parity is not implemented.
 .SH NOTES
 Folder watching runs while the application is open.
 Use the Library section to choose a music folder and configure readable titles.
-F11 toggles fullscreen; Escape leaves performance mode.
+F11 toggles fullscreen; Escape closes an open music window/mixer before leaving
+performance mode.
 Arrow keys and PageUp/PageDown turn pages.
 .PP
 Settings contains an opt-in keep-awake control to inhibit screen dimming,
@@ -60,11 +155,13 @@ Missing folder-picker starting directories fall back to the user's home.
 The Setlists toolbar button opens management controls for saved setlists
 and collections, including rename, duplicate, reorder, add/remove, and
 confirmed deletion. Removing a list never removes score PDFs.
+These Play actions select reader order; they do not start synth accompaniment.
 .PP
 Library displays a large central score browser with search and filters.
 Selecting a score opens the separate full-width Reader tab.
 Options toggles the library sidebar; returning to Library retains search state.
-Page-turn shortcuts apply only in Reader.
+Page-turn shortcuts apply in Reader/Performance, not text editing, choosers,
+Help or other active editors.
 Dialogs are constrained to the current window and scroll when necessary.
 .PP
 Settings and metadata reuse the left sidebar in place of Library options.
@@ -88,8 +185,8 @@ Existing databases receive a metadata backup before instrument-schema migration.
 .PP
 Help provides a searchable offline topic tree, keyboard reference, and About
 details (application version, author, and release year). F1 opens help;
-Escape or Close help returns to the previous workspace without losing drafts
-or reading position. Page-turn shortcuts are suspended in help.
+Escape or Close help returns without losing drafts. Page-turn shortcuts are
+suspended in Help; enabled synth page following catches up after returning.
 .PP
 Instrument detection may take a while for large libraries, especially scans
 and images requiring OCR. Warnings appear beside detection controls and before
@@ -98,4 +195,7 @@ CLI detection. Background progress and cancellation are available in the GUI.
 .BR pdfinfo (1),
 .BR pdftoppm (1),
 .BR pdftotext (1),
-.BR tesseract (1)
+.BR tesseract (1),
+.BR fluidsynth (1),
+.BR zenity (1),
+.BR dpkg-deb (1)

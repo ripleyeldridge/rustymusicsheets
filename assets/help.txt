@@ -9,7 +9,7 @@ RustyMusicSheets is a native Linux sheet-music library and performance reader. I
 
 Help is built into the executable: no internet connection or separate help installation is needed. Expand a category and click a subject in the help tree. Search matches words across topic titles, keywords, and full article text. All search words must match the same topic, regardless of case. Clear search to restore the full tree.
 
-Use Help > Keyboard shortcuts for a reference or Help > About for version and credits. F1 opens help; Close help or Escape returns to the unchanged workspace. Help does not turn pages or discard metadata drafts. Background library tasks can continue while you read.
+Use Help > Keyboard shortcuts for a reference or Help > About for version and credits. F1 opens help; Close help or Escape returns without discarding metadata drafts. Help does not turn pages while open. If synth page following is enabled, Reader catches up to the current playback position on return. Background library tasks can continue while you read.
 
 @layout|Getting started|Library, Reader, and panels|tabs sidebar resize window touchscreen
 Library is the main score browser. Reader shows the selected score at its remembered page. Returning to Library retains search and filters; the Reader button returns to the open score without resetting its position.
@@ -18,12 +18,14 @@ Options toggles the left Library options panel. Settings, Edit metadata, and ins
 
 The window supports sizes down to 640×360 logical pixels. Panels and articles scroll where needed; scroll to reach fields or controls that do not fit. Hide Options for more room. Help uses a topic tree beside the article on wider windows; compact windows offer Topics and Article views.
 
-Performance hides editing controls for reading. Escape or Exit performance returns to normal controls. See the Performance topic before using it on stage.
+Performance hides library/editing controls but retains manual Previous/Next and optional accompaniment controls. Music / OMR is a separate floating settings/review/export window; Browse opens a file chooser. Escape closes a music window/mixer before leaving fullscreen. See the Performance topic before using it on stage.
 
 @requirements|Getting started|Installation and helper programs|ubuntu dependencies poppler tesseract zenity launch
 Launch RustyMusicSheets from your application menu after installing a compatible package, or run ~/Projects/LinuxSheets/run.sh from the source checkout. The wrapper builds a release executable only if none exists; rebuild explicitly after source changes.
 
 PDF viewing needs pdfinfo and pdftoppm. PDF text extraction needs pdftotext. These are supplied by Ubuntu's poppler-utils package. OCR needs tesseract-ocr and language data such as tesseract-ocr-eng. Extra languages need their corresponding Tesseract packages. Zenity is optional for graphical file/folder pickers; pasted paths and drag-and-drop remain available.
+
+Linux musical-notation recognition and playback additionally need optional separately installed Audiveris, FluidSynth and a SoundFont. The package does not bundle them. Use Browse in Settings and save preferences; Audiveris language data is configured separately from label OCR. See Music recognition and playback. --check checks Poppler/Tesseract availability, not all these optional music dependencies.
 
 The native Ubuntu package declares its runtime dependencies. Install with APT after checking architecture and runtime compatibility, for example: sudo apt install ./rustymusicsheets_VERSION-1_amd64.deb (replace VERSION with the release version).
 
@@ -34,10 +36,10 @@ Import PDF, PNG, JPG, or JPEG files; extensions are case-insensitive. Each stand
 
 Transparent images display on white. Small images are not enlarged during decoding; zooming changes display size, not source detail. Images over 40 megapixels, over decoder dimension/allocation limits, malformed images, and mismatched image contents/extensions are rejected.
 
-Encrypted or unreadable PDFs are reported individually. Import does not edit the original documents. Audio, ChordPro, text, and other image formats are not supported.
+Encrypted or unreadable PDFs are reported individually. Import does not edit the original documents. Library import does not accept audio files, ChordPro, text or other image formats. Existing/corrected MusicXML is loaded separately through Music / OMR, not as a library document.
 
 @import|Library and files|Import files and folders|copy drop paste recursive duplicates hashes cancel
-Open Library > Options. Use Import folder… for a folder or the file-picker button (currently labelled PDF…) for a supported score. Alternatively paste a file/folder path and click Import, or drop files/folders onto the application window. Paths beginning with ~/ expand to your home directory.
+Open Library > Options. Use Import folder… for a folder or the file-picker button (currently labelled PDF…) for a supported score. The Browse… menu beside the import path also chooses Score file… or Folder…. Those import selections start importing. Alternatively paste a file/folder path and click Import, or drop files/folders onto the application window. Paths beginning with ~/ expand to your home directory.
 
 Include subfolders controls manual folder imports; it is enabled by default and its default can be changed in Settings. Symbolic links are not followed. Importing multiple files is a background operation.
 
@@ -202,6 +204,8 @@ Select an occurrence in the order panel. Up/Down moves that occurrence; Remove r
 
 Play setlist starts at the beginning; Play here starts at the chosen entry. Page turning continues across score boundaries and reports the end of the setlist. A score opened directly from Library is read individually instead.
 
+These Play actions start a reader-navigation sequence, not synth audio. Start accompaniment separately for the current score; finishing synth playback/page following never automatically starts the next setlist score.
+
 Playback uses an order snapshot. Editing a list does not change an already-playing sequence: start playback again to use the new order. Repeated entries stay distinct. If Rescan removes a missing score, active snapshots discard it.
 
 @reading|Reader and performance|Pages, zoom, and display modes|fit width two pages single previous next jump scroll
@@ -227,11 +231,11 @@ Rescan cleanup of a missing score removes its bookmarks with its metadata. A met
 @performance|Reader and performance|Performance mode and fullscreen|stage touch tap exit f11 escape
 Open a score, then click Performance. The app enters fullscreen Reader and hides library/editing controls. Tap/click page halves or use page-turn keys/pedals. Setlist playback continues across score boundaries.
 
-The bottom bar retains Exit performance and Accompaniment controls. Saved recognition loads automatically; otherwise use Recognize music with your saved engine settings. Play/Pause, Rewind 5s, Fast-forward 5s, Stop and Parts / volume work while the score remains visible. See Music recognition and playback for setup and limitations.
+The bottom bar always retains Previous page / Next page and Exit performance, even without recognition or the synth. Accompaniment loads saved recognition automatically; otherwise use Recognize music with saved engine settings. Play/Pause, Rewind 5s, Fast-forward 5s, Stop, Master volume and Parts / volume work while the score remains visible. Follow score pages and Turn pages early by … measures are optional saved settings. Manual navigation disables following. See Music recognition and playback for setup, original-page metadata requirements and limitations.
 
 Escape closes an open music window or Parts / volume mixer before leaving performance/fullscreen; F11 toggles fullscreen. Fullscreen and Performance are distinct: F11 alone does not hide the normal controls.
 
-F1 can open Help even during performance; Close help or Escape returns to the previous reading view without turning a page. Opening Help does not discard the active setlist snapshot.
+F1 can open Help even during performance. Closing it preserves the active setlist snapshot; enabled synth page following catches up when Reader returns. Help itself does not perform manual page turns or discard drafts.
 
 Configure and test page-turn mappings, layout, and power settings before a performance. Physical pedal, touchscreen, and Bluetooth behavior depends on the device and desktop.
 
@@ -239,7 +243,7 @@ Configure and test page-turn mappings, layout, and power settings before a perfo
 F1: open Help contents.
 Escape while Help is open: close Help without turning pages.
 F11 outside Help: toggle fullscreen.
-Escape outside Help: leave performance/fullscreen.
+Escape outside Help: close an open music window/mixer first, otherwise leave performance/fullscreen.
 
 Default Reader shortcuts:
 PageDown or ArrowRight: next page.
@@ -276,6 +280,8 @@ Default locations:
 
 XDG_DATA_HOME, XDG_CONFIG_HOME, and XDG_CACHE_HOME override these bases. The selected music folder stores documents separately; its location and score-relative paths are saved together in the database. Rendered pages currently live in memory, not disk.
 
+GUI recognition artifacts, editable OMR projects and logs live in app-data/omr/, with omr-index/ result references, omr-corrected/ private MusicXML copies and omr-mix/ saved movement settings. Include these in a full backup. SQLite-only backups do not include original scores or recognized notation.
+
 For a complete backup, CLOSE the application and copy the selected music folder AND the entire app data and config directories. Do not copy only the SQLite main file while the app is open; WAL files may be needed. Do not manually rename managed files.
 
 Rescan cleanup creates backups/before-rescan-*.sqlite3 first. Instrument-schema migration of an existing database creates backups/before-instruments-*.sqlite3 and retains existing metadata, bookmarks, and list membership. These are metadata-only snapshots, not portable backups of documents.
@@ -289,10 +295,16 @@ rustymusicsheets --import "/path/to/file-or-folder" — import a supported score
 rustymusicsheets --list — list score IDs, page counts, and original titles.
 rustymusicsheets --detect-instruments — create proposals for all library scores.
 rustymusicsheets --detect-instruments 12 — create proposals for score ID 12.
+rustymusicsheets --omr SOURCE OUTPUT_DIR [--audiveris EXE] — recognize to MusicXML on Linux and print exact movement paths.
+rustymusicsheets --inspect-musicxml FILE — print JSON parts, tempo, warnings and original-page mapping when available.
+rustymusicsheets --midi FILE OUTPUT.mid [--parts P1,P2] [--program P1=43] [--tempo-scale 0.8] — export selected-part MIDI.
+MIDI options: --play [--play-seconds 5], --soundfont FILE, --fluidsynth EXE. GM program numbers are one-based 1–128; --program can be repeated. --play-seconds requires --play.
 rustymusicsheets --check — verify PDF and OCR helper executables.
 rustymusicsheets --smoke-test — open the GUI and close after three seconds.
 
 CLI imports use the same managed library and return nonzero if any file fails. CLI detection creates proposals only; review/apply in the GUI. CLI import does not schedule automatic instrument filling. A full-library detection can take a while.
+
+Music commands operate on explicit paths without opening the library database. They use engine defaults/arguments, not saved GUI preferences or the per-movement mixer. CLI playback is one-shot, not the interactive transport/page following. Existing export files are not overwritten. --check checks PDF/text-label helpers, not Audiveris, FluidSynth or SoundFonts.
 
 Use isolated XDG_DATA_HOME, XDG_CONFIG_HOME, and XDG_CACHE_HOME directories for test libraries. --check tests executable availability, not every OCR language. Do not point experiments at your personal library.
 
@@ -314,6 +326,12 @@ Page not rendering? Check the score still exists and is readable, verify Poppler
 Deleted file still listed? Automatic watching never deletes metadata. Use explicit Rescan after checking the correct music folder is connected. Rescan creates a metadata snapshot before safe missing-record cleanup.
 
 Picker missing? Install optional Zenity, paste a path, or use drag-and-drop. Missing starting directories fall back to home without silently changing the configured library.
+
+Browse did not load/export/save? For MusicXML input, output filenames and engine settings, selection fills a field only; use Load MusicXML, Export or Save preferences afterward. Existing export filenames are never overwritten. Folder/import choosers perform their explicit import/folder action instead.
+
+No synth sound? Check the selected SoundFont, enabled parts, each part's volume, Master volume and system output. Confirm FluidSynth is installed and inspect the reported audio-device/SoundFont error. Audiveris must be installed separately for recognition, with compatible language data.
+
+Follow score pages disabled? It needs consistent Audiveris original source-sheet/page/system data within the current document. --inspect-musicxml can show available source pages; printed page labels are not PDF indexes. Re-recognize the original when layout data is absent/reflowed. Early-turn lead counts played measures and is capped to avoid skipping a whole page; a one-measure page cannot be previewed early without skipping it. Manual navigation disables following until re-enabled.
 
 @limits|Reference and troubleshooting|Current limitations|annotations midi audio sync printing export crop rotate mobilesheets
 This release is a functional native reader/library milestone, not full MobileSheets feature parity.
