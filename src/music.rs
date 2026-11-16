@@ -43,6 +43,8 @@ struct SavedMix {
     tempo_scale: f64,
     #[serde(default = "full_volume")]
     master_volume: u8,
+    #[serde(default)]
+    follow_pages: bool,
 }
 
 struct Loaded {
@@ -88,6 +90,8 @@ pub struct Music {
     pub controls_active: bool,
     tempo_scale: f64,
     master_volume: u8,
+    follow_pages: bool,
+    source_pages: u32,
     load_path: String,
     xml_destination: String,
     midi_destination: String,
@@ -101,6 +105,57 @@ impl Music {
         self.prepare_for(score, source, paths, ctx);
     }
 
+    fn page_follow_available(&self) -> bool {
+        self.composition
+            .as_ref()
+            .and_then(|c| c.page_map.as_ref())
+            .is_some_and(|map| {
+                !map.turns.is_empty()
+                    && !map.source_pages.is_empty()
+                    && map
+                        .source_pages
+                        .iter()
+                        .all(|page| *page < self.source_pages)
+            })
+    }
+
+    fn page_follow_ui(&mut self, ui: &mut egui::Ui) {
+        let available = self.page_follow_available();
+        if ui.add_enabled(available, egui::Checkbox::new(&mut self.follow_pages, "Follow score pages"))
+            .on_hover_text("Turn original score pages with the synth timeline, including repeats and seeks. Manual page turns disable following until you re-enable it.")
+            .changed() {
+            self.mix_dirty = Some(std::time::Instant::now());
+        }
+        if self.composition.is_some() && !available {
+            ui.small("Automatic page turning unavailable: missing, conflicting or out-of-range original-page mapping. Re-recognize the original score; see warnings.");
+        }
+    }
+
+    pub fn manual_page_turn(&mut self) {
+        if self.follow_pages {
+            self.follow_pages = false;
+            self.mix_dirty = Some(std::time::Instant::now());
+            self.notice = "Automatic page turning disabled by manual navigation. Re-enable Follow score pages to resume.".into();
+        }
+    }
+
+    pub fn follow_page(&self, score: &Score) -> Option<u32> {
+        let snapshot = self.playback.as_ref()?.snapshot();
+        self.follow_page_at(score, &snapshot)
+    }
+
+    fn follow_page_at(&self, score: &Score, snapshot: &crate::playback::Snapshot) -> Option<u32> {
+        if !self.follow_pages
+            || !self.page_follow_available()
+            || self.binding.as_ref() != Some(&(score.id, score.hash.clone()))
+            || self.source_pages != score.pages
+            || !matches!(snapshot.state, State::Playing | State::Paused)
+        {
+            return None;
+        }
+        snapshot.source_page.filter(|page| *page < score.pages)
+    }
+
     pub fn prepare_for(
         &mut self,
         score: &Score,
@@ -109,10 +164,15 @@ impl Music {
         ctx: &egui::Context,
     ) {
         let binding = Some((score.id, score.hash.clone()));
-        if self.binding != binding || self.source.as_deref() != Some(source) {
+        if self.binding != binding
+            || self.source.as_deref() != Some(source)
+            || self.source_pages != score.pages
+        {
             self.reset();
             self.binding = binding;
             self.source = Some(source.to_owned());
+            self.source_pages = score.pages;
+            self.follow_pages = false;
             self.tempo_scale = 1.0;
             self.master_volume = 100;
             self.xml_destination.clear();
@@ -146,6 +206,8 @@ impl Music {
         self.stop();
         self.source = None;
         self.source_stamp = None;
+        self.source_pages = 0;
+        self.follow_pages = false;
         self.job.take();
         self.loading.take();
         self.composition = None;
@@ -272,6 +334,9 @@ impl Music {
                         .to_string();
                     self.xml = Some(loaded.path);
                     self.composition = Some(loaded.composition);
+                    if !self.page_follow_available() {
+                        self.follow_pages = false;
+                    }
                     self.notice =
                         "Music loaded. Select parts and instruments; recognition is unverified."
                             .into();
@@ -419,6 +484,7 @@ impl Music {
                 volumes: self.volumes.clone(),
                 tempo_scale: self.tempo_scale,
                 master_volume: self.master_volume,
+                follow_pages: self.follow_pages,
             },
         )?;
         file.as_file().sync_all()?;
@@ -465,6 +531,7 @@ impl Music {
         }
         self.tempo_scale = mix.tempo_scale;
         self.master_volume = mix.master_volume;
+        self.follow_pages = mix.follow_pages;
         Ok(())
     }
 
@@ -607,6 +674,7 @@ impl Music {
             }
         });
         self.master_volume_ui(ui, ready);
+        self.page_follow_ui(ui);
     }
 
     fn master_volume_ui(&mut self, ui: &mut egui::Ui, ready: bool) {
@@ -904,7 +972,7 @@ impl Music {
                     for warning in &composition.warnings {
                         ui.colored_label(Color32::YELLOW, warning);
                     }
-                    ui.label("Pause/resume and ±5-second seeking are available below. No automatic score following, metronome, or VST hosting. MusicXML preserves notation; synth playback is an approximation.");
+                    ui.label("Pause/resume, ±5-second seeking and optional Follow score pages are available below. Page following needs consistent original-page metadata. No microphone-based score tracking, metronome, or VST hosting. MusicXML preserves notation; synth playback is an approximation.");
                 });
                 self.mixer_ui(ui);
                 self.transport_ui(ui,settings,false);
@@ -1162,6 +1230,7 @@ mod tests {
             serde_json::from_str(r#"{"selected":{},"programs":{},"volumes":{},"tempo_scale":1.0}"#)
                 .unwrap();
         assert_eq!(mix.master_volume, 100);
+        assert!(!mix.follow_pages);
     }
 
     #[test]
@@ -1350,6 +1419,74 @@ mod tests {
                 "Unreachable music control: {label}; saw {seen:?}"
             );
         }
+    }
+
+    #[test]
+    fn following_is_opt_in_bound_to_the_original_score_and_manual_turns_disable_it() {
+        use crate::{
+            notation::{PageMap, PageTurn},
+            playback::Snapshot,
+        };
+        let (_root, paths, mut score, source) = fixture();
+        score.pages = 2;
+        let ctx = egui::Context::default();
+        let mut music = Music::default();
+        music.prepare_for(&score, &source, &paths, &ctx);
+        let mut composition = notation::parse_musicxml(XML).unwrap();
+        composition.page_map = Some(PageMap {
+            source_pages: vec![0, 1],
+            turns: vec![
+                PageTurn { tick: 0, page: 0 },
+                PageTurn {
+                    tick: 1920,
+                    page: 1,
+                },
+            ],
+        });
+        music.composition = Some(composition);
+        let mut snapshot = Snapshot {
+            state: State::Playing,
+            position: 1.0,
+            duration: 2.0,
+            error: None,
+            source_page: Some(1),
+        };
+        assert_eq!(music.follow_page_at(&score, &snapshot), None);
+        music.follow_pages = true;
+        assert_eq!(music.follow_page_at(&score, &snapshot), Some(1));
+        snapshot.state = State::Paused;
+        assert_eq!(music.follow_page_at(&score, &snapshot), Some(1));
+        for state in [
+            State::Starting,
+            State::Stopped,
+            State::Finished,
+            State::Failed,
+        ] {
+            snapshot.state = state;
+            assert_eq!(music.follow_page_at(&score, &snapshot), None);
+        }
+        snapshot.state = State::Playing;
+        snapshot.source_page = Some(2);
+        assert_eq!(music.follow_page_at(&score, &snapshot), None);
+        snapshot.source_page = Some(1);
+        let mut other = score.clone();
+        other.id += 1;
+        assert_eq!(music.follow_page_at(&other, &snapshot), None);
+        other = score.clone();
+        other.hash = "changed".into();
+        assert_eq!(music.follow_page_at(&other, &snapshot), None);
+        music.manual_page_turn();
+        assert!(!music.follow_pages);
+        assert!(music.mix_dirty.is_some());
+        music.follow_pages = true;
+        music.mix_path = Some(paths.data.join("follow-mix.json"));
+        music.save_mix().unwrap();
+        music.follow_pages = false;
+        music.load_mix().unwrap();
+        assert!(music.follow_pages);
+        music.source_pages = 1;
+        assert!(!music.page_follow_available());
+        assert_eq!(music.follow_page_at(&score, &snapshot), None);
     }
 
     #[test]

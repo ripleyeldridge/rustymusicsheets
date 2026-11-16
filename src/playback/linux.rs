@@ -235,6 +235,7 @@ pub(super) fn run(
             position: position.min(timeline.duration) / scale,
             duration: timeline.duration / scale,
             error: None,
+            source_page: timeline.source_page(position.min(timeline.duration)),
         };
         // ~5ms scheduling resolution; audio buffers add their own device latency.
         std::thread::sleep(Duration::from_millis(5));

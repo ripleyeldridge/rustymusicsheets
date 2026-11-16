@@ -2,6 +2,110 @@ use super::*;
 use crate::notation::{Note, Part, Tempo};
 
 #[test]
+#[ignore = "Requires real FluidSynth audio and RMS_TEST_MUSICXML with original-page metadata"]
+#[cfg(target_os = "linux")]
+fn real_synth_page_follow_smoke() {
+    let path = std::env::var_os("RMS_TEST_MUSICXML").expect("Set RMS_TEST_MUSICXML");
+    let score = crate::notation::load(std::path::Path::new(&path)).unwrap();
+    let timeline = Timeline::new(&score, &MidiOptions::default()).unwrap();
+    let pages = timeline
+        .pages
+        .windows(2)
+        .find(|p| p[0].1 != p[1].1)
+        .expect("Need two original pages");
+    let (boundary, first, second) = (pages[1].0, pages[0].1, pages[1].1);
+    assert!(boundary > 0.1);
+    let mut reader = crate::reader::Reader::default();
+    reader.load(
+        1,
+        *score
+            .page_map
+            .as_ref()
+            .unwrap()
+            .source_pages
+            .iter()
+            .max()
+            .unwrap()
+            + 1,
+        first,
+    );
+    let transport =
+        Transport::start_paused(Settings::default(), score, MidiOptions::default()).unwrap();
+    wait(&transport, |s| s.state == State::Stopped);
+    transport.pause().unwrap();
+    wait(&transport, |s| s.state == State::Paused);
+    transport.seek(boundary - 0.05).unwrap();
+    wait(&transport, |s| {
+        s.state == State::Paused && s.position >= boundary - 0.06 && s.source_page == Some(first)
+    });
+    transport.play().unwrap();
+    let snapshot = wait(&transport, |s| {
+        s.state == State::Playing && s.source_page == Some(second)
+    });
+    assert!(reader.follow_page(snapshot.source_page.unwrap()));
+    assert_eq!(reader.page, second);
+    transport.seek(-1.0).unwrap();
+    let snapshot = wait(&transport, |s| s.source_page == Some(first));
+    assert!(reader.follow_page(snapshot.source_page.unwrap()));
+    assert_eq!(reader.page, first);
+    transport.pause().unwrap();
+    let frozen = wait(&transport, |s| s.state == State::Paused);
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert_eq!(transport.snapshot().position, frozen.position);
+    assert_eq!(transport.snapshot().source_page, Some(first));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn source_pages_use_the_transport_clock_across_pauses_seeks_and_tempo_changes() {
+    use crate::notation::{PageMap, PageTurn};
+    let mut c = score();
+    c.page_map = Some(PageMap {
+        source_pages: vec![0, 1],
+        turns: vec![
+            PageTurn { tick: 0, page: 0 },
+            PageTurn {
+                tick: 960 * 8,
+                page: 1,
+            },
+            PageTurn {
+                tick: 960 * 12,
+                page: 0,
+            },
+        ],
+    });
+    let timeline = Timeline::new(&c, &MidiOptions::default()).unwrap();
+    assert_eq!(timeline.source_page(3.99), Some(0));
+    assert_eq!(timeline.source_page(4.0), Some(1));
+    assert_eq!(timeline.source_page(8.0), Some(0));
+    let root = tempfile::tempdir().unwrap();
+    let transport = Transport::start_paused(fake(root.path()), c, MidiOptions::default()).unwrap();
+    wait(&transport, |s| {
+        s.state == State::Stopped && s.source_page == Some(0)
+    });
+    transport.pause().unwrap();
+    wait(&transport, |s| s.state == State::Paused);
+    transport.seek(5.0).unwrap();
+    wait(&transport, |s| {
+        s.position == 5.0 && s.source_page == Some(1)
+    });
+    transport.tempo(0.5).unwrap();
+    wait(&transport, |s| {
+        s.position == 10.0 && s.source_page == Some(1)
+    });
+    transport.seek(8.0).unwrap();
+    wait(&transport, |s| {
+        s.position == 18.0 && s.source_page == Some(0)
+    });
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    assert_eq!(transport.snapshot().source_page, Some(0));
+    transport.stop().unwrap();
+    wait(&transport, |s| {
+        s.state == State::Stopped && s.position == 0.0
+    });
+}
+
+#[test]
 #[cfg(target_os = "linux")]
 fn master_volume_changes_gain_without_changing_part_balance_or_position() {
     let root = tempfile::tempdir().unwrap();
@@ -89,6 +193,7 @@ fn score() -> Composition {
         ],
         duration_ticks: 960 * 32,
         warnings: vec![],
+        page_map: None,
     }
 }
 

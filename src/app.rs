@@ -387,6 +387,7 @@ impl MusicApp {
     }
 
     fn turn(&mut self, forward: bool) {
+        self.music.manual_page_turn();
         // Save the old score's position before Reader changes sequence index.
         self.persist_page();
         match self.reader.turn(forward) {
@@ -759,6 +760,16 @@ impl MusicApp {
                 }
             }
         }
+        if !self.help.open && (self.performance || self.workspace == Workspace::Reader) {
+            let target = self
+                .scores
+                .iter()
+                .find(|s| Some(s.id) == self.reader.score_id)
+                .and_then(|score| self.music.follow_page(score));
+            if target.is_some_and(|page| self.reader.follow_page(page)) {
+                self.changed_page();
+            }
+        }
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
@@ -801,9 +812,11 @@ impl MusicApp {
         } else if ctx.input(|i| i.key_pressed(previous) || i.key_pressed(Key::ArrowLeft)) {
             self.turn(false);
         } else if ctx.input(|i| i.key_pressed(Key::Home)) {
+            self.music.manual_page_turn();
             self.reader.jump(0);
             self.changed_page();
         } else if ctx.input(|i| i.key_pressed(Key::End)) {
+            self.music.manual_page_turn();
             self.reader.jump(self.reader.pages.saturating_sub(1));
             self.changed_page();
         }
@@ -1668,6 +1681,7 @@ impl MusicApp {
             let response = ui.add(egui::DragValue::new(&mut self.jump).range(1..=score.pages));
             self.text_input_active |= response.text_edit_has_focus();
             if response.changed() {
+                self.music.manual_page_turn();
                 self.reader.jump(self.jump.saturating_sub(1));
                 self.changed_page();
             }
@@ -1692,6 +1706,7 @@ impl MusicApp {
                 }
                 for (page, label) in self.bookmarks.clone() {
                     if ui.button(label).clicked() {
+                        self.music.manual_page_turn();
                         self.reader.jump(page);
                         self.changed_page();
                         ui.close_menu();

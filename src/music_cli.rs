@@ -20,6 +20,9 @@ pub fn run(command: &str, arguments: Vec<OsString>) -> Result<()> {
                 "duration_ticks": composition.duration_ticks,
                 "ticks_per_quarter": notation::TICKS_PER_QUARTER,
                 "warnings": composition.warnings,
+            "source_pages": composition.page_map.as_ref().map(|map|map.source_pages.iter().map(|p|p+1).collect::<Vec<_>>()),
+            "page_turns": composition.page_map.as_ref().map(|map|map.turns.iter().map(|turn|
+                serde_json::json!({"tick":turn.tick,"source_page":turn.page+1})).collect::<Vec<_>>()),
                 "tempos": composition.tempos.iter().map(|t| serde_json::json!({"tick":t.tick,"bpm":t.bpm})).collect::<Vec<_>>(),
                 "parts": composition.parts.iter().map(|p| serde_json::json!({
                     "id":p.id,"name":p.name,"staves":p.staves,

@@ -10,6 +10,7 @@ use std::io::{Read, Seek};
 use std::path::{Component, Path};
 
 mod midi;
+mod pagination;
 pub use midi::to_midi;
 #[cfg(test)]
 mod tests;
@@ -28,6 +29,20 @@ pub struct Composition {
     pub tempos: Vec<Tempo>,
     pub duration_ticks: u64,
     pub warnings: Vec<String>,
+    pub page_map: Option<PageMap>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PageTurn {
+    pub tick: u64,
+    /// Zero-based physical page in the original source document.
+    pub page: u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct PageMap {
+    pub source_pages: Vec<u32>,
+    pub turns: Vec<PageTurn>,
 }
 
 #[derive(Clone, Debug)]
@@ -230,6 +245,7 @@ struct RawNote {
 #[derive(Default)]
 struct Measure {
     number: String,
+    source_page: Option<u32>,
     duration: f64,
     notes: Vec<RawNote>,
     tempos: Vec<(f64, f64)>,
@@ -262,6 +278,7 @@ pub fn parse_musicxml(xml: &str) -> Result<Composition> {
         parts: Vec::new(),
         tempos: Vec::new(),
         duration_ticks: 0,
+        page_map: None,
         warnings: vec![
             "Recognition/notation playback is unverified; review the score and exported MIDI. Playback uses fixed velocity and no expressive timing."
                 .into(),
@@ -349,20 +366,49 @@ pub fn parse_musicxml(xml: &str) -> Result<Composition> {
             &mut event_count,
         )?);
     }
+    let layout = match pagination::source_layout(root) {
+        Ok(layout) => Some(layout),
+        Err(error) => {
+            warn(
+                &mut composition.warnings,
+                format!("Automatic page turning unavailable: {error:#}"),
+            );
+            None
+        }
+    };
     align_parts(
         &mut all_measures,
         &composition.parts,
         &mut composition.warnings,
     )?;
-    for (part, measures) in composition.parts.iter_mut().zip(&all_measures) {
+    if let Some(layout) = &layout {
+        for measures in &mut all_measures {
+            for (measure, page) in measures.iter_mut().zip(&layout.measure_pages) {
+                measure.source_page = Some(*page);
+            }
+        }
+    }
+    let mut page_turns = Vec::new();
+    for (index, (part, measures)) in composition.parts.iter_mut().zip(&all_measures).enumerate() {
         let duration = expand_part(
             measures,
             part,
             &mut composition.tempos,
             &mut composition.warnings,
             &mut event_count,
+            if index == 0 {
+                Some(&mut page_turns)
+            } else {
+                None
+            },
         )?;
         composition.duration_ticks = composition.duration_ticks.max(duration);
+    }
+    if let Some(layout) = layout {
+        composition.page_map = Some(PageMap {
+            source_pages: layout.source_pages,
+            turns: page_turns,
+        });
     }
     composition.tempos.sort_by_key(|t| t.tick);
     composition
@@ -851,6 +897,7 @@ fn expand_part(
     tempos: &mut Vec<Tempo>,
     warnings: &mut Vec<String>,
     event_count: &mut usize,
+    mut page_turns: Option<&mut Vec<PageTurn>>,
 ) -> Result<u64> {
     let mut pc = 0usize;
     let mut start = 0usize;
@@ -881,6 +928,14 @@ fn expand_part(
         }
         let include = measure.endings.is_empty() || measure.endings.contains(&pass);
         if include {
+            if let (Some(page), Some(turns)) = (measure.source_page, page_turns.as_deref_mut()) {
+                if turns.last().is_none_or(|last| last.page != page) {
+                    turns.push(PageTurn {
+                        tick: ticks(beat)?,
+                        page,
+                    });
+                }
+            }
             for raw in &measure.notes {
                 *event_count += 1;
                 ensure!(

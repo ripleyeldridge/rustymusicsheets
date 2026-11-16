@@ -2,7 +2,7 @@
 A native Linux sheet-music library and performance reader, written in Rust with egui.
 **A headline feature: offline instrument detection that helps turn a folder of scores into an instrument-searchable library—even when the parts are scanned PDFs or standalone images.**
 
-**Version:** 0.2.2 preview · **Author:** [Ripley Eldridge](https://github.com/ripleyeldridge) · **Release year:** 2026 · **License:** [MIT](LICENSE)
+**Version:** 0.3.0 preview (source checkout) · **Author:** [Ripley Eldridge](https://github.com/ripleyeldridge) · **Release year:** 2026 · **License:** [MIT](LICENSE)
 
 ## 0.2.2 preview downloads
 The [0.2.2 prerelease](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.2.2) includes:
@@ -176,13 +176,20 @@ After saving engine settings, enter **Performance**. The bottom **Accompaniment*
 
 The strip keeps **Rewind 5s**, **Play/Pause**, **Fast-forward 5s**, **Stop**, and position/duration available while the score remains visible. Open **Parts / volume** to choose individual parts, set independent 0–100% levels, or change their GM instruments and tempo. Unchecking a part mutes it without restarting the timeline. Live mixing supports up to 15 musical parts; MIDI percussion channel 10 is reserved. **Music settings / results** opens the full settings/review/export window without leaving performance mode.
 
-Closing the music window does not stop accompaniment; the performance strip remains available. Changing/removing the score, detecting a changed backing file, or exiting the application stops the synth. Page turns remain independent of musical position. Escape closes an open music window/mixer before exiting performance.
+Closing the music window does not stop accompaniment; the performance strip remains available. Changing/removing the score, detecting a changed backing file, or exiting the application stops the synth. Escape closes an open music window/mixer before exiting performance.
+
+### Automatic page turning (0.3.0)
+Enable **Follow score pages** below the transport controls in Performance or Music / OMR. It is opt-in and remembered per recognized movement. The reader then follows the synth's actual musical timeline, including tempo changes, rests, repeats, alternative endings and forward/backward seeks. The entire score controls pagination, regardless of which parts are muted.
+
+This uses **Audiveris original source-sheet references and preserved page/system breaks**, not equal-duration page estimates or printed page-number labels. Covers and skipped sheets retain their physical PDF page indexes. If the metadata is missing, conflicting, reflowed inconsistently or outside the current document, the checkbox is disabled with an explanation; musical playback still works. Re-recognize the original PDF when necessary. Review matching page layout before enabling following, especially after editing MusicXML externally.
+
+Manual taps/pedals, Previous/Next, page-number jumps, Home/End and bookmark navigation turn following off until you explicitly re-enable it. Automatic changes preserve normal page rendering and remembered positions. In two-page mode, no turn occurs while the playing page is already visible. Pause freezes the clock; seeking while paused updates the target page. Stop does not force page 1, and finishing never starts a different setlist score. Visual following is suspended while Help or Library is visible and catches up on return to Reader.
 
 Use **Load corrected or existing MusicXML** to load a private copy of a `.mxl`, `.musicxml`, or `.xml` file edited externally, for example in Audiveris or MuseScore. This does not import a new library score or alter assigned instrument metadata.
 
 Successful recognition artifacts and logs live under the app-data `omr/<source-hash>/run-*/` tree, with a small `omr-index/` for reuse across restarts. Per-movement mixer settings live under `omr-mix/`, keyed by source and MusicXML content hashes. Include app data in backups. Failed/cancelled runs and temporary helper files are cleaned up. The backing score is hash-checked when loading results; detected later changes invalidate playback until the score is rescanned/reopened.
 
-Supported playback includes partwise MusicXML, chords/voices, multi-staff parts, rests, transposition, ties, tempo changes, basic repeats and first/second endings. Recognition and performance are **not guaranteed faithful**: expression, pedal, grace notes, advanced navigation/nested repeats and other unsupported constructs are warned about or approximated. GUI playback uses an application sequencer driving a persistent FluidSynth command process; the CLI retains one-shot MIDI playback. Note velocity is fixed, with independent part volume. A full notation editor, automatic score following, looping, metronome, VST hosting, and Android/Windows OMR/audio are not implemented.
+Supported playback includes partwise MusicXML, chords/voices, multi-staff parts, rests, transposition, ties, tempo changes, basic repeats and first/second endings. Recognition and performance are **not guaranteed faithful**: expression, pedal, grace notes, advanced navigation/nested repeats and other unsupported constructs are warned about or approximated. GUI playback uses an application sequencer driving a persistent FluidSynth command process; the CLI retains one-shot MIDI playback. Note velocity is fixed, with independent part volume. A full notation editor, microphone/live-performance score tracking, looping, metronome, VST hosting, and Android/Windows OMR/audio are not implemented.
 
 Audiveris is **AGPLv3**, FluidSynth is **LGPL**, and SoundFonts have their own licenses. They remain separately installed programs/data, not components embedded into or relicensed with this MIT application.
 

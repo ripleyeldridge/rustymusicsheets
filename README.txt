@@ -1,4 +1,4 @@
-RustyMusicSheets 0.2.2 preview
+RustyMusicSheets 0.3.0 preview
 ===================
 
 A native Rust desktop sheet-music library and PDF/image performance reader for Linux.
@@ -270,7 +270,17 @@ opens the live mixer; both piano staves stay together. Live mixing supports up
 to 15 musical parts. Multiple movements require an explicit Load movement.
 Music settings / results opens full settings/review/export controls. Closing
 that window leaves accompaniment running. Changing/removing the score, changed
-backing files or exiting stops it. Page turning is independent of playback.
+backing files or exiting stops it. Enable Follow score pages below the transport
+for automatic turning during onboard synth playback (opt-in, saved per movement).
+It uses Audiveris original source-sheet/page/system metadata, including physical
+PDF indexes for covers/skipped sheets, rather than estimating page durations.
+Rests, repeats/endings, tempo changes and seeks share the same playback clock.
+Missing/inconsistent or out-of-range metadata disables following, not playback.
+Review the original page layout after external MusicXML edits.
+Manual page turns/jumps/bookmarks disable following until re-enabled. Two-page
+mode retains already-visible pages. Pause freezes the clock; paused seeks update
+the target. Stop does not reset the displayed page, and completion cannot jump
+to another setlist score. Help/Library suspend visual following until Reader.
 
 Export MusicXML preserves recognized notation; compressed files remain .mxl.
 Export selected MIDI uses selected parts, instruments, channel volumes and tempo. Existing
@@ -283,7 +293,7 @@ keep previous results; backing-score changes invalidate loaded playback.
 Playback interprets partwise MusicXML with chords, voices, multi-staff parts,
 rests, transposition, ties, tempo changes, basic repeats and first/second endings.
 Read warnings for fixed velocity and unsupported expression/pedal, grace notes,
-advanced navigation/nested repeats. There is no notation editor, score following,
+advanced navigation/nested repeats. There is no notation editor, microphone-based tracking,
 looping, metronome or VST host. GUI transport uses a background sequencer and persistent
 external FluidSynth process, not an embedded synth. Other target OSes do not
 support the recognition/audio workflow yet.

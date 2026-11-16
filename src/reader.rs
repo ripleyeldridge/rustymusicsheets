@@ -8,6 +8,42 @@ pub struct Reader {
     pub sequence_index: usize,
 }
 
+#[cfg(test)]
+mod follow_tests {
+    use super::*;
+
+    #[test]
+    fn synth_following_preserves_visible_spreads_and_supports_backward_repeats() {
+        let mut reader = Reader {
+            two_pages: true,
+            ..Default::default()
+        };
+        reader.load(1, 5, 0);
+        assert!(!reader.follow_page(1));
+        assert!(reader.follow_page(2));
+        assert!(!reader.follow_page(3));
+        assert!(reader.follow_page(0));
+        assert_eq!(reader.page, 0);
+        assert!(reader.follow_page(4));
+        assert!(!reader.follow_page(5));
+        assert_eq!(reader.page, 4);
+    }
+
+    #[test]
+    fn synth_following_never_advances_setlist_entries_or_clamps_invalid_pages() {
+        let mut reader = Reader {
+            sequence: vec![1, 2],
+            ..Default::default()
+        };
+        assert!(!reader.follow_page(0));
+        reader.load(1, 2, 0);
+        assert!(reader.follow_page(1));
+        assert!(!reader.follow_page(2));
+        assert_eq!(reader.score_id, Some(1));
+        assert_eq!(reader.sequence_index, 0);
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Turn {
     Page,
@@ -42,6 +78,19 @@ impl Reader {
 
     pub fn jump(&mut self, page: u32) {
         self.page = page.min(self.pages.saturating_sub(1));
+    }
+
+    /// Synth following cannot cross scores or turn a page already on screen.
+    pub fn follow_page(&mut self, page: u32) -> bool {
+        if self.score_id.is_none()
+            || page >= self.pages
+            || page == self.page
+            || (self.two_pages && self.page.checked_add(1) == Some(page))
+        {
+            return false;
+        }
+        self.page = page;
+        true
     }
 
     pub fn turn(&mut self, forward: bool) -> Turn {

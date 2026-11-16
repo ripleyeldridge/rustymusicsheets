@@ -30,6 +30,7 @@ pub struct Snapshot {
     pub position: f64,
     pub duration: f64,
     pub error: Option<String>,
+    pub source_page: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -85,6 +86,7 @@ impl Transport {
                 position: 0.0,
                 duration: timeline.duration / options.tempo_scale,
                 error: None,
+                source_page: None,
             }));
             let cancelled = Arc::new(AtomicBool::new(false));
             let process = Arc::new(Mutex::new(None));
@@ -203,6 +205,7 @@ struct Timeline {
     spans: Vec<Span>,
     events: Vec<Event>,
     duration: f64,
+    pages: Vec<(f64, u32)>,
 }
 
 impl Timeline {
@@ -239,6 +242,16 @@ impl Timeline {
             spans: vec![],
             events: vec![],
             duration: at(score.duration_ticks),
+            pages: score
+                .page_map
+                .as_ref()
+                .map(|map| {
+                    map.turns
+                        .iter()
+                        .map(|turn| (at(turn.tick), turn.page))
+                        .collect()
+                })
+                .unwrap_or_default(),
         };
         let total_notes: usize = score.parts.iter().map(|p| p.notes.len()).sum();
         ensure!(total_notes <= 250_000, "Too many live playback notes");
@@ -321,6 +334,13 @@ impl Timeline {
         });
         Ok(timeline)
     }
+    fn source_page(&self, position: f64) -> Option<u32> {
+        self.pages
+            .partition_point(|(at, _)| *at <= position)
+            .checked_sub(1)
+            .map(|index| self.pages[index].1)
+    }
+
     fn chase(&self, position: f64) -> Vec<Event> {
         self.spans
             .iter()
