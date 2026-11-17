@@ -26,7 +26,10 @@ impl Music {
     fn can_replace_plugin_source(&self) -> bool {
         self.retiring.is_empty()
             && self.playback.as_ref().is_none_or(|transport| {
-                !self.plugin_unsaved && transport.snapshot().plugins.dirty_parts.is_empty()
+                let snapshot = transport.snapshot();
+                !self.plugin_unsaved
+                    && !snapshot.plugins.busy
+                    && snapshot.plugins.dirty_parts.is_empty()
             })
     }
 
@@ -194,7 +197,7 @@ impl Music {
             let path = paths.data.join("plugins/catalogue-v2.json");
             match crate::audio::discovery::Catalogue::load(&path) {
                 Ok(catalogue) => self.catalogue = catalogue,
-                Err(error) => self.error = Some(format!("Plugin catalogue: {error:#}")),
+                Err(error) => self.discovery_error = Some(format!("Plugin catalogue: {error:#}")),
             }
             self.catalogue_path = Some(path);
         }
@@ -210,9 +213,10 @@ impl Music {
                         self.helper_caps = Some(caps);
                     }
                     self.catalogue = catalogue;
-                    self.notice = notice;
+                    self.discovery_notice = notice;
+                    self.discovery_error = None;
                 }
-                Err(error) => self.error = Some(error),
+                Err(error) => self.discovery_error = Some(error),
             }
         }
         if let Some(snapshot) = self.playback.as_ref().map(Transport::snapshot) {
@@ -268,6 +272,8 @@ impl Music {
         if self.plugin_task.is_some() {
             return;
         }
+        self.discovery_error = None;
+        self.discovery_notice = "Plugin discovery operation in progress…".into();
         let settings = self.audio_settings.clone();
         let mut catalogue = self.catalogue.clone();
         let path = self.catalogue_path.clone();
@@ -297,7 +303,7 @@ impl Music {
                     if let Some(path) = &path { catalogue.save(path)?; }
                 }
                 let failures = catalogue.entries.iter().filter(|e| e.failure.is_some()).count();
-                Ok((catalogue, format!("Scanned {} candidate(s); {failures} quarantined. Choose the exact instrument class below. Retry is explicit.", candidates.len()), Some(caps)))
+                Ok((catalogue, format!("Scanned {} candidate(s); {failures} quarantined. Instruments are available in every part's dropdown; assignments remain independent. Retry is explicit.", candidates.len()), Some(caps)))
             })().map_err(|e| format!("Plugin operation: {e:#}"));
             let _ = tx.send(result);
             repaint.request_repaint();
@@ -306,13 +312,33 @@ impl Music {
     }
 
     #[cfg(target_os = "linux")]
-    pub(super) fn plugin_settings_ui(
+    pub(crate) fn plugin_discovery_ui(
         &mut self,
         ui: &mut egui::Ui,
         settings: &mut crate::audio::Settings,
     ) {
-        ui.collapsing("VST3 discovery / existing yabridge diagnostics", |ui| {
+        ui.collapsing("VST3 bundle discovery (shared by all parts)", |ui| {
             ui.label("No automatic startup scan. Loading/scanning executes third-party code in a private helper. Native Linux x86_64 VST3 instruments only.");
+            ui.label("Scan each bundle once, then select an instrument independently for each part. Browsing/scanning does not assign an instrument.");
+            ui.label("Direct .vst3 bundle folder:");
+            if paths::entry(ui, PathField::PluginBundle, &mut self.discovery_bundle, !self.path_picker_active) {
+                self.request_path(PathField::PluginBundle, &self.discovery_bundle.clone());
+            }
+            ui.horizontal_wrapped(|ui| {
+                let ready = self.plugin_task.is_none() && !self.discovery_bundle.trim().is_empty();
+                if ui.add_enabled(ready, egui::Button::new("Inspect this bundle")).clicked() {
+                    self.configure_audio(settings);
+                    let path = expand_path(self.discovery_bundle.trim());
+                    self.start_plugin_task("scan", Some(path), false, ui.ctx());
+                }
+                if ui.add_enabled(ready, egui::Button::new("Retry this bundle")).clicked() {
+                    self.configure_audio(settings);
+                    let path = expand_path(self.discovery_bundle.trim());
+                    self.start_plugin_task("scan", Some(path), true, ui.ctx());
+                }
+            });
+            ui.separator();
+            ui.label("Search folders (may contain multiple bundles):");
             ui.horizontal_wrapped(|ui| {
                 if ui.button("Use standard Linux roots").clicked() {
                     let mut roots = vec![crate::picker::home_directory().join(".vst3"), PathBuf::from("/usr/lib/vst3"), PathBuf::from("/usr/local/lib/vst3"), PathBuf::from("/usr/lib64/vst3"), PathBuf::from("/usr/local/lib64/vst3")];
@@ -336,7 +362,10 @@ impl Music {
             self.configure_audio(settings);
             if self.plugin_task.is_some() {
                 ui.spinner();
-                if ui.button("Cancel plugin operation").clicked() { self.plugin_task.take(); }
+                if ui.button("Cancel plugin operation").clicked() {
+                    self.plugin_task.take();
+                    self.discovery_notice = "Plugin discovery cancelled. Previously saved catalogue entries are retained.".into();
+                }
             } else {
                 ui.horizontal_wrapped(|ui| {
                     if ui.button("Probe helper capabilities").clicked() { self.start_plugin_task("probe", None, false, ui.ctx()); }
@@ -348,6 +377,15 @@ impl Music {
             for entry in &self.catalogue.entries {
                 if let Some(error) = &entry.failure { ui.colored_label(Color32::YELLOW, format!("{} — quarantined: {error}", entry.path.display())); }
             }
+            let count: usize = self.catalogue.entries.iter().filter(|entry| entry.failure.is_none()).map(|entry| entry.classes.len()).sum();
+            ui.label(format!("{count} instrument class(es) in the shared catalogue."));
+            if !self.discovery_notice.is_empty() {
+                ui.label(&self.discovery_notice);
+            }
+            if let Some(error) = &self.discovery_error {
+                ui.colored_label(Color32::LIGHT_RED, error);
+            }
+            ui.small("SFZ instruments are loaded inside a compatible VST3 sampler such as sfizz, not in the SoundFont field. External samples must remain available.");
         });
     }
 
@@ -374,35 +412,21 @@ impl Music {
                 ui.colored_label(Color32::YELLOW, "VST3 assignment retained, but legacy playback is disabled until you explicitly choose SoundFont or an audio-host backend.");
             }
         } else {
-            let path = self.bundle_paths.entry(id.into()).or_default();
-            if path.is_empty() {
-                if let Source::Vst3 { path: assigned, .. } = &source {
-                    *path = assigned.display().to_string();
-                }
-            }
-            ui.label("Direct .vst3 bundle folder (Browse only fills the path):");
-            if paths::entry(
-                ui,
-                PathField::PluginBundle(index),
-                path,
-                !self.path_picker_active,
-            ) {
-                let path = path.clone();
-                self.request_path(PathField::PluginBundle(index), &path);
-            }
-            if ui
-                .add_enabled(
-                    self.plugin_task.is_none(),
-                    egui::Button::new("Inspect this bundle"),
-                )
-                .clicked()
-            {
-                let path = expand_path(self.bundle_paths[id].trim());
-                self.start_plugin_task("scan", Some(path), false, ui.ctx());
-            }
             let label = match &source {
                 Source::Soundfont => "SoundFont (no plugin selected)".into(),
-                Source::Vst3 { path, class_id, .. } => format!("{} · {}", path.display(), class_id),
+                Source::Vst3 { path, class_id, .. } => self
+                    .catalogue
+                    .entries
+                    .iter()
+                    .find(|entry| &entry.path == path)
+                    .and_then(|entry| {
+                        entry
+                            .classes
+                            .iter()
+                            .find(|class| &class.class_id == class_id)
+                    })
+                    .map(|class| format!("{} · {}", class.name, class.vendor))
+                    .unwrap_or_else(|| format!("VST3 · {class_id}")),
             };
             if self
                 .helper_caps
@@ -422,7 +446,15 @@ impl Music {
                 }
             });
             } else {
-                ui.small("Probe/inspect with an SDK-enabled v2 helper before choosing an instrument. A core-only helper cannot load VST3.");
+                ui.small("Probe/scan in Settings → VST3 bundle discovery before choosing an instrument. A core-only helper cannot load VST3.");
+            }
+            if self
+                .catalogue
+                .entries
+                .iter()
+                .all(|entry| entry.classes.is_empty())
+            {
+                ui.small("No instruments discovered. Use the shared VST3 bundle discovery section in Settings or Engine settings.");
             }
         }
         if source != before && !self.can_replace_plugin_source() {
@@ -438,11 +470,19 @@ impl Music {
             self.notice = "Instrument assignment changed; press Play to rebuild. Save while paused/stopped to capture plugin state.".into();
         }
         if let Source::Vst3 { path, gain, .. } = &mut source {
+            let busy = self
+                .playback
+                .as_ref()
+                .is_some_and(|p| p.snapshot().plugins.busy);
+            ui.label(format!("Selected bundle: {}", path.display()));
             if !path.is_dir() {
-                ui.colored_label(Color32::LIGHT_RED, "Missing plugin. Locate and inspect its bundle, then select the exact class. No SoundFont fallback is performed.");
+                ui.colored_label(Color32::LIGHT_RED, "Missing plugin. Locate/inspect it in shared VST3 bundle discovery, then select the exact class. No SoundFont fallback is performed.");
             }
             if ui
-                .add(egui::Slider::new(gain, 0.0..=1.0).text("Post-plugin audio gain"))
+                .add_enabled(
+                    !busy,
+                    egui::Slider::new(gain, 0.0..=1.0).text("Post-plugin audio gain"),
+                )
                 .changed()
             {
                 self.sources.insert(id.into(), source.clone());
@@ -474,12 +514,12 @@ impl Music {
     #[cfg(target_os = "linux")]
     fn plugin_controls_ui(&mut self, ui: &mut egui::Ui, id: &str, index: u32) {
         let snapshot = self.playback.as_ref().map(Transport::snapshot);
-        let active = snapshot
-            .as_ref()
-            .is_some_and(|s| !matches!(s.state, State::Starting | State::Failed));
-        let paused = snapshot
-            .as_ref()
-            .is_some_and(|s| matches!(s.state, State::Paused | State::Stopped | State::Finished));
+        let active = snapshot.as_ref().is_some_and(|s| {
+            !s.plugins.busy && !matches!(s.state, State::Starting | State::Failed)
+        });
+        let paused = snapshot.as_ref().is_some_and(|s| {
+            !s.plugins.busy && matches!(s.state, State::Paused | State::Stopped | State::Finished)
+        });
         let editor = snapshot
             .as_ref()
             .is_some_and(|s| s.plugins.capabilities.iter().any(|c| c == "editor_x11"));
@@ -520,7 +560,7 @@ impl Music {
             ui,
             PathField::PluginPreset(index),
             preset,
-            !self.path_picker_active,
+            !self.path_picker_active && !snapshot.as_ref().is_some_and(|s| s.plugins.busy),
         ) {
             let path = preset.clone();
             self.request_path(PathField::PluginPreset(index), &path);
@@ -547,7 +587,10 @@ impl Music {
             ));
             ui.horizontal(|ui| {
                 if ui
-                    .add_enabled(offset > 0, egui::Button::new("Previous parameters"))
+                    .add_enabled(
+                        active && offset > 0,
+                        egui::Button::new("Previous parameters"),
+                    )
                     .clicked()
                 {
                     self.send_plugin(Request::Parameters {
@@ -556,7 +599,10 @@ impl Music {
                     });
                 }
                 if ui
-                    .add_enabled(offset + 128 < total, egui::Button::new("Next parameters"))
+                    .add_enabled(
+                        active && offset + 128 < total,
+                        egui::Button::new("Next parameters"),
+                    )
                     .clicked()
                 {
                     self.send_plugin(Request::Parameters {
@@ -572,7 +618,10 @@ impl Music {
                 if parameter.step_count > 0 {
                     slider = slider.step_by(1.0 / f64::from(parameter.step_count));
                 }
-                if ui.add_enabled(parameter.flags & 2 == 0, slider).changed() {
+                if ui
+                    .add_enabled(active && parameter.flags & 2 == 0, slider)
+                    .changed()
+                {
                     self.plugin_unsaved = true;
                     self.send_plugin(Request::Parameter {
                         part_id: id.into(),
@@ -605,7 +654,11 @@ impl Music {
         });
         if snapshot.as_ref().is_some_and(|s| s.plugins.busy) {
             ui.spinner();
-            ui.small("Plugin state operation in progress. Stop audio cancels it and retains the last valid checkpoint.");
+            ui.small(if snapshot.as_ref().is_some_and(|s| s.plugins.editor_busy) {
+                "Plugin editor/file dialog is busy. Finish or cancel its dialog, or use Stop audio to cancel the helper and retain the last saved checkpoint."
+            } else {
+                "Plugin state operation in progress. Stop audio cancels it and retains the last valid checkpoint."
+            });
         }
         if ui
             .add_enabled(
@@ -626,6 +679,128 @@ impl Music {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn one_global_scan_is_shared_across_parts_and_movements_without_assigning() {
+        let root = tempfile::tempdir().unwrap();
+        let (_, audio) = crate::audio::supervisor::tests::fake(root.path(), "normal");
+        let bundle = crate::audio::plugins::fixture(root.path(), "Shared sampler");
+        let paths = Paths {
+            data: root.path().join("data"),
+            cache: root.path().join("cache"),
+            config: root.path().join("config"),
+            music: None,
+        };
+        paths.create().unwrap();
+        let mut music = Music {
+            audio_settings: audio,
+            discovery_bundle: bundle.display().to_string(),
+            ..Default::default()
+        };
+        music.poll_plugins(&paths);
+        let ctx = egui::Context::default();
+        music.start_plugin_task("scan", Some(bundle.clone()), false, &ctx);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while music.plugin_task.is_some() {
+            music.poll_plugins(&paths);
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{:?}",
+                music.discovery_error
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(
+            music.discovery_error.is_none(),
+            "{:?}",
+            music.discovery_error
+        );
+        assert!(music.sources.is_empty() && music.playback.is_none());
+        assert!(music.binding.is_none() && music.composition.is_none());
+        assert_eq!(music.catalogue.entries.len(), 1);
+        let entry = &music.catalogue.entries[0];
+        assert_eq!(entry.classes.len(), 2);
+        let source = Source::Soundfont.select_class(
+            bundle.clone(),
+            entry.classes[0].class_id.clone(),
+            entry.module_sha256.clone(),
+        );
+        music.sources.insert("P1".into(), source.clone());
+        music.sources.insert("P2".into(), source);
+        if let Source::Vst3 { gain, .. } = music.sources.get_mut("P1").unwrap() {
+            *gain = 0.3;
+        }
+        assert!(matches!(
+            music.sources["P2"],
+            Source::Vst3 { gain: 1.0, .. }
+        ));
+        let count = std::fs::read_to_string(root.path().join("commands"))
+            .unwrap()
+            .lines()
+            .filter(|line| {
+                serde_json::from_str::<serde_json::Value>(line).unwrap()["type"] == "scan"
+            })
+            .count();
+        assert_eq!(
+            count, 1,
+            "Selecting multiple parts must not rescan the bundle"
+        );
+        music.reset();
+        assert_eq!(music.discovery_bundle, bundle.display().to_string());
+        assert_eq!(music.catalogue.entries.len(), 1);
+        assert!(music
+            .helper_caps
+            .as_ref()
+            .unwrap()
+            .iter()
+            .any(|c| c == "vst3"));
+        assert!(paths.data.join("plugins/catalogue-v2.json").is_file());
+    }
+    #[test]
+    fn vst3_busy_cancel_resets_session_local_checkpoint_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let (transport, sources, _) =
+            crate::audio::supervisor::tests::plugin_session(root.path(), "state_hang");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while transport.snapshot().state != State::Stopped {
+            assert_ne!(transport.snapshot().state, State::Failed);
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        transport
+            .plugin(Request::Checkpoint {
+                destination: root.path().join("saved"),
+            })
+            .unwrap();
+        while !transport.snapshot().plugins.busy {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let mut music = Music {
+            playback: Some(transport),
+            sources: sources.clone(),
+            checkpoint_id: 3,
+            plugin_unsaved: true,
+            ..Default::default()
+        };
+        music.cancel_plugin_operation();
+        assert!(music.playback.is_none());
+        assert!(
+            music.retiring.is_empty(),
+            "Do not launch another checkpoint while cancelling"
+        );
+        assert_eq!(
+            music.sources, sources,
+            "Retain the last saved assignments/state"
+        );
+        assert_eq!(
+            music.checkpoint_id, 0,
+            "A fresh session can reuse the previous checkpoint request ID"
+        );
+        assert!(
+            music.plugin_unsaved,
+            "Cancellation must not falsely mark unsaved edits saved"
+        );
+    }
     #[test]
     fn dirty_or_retiring_plugin_sessions_refuse_structural_replacement() {
         let root = tempfile::tempdir().unwrap();

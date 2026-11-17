@@ -1,6 +1,7 @@
 #pragma once
 #include "core.hpp"
 #include <nlohmann/json.hpp>
+#include <mutex>
 #include <sys/types.h>
 
 namespace rms {
@@ -20,6 +21,7 @@ Json parse_json(const std::string&);
 struct Envelope {
     std::string session;
     uint64_t request = 0, epoch = 0;
+    bool editor_keepalive = false;
     void hello(const Json&);
     std::string command(const Json&);
     Json message(const char* type) const;
@@ -39,5 +41,6 @@ private:
     std::vector<uint8_t> input_;
     size_t wanted_ = 0;
     int64_t partial_since_ = 0;
+    std::mutex output_mutex_;
 };
 } // namespace rms

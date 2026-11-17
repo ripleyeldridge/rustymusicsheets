@@ -1,5 +1,7 @@
 #include "vst3.hpp"
+#include <array>
 #include <cmath>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -78,6 +80,43 @@ int main(int argc,char** argv) {
             return 0;
         }
         check(a.latency() == 16,"declared latency");
+        {
+            rms::Vst3 paused(s,48000,256);
+            for (int i=0;i<256;++i) paused.parameter(7,i==255 ? .6 : .2);
+            check(!paused.failed(),"repeated paused editor/slider updates must not overflow");
+            auto saved = paused.capture();
+            double level = 0;
+            check(saved.first.size()==sizeof(level),"paused edit fixture state size");
+            std::memcpy(&level,saved.first.data(),sizeof(level));
+            check(std::abs(level-.6)<1e-9,"paused capture retains the latest same-position edit");
+        }
+        for (bool mono : {false,true}) {
+            check(setenv("RMS_TEST_PLUGIN_CHUNK_CHECKS","1",1)==0,"strict chunk fixture");
+            if (mono) check(setenv("RMS_TEST_PLUGIN_MONO","1",1)==0,"mono chunk fixture");
+            rms::Vst3 large(s,48000,65536);
+            check(unsetenv("RMS_TEST_PLUGIN_CHUNK_CHECKS")==0,"clear strict chunk fixture");
+            check(unsetenv("RMS_TEST_PLUGIN_MONO")==0,"clear mono chunk fixture");
+            std::array<float,4097> left{},right{};
+            large.transport(0,120,true);
+            large.parameter(7,.4);
+            large.render(left.data(),right.data(),0);
+            check(!large.failed(),"zero-frame parameter flush preserves chunk context");
+            large.note_on(60,127); large.note_on(64,127);
+            large.render(left.data(),right.data(),left.size());
+            check(!large.failed(),"large host buffers split into supported plugin blocks");
+            for (size_t i=0;i<left.size();++i)
+                check(std::abs(left[i]-(i<16 ? 0.f : .2f))<1e-6 && left[i]==right[i],
+                    "notes/parameter and continuous stereo output survive block boundaries");
+            large.silence(); large.render(left.data(),right.data(),left.size());
+            for (size_t i=16;i<left.size();++i) check(left[i]==0,"split render preserves note off");
+            large.note_on(60,127);
+            large.render(left.data(),right.data(),4096);
+            check(!large.failed(),"exact multiple of plugin quantum preserves timing and events");
+            check(std::abs(left[4095]-.1f)<1e-6 && left[4095]==right[4095],
+                "exact chunk final stereo/duplicated-mono sample");
+            large.parameter(8,1);
+            check(large.pump() && large.latency()==32,"reprepare retains bounded processing setup");
+        }
         check(a.parameters(0,128)["parameters"][0]["id"] == 7,"controller parameter enumeration");
         a.parameter(7,.25); b.parameter(7,.75);
         auto paused_state = a.capture();

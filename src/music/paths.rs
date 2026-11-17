@@ -14,7 +14,7 @@ pub(crate) enum PathField {
     BridgeTool,
     BridgeRoot,
     WineLoader,
-    PluginBundle(u32),
+    PluginBundle,
     PluginPreset(u32),
 }
 impl PathField {
@@ -22,7 +22,7 @@ impl PathField {
         match self {
             Self::Audiveris | Self::FluidSynth | Self::AudioHost => SelectionKind::Executable,
             Self::BridgeTool | Self::WineLoader => SelectionKind::Executable,
-            Self::PluginRoot(_) | Self::BridgeRoot | Self::PluginBundle(_) => SelectionKind::Folder,
+            Self::PluginRoot(_) | Self::BridgeRoot | Self::PluginBundle => SelectionKind::Folder,
             Self::PluginPreset(_) => SelectionKind::VstPreset,
             Self::SoundFont => SelectionKind::SoundFont,
             Self::LoadMusicXml => SelectionKind::MusicXml,
@@ -42,6 +42,7 @@ impl PathField {
                 | Self::BridgeTool
                 | Self::BridgeRoot
                 | Self::WineLoader
+                | Self::PluginBundle
         )
     }
 }
@@ -134,7 +135,7 @@ impl Music {
             owner,
             generation: self.generation,
             part: match field {
-                PathField::PluginBundle(index) | PathField::PluginPreset(index) => self
+                PathField::PluginPreset(index) => self
                     .composition
                     .as_ref()
                     .and_then(|c| c.parts.get(index as usize))
@@ -166,7 +167,7 @@ impl Music {
                 "The score or movement changed while the chooser was open; browse again"
             );
         }
-        if let PathField::PluginBundle(index) | PathField::PluginPreset(index) = request.field {
+        if let PathField::PluginPreset(index) = request.field {
             if let (Some(source), Some(stamp)) = (&self.source, &self.source_stamp) {
                 anyhow::ensure!(source_stamp(source).ok().as_ref() == Some(stamp), "The backing source changed while the chooser was open; reopen the score and browse again");
             }
@@ -182,6 +183,12 @@ impl Music {
             );
         }
         let value=path.to_str().context("This field requires a Unicode filename; choose a representable path rather than replacing filename bytes")?.to_owned();
+        if request.field == PathField::PluginBundle {
+            anyhow::ensure!(
+                path.extension().is_some_and(|extension| extension == "vst3"),
+                "Select the outer .vst3 bundle folder, not its Contents directory or an SFZ/SoundFont"
+            );
+        }
         let kind = request.field.kind();
         if !kind.is_save() {
             if kind == SelectionKind::Folder {
@@ -228,10 +235,7 @@ impl Music {
             PathField::BridgeTool => audio.yabridge.tool = value,
             PathField::BridgeRoot => audio.yabridge.wrapper_root = value,
             PathField::WineLoader => audio.yabridge.wine_loader = value,
-            PathField::PluginBundle(_) => {
-                self.bundle_paths
-                    .insert(request.part.context("Missing part")?, value);
-            }
+            PathField::PluginBundle => self.discovery_bundle = value,
             PathField::PluginPreset(_) => {
                 self.preset_paths
                     .insert(request.part.context("Missing part")?, value);
@@ -398,10 +402,49 @@ mod tests {
         assert_eq!(settings.soundfont, previous);
     }
     #[test]
-    fn bundle_and_preset_browsing_is_part_generation_bound_and_has_no_loading_side_effect() {
+    fn global_bundle_browsing_survives_score_changes_without_assigning_or_loading() {
         let root = tempfile::tempdir().unwrap();
         let bundle = root.path().join("Été instrument.v1.vst3");
         std::fs::create_dir(&bundle).unwrap();
+        let mut music = Music::default();
+        let mut audio = crate::audio::Settings::default();
+        let mut settings = Settings::default();
+        music.request_path(PathField::PluginBundle, "");
+        let request = music.take_path_request().unwrap();
+        assert!(request.owner.is_none() && request.part.is_none());
+        assert_eq!(request.field.kind(), SelectionKind::Folder);
+        music.binding = Some((2, "different score".into()));
+        music.xml = Some(root.path().join("different.musicxml"));
+        music.generation += 1;
+        music
+            .sources
+            .insert("P1".into(), crate::audio::plugins::Source::Soundfont);
+        let sources = music.sources.clone();
+        music
+            .apply_path(request, bundle.clone(), &mut settings, &mut audio)
+            .unwrap();
+        assert_eq!(music.discovery_bundle, bundle.to_str().unwrap());
+        assert_eq!(music.sources, sources);
+        assert!(music.playback.is_none());
+        #[cfg(target_os = "linux")]
+        assert!(music.plugin_task.is_none() && music.catalogue.entries.is_empty());
+        music.reset();
+        assert_eq!(music.discovery_bundle, bundle.to_str().unwrap());
+        let wrong = root.path().join("Contents");
+        std::fs::create_dir(&wrong).unwrap();
+        music.request_path(PathField::PluginBundle, &music.discovery_bundle.clone());
+        let request = music.take_path_request().unwrap();
+        assert!(music
+            .apply_path(request, wrong, &mut settings, &mut audio)
+            .is_err());
+        assert_eq!(music.discovery_bundle, bundle.to_str().unwrap());
+    }
+
+    #[test]
+    fn preset_browsing_is_part_generation_bound_and_has_no_loading_side_effect() {
+        let root = tempfile::tempdir().unwrap();
+        let preset = root.path().join("Été instrument.vstpreset");
+        std::fs::write(&preset, b"selected but not loaded").unwrap();
         let mut music = Music {
             binding: Some((1, "source hash".into())),
             composition: Some(crate::notation::parse_musicxml(r#"<score-partwise><part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list><part id="P1"><measure number="1"/></part></score-partwise>"#).unwrap()),
@@ -409,17 +452,17 @@ mod tests {
         };
         let mut audio = crate::audio::Settings::default();
         let mut settings = Settings::default();
-        music.request_path(PathField::PluginBundle(0), "");
+        music.request_path(PathField::PluginPreset(0), "");
         let request = music.take_path_request().unwrap();
-        assert_eq!(request.field.kind(), SelectionKind::Folder);
+        assert_eq!(request.field.kind(), SelectionKind::VstPreset);
         music
-            .apply_path(request, bundle.clone(), &mut settings, &mut audio)
+            .apply_path(request, preset.clone(), &mut settings, &mut audio)
             .unwrap();
-        assert_eq!(music.bundle_paths["P1"], bundle.to_str().unwrap());
+        assert_eq!(music.preset_paths["P1"], preset.to_str().unwrap());
         assert!(music.sources.is_empty());
         assert!(music.playback.is_none());
         for mutation in 0..3 {
-            music.request_path(PathField::PluginBundle(0), "");
+            music.request_path(PathField::PluginPreset(0), "");
             let request = music.take_path_request().unwrap();
             match mutation {
                 0 => music.generation += 1,
@@ -427,7 +470,7 @@ mod tests {
                 _ => music.binding = Some((1, "changed source".into())),
             }
             assert!(music
-                .apply_path(request, bundle.clone(), &mut settings, &mut audio)
+                .apply_path(request, preset.clone(), &mut settings, &mut audio)
                 .is_err());
         }
     }

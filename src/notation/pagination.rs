@@ -246,6 +246,26 @@ mod tests {
     }
 
     #[test]
+    fn empty_implicit_measure_keeps_shared_original_page_boundary() {
+        let fields = sheet(1, "1") + &sheet(2, "1");
+        let first = measure(1, "<print/>", "")
+            + r#"<measure number="2" implicit="yes"><print new-page="yes"/></measure>"#;
+        let second = measure(1, "", "") + &measure(2, "", "");
+        let c = parse_musicxml(&xml(&fields, &first, Some(&second))).unwrap();
+        assert_eq!(c.duration_ticks, 1920);
+        let map = c
+            .page_map
+            .expect("Rest placeholders must preserve ordinal page mapping");
+        assert_eq!(map.measure_ticks, [0, 960]);
+        assert_eq!(
+            map.turns,
+            [
+                PageTurn { tick: 0, page: 0 },
+                PageTurn { tick: 960, page: 1 }
+            ]
+        );
+    }
+    #[test]
     fn page_events_follow_repeats_alternative_endings_and_rest_only_boundaries() {
         let fields = sheet(1, "1") + &sheet(2, "1") + &sheet(3, "1");
         let first = measure(

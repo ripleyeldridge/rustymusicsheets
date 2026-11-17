@@ -5,6 +5,119 @@ use crate::{
     playback::Transport,
 };
 use std::os::unix::fs::PermissionsExt;
+#[test]
+fn editor_wait_is_bounded_and_preserves_remaining_command_budget() {
+    let now = Instant::now();
+    let original = now.checked_sub(Duration::from_secs(1)).unwrap();
+    let mut pending = VecDeque::from([(2, 0, original)]);
+    let mut wait = EditorWait::default();
+    wait.keepalive(now).unwrap();
+    wait.keepalive(now + Duration::from_secs(6)).unwrap();
+    wait.finish(now + Duration::from_secs(7), &mut pending)
+        .unwrap();
+    assert_eq!(pending[0].2, original + Duration::from_secs(7));
+    assert!(wait.since.is_none());
+    wait.keepalive(now).unwrap();
+    assert!(wait.keepalive(now + EDITOR_CALLBACK_TIMEOUT).is_err());
+    assert!(wait
+        .finish(now + EDITOR_CALLBACK_TIMEOUT, &mut pending)
+        .is_err());
+}
+
+#[test]
+fn editor_keepalives_allow_a_long_modal_callback_then_resume_commands() {
+    use audio::plugins::Request;
+    let root = tempfile::tempdir().unwrap();
+    let (transport, _, _) = plugin_session(root.path(), "editor_return");
+    wait(&transport, |s| s.state == State::Stopped);
+    let started = Instant::now();
+    transport
+        .plugin(Request::Editor {
+            part_id: "P1".into(),
+            open: true,
+        })
+        .unwrap();
+    let busy = wait(&transport, |s| s.plugins.editor_busy);
+    assert!(busy.plugins.busy);
+    let resumed = wait(&transport, |s| !s.plugins.busy);
+    assert!(started.elapsed() >= Duration::from_secs(6));
+    assert_eq!(resumed.state, State::Stopped);
+    assert!(resumed.plugins.operation_error.is_none());
+    transport
+        .plugin(Request::Parameters {
+            part_id: "P1".into(),
+            offset: 0,
+        })
+        .unwrap();
+    wait(&transport, |s| s.plugins.parameters.contains_key("P1"));
+    transport.play().unwrap();
+    wait(&transport, |s| s.state == State::Playing);
+}
+
+#[test]
+fn cancelling_a_modal_editor_retains_the_previous_checkpoint() {
+    use audio::plugins::Request;
+    let root = tempfile::tempdir().unwrap();
+    let (transport, _, _) = plugin_session(root.path(), "editor_hang");
+    wait(&transport, |s| s.state == State::Stopped);
+    transport
+        .plugin(Request::Checkpoint {
+            destination: root.path().join("saved"),
+        })
+        .unwrap();
+    let saved = wait(&transport, |s| s.plugins.checkpoint.is_some());
+    let descriptor = saved.plugins.checkpoint.unwrap().1[0]
+        .component_state
+        .clone()
+        .unwrap();
+    let bytes = fs::read(&descriptor.path).unwrap();
+    transport
+        .plugin(Request::Editor {
+            part_id: "P1".into(),
+            open: true,
+        })
+        .unwrap();
+    wait(&transport, |s| s.plugins.editor_busy);
+    let started = Instant::now();
+    drop(transport);
+    assert!(started.elapsed() < Duration::from_millis(200));
+    assert_eq!(fs::read(descriptor.path).unwrap(), bytes);
+}
+
+#[test]
+fn unnegotiated_or_malformed_editor_keepalives_fail_closed() {
+    use audio::plugins::Request;
+    for mode in ["editor_no_cap", "editor_bad_id", "editor_bad_busy"] {
+        let root = tempfile::tempdir().unwrap();
+        let (transport, _, _) = plugin_session(root.path(), mode);
+        wait(&transport, |s| s.state == State::Stopped);
+        transport
+            .plugin(Request::Editor {
+                part_id: "P1".into(),
+                open: true,
+            })
+            .unwrap();
+        let failed = wait(&transport, |s| s.state == State::Failed);
+        assert!(failed.error.unwrap().contains("editor keepalive"));
+    }
+}
+
+#[test]
+fn an_editor_keepalive_does_not_disable_the_missing_heartbeat_watchdog() {
+    use audio::plugins::Request;
+    let root = tempfile::tempdir().unwrap();
+    let (transport, _, _) = plugin_session(root.path(), "editor_silent");
+    wait(&transport, |s| s.state == State::Stopped);
+    transport
+        .plugin(Request::Editor {
+            part_id: "P1".into(),
+            open: true,
+        })
+        .unwrap();
+    wait(&transport, |s| s.plugins.editor_busy);
+    let failed = wait(&transport, |s| s.state == State::Failed);
+    assert!(failed.error.unwrap().contains("heartbeat"));
+}
 
 fn score() -> notation::Composition {
     let mut score = notation::parse_musicxml(r#"<score-partwise><part-list><score-part id="P1"><part-name>Cello</part-name></score-part></part-list><part id="P1"><measure number="1"><attributes><divisions>1</divisions></attributes><note><pitch><step>C</step><octave>3</octave></pitch><duration>32</duration></note></measure></part></score-partwise>"#).unwrap();
@@ -176,6 +289,61 @@ fn independent_plugin_state_survives_reload_with_parameters_gain_editors_and_pre
 }
 
 #[test]
+fn vst3_state_changes_invalidate_cached_parameter_page() {
+    use audio::plugins::Request;
+    let root = tempfile::tempdir().unwrap();
+    let (transport, _, _) = plugin_session(root.path(), "preset_changes");
+    wait(&transport, |s| s.state == State::Stopped);
+    transport
+        .plugin(Request::Parameters {
+            part_id: "P1".into(),
+            offset: 0,
+        })
+        .unwrap();
+    let initial = wait(&transport, |s| s.plugins.parameters.contains_key("P1"));
+    assert_eq!(initial.plugins.parameters["P1"].2[0].value, 0.5);
+    let mut preset = [0u8; 48];
+    preset[..4].copy_from_slice(b"VST3");
+    preset[8..40].copy_from_slice("A".repeat(32).as_bytes());
+    let path = root.path().join("changed.vstpreset");
+    fs::write(&path, preset).unwrap();
+    transport
+        .plugin(Request::Preset {
+            part_id: "P1".into(),
+            path,
+        })
+        .unwrap();
+    let changed = wait(&transport, |s| !s.plugins.dirty_parts.is_empty());
+    assert!(
+        !changed.plugins.parameters.contains_key("P1"),
+        "Do not display pre-preset parameter values"
+    );
+    transport
+        .plugin(Request::Parameters {
+            part_id: "P1".into(),
+            offset: 0,
+        })
+        .unwrap();
+    let refreshed = wait(&transport, |s| s.plugins.parameters.contains_key("P1"));
+    assert_eq!(refreshed.plugins.parameters["P1"].2[0].value, 0.63);
+    transport
+        .plugin(Request::Editor {
+            part_id: "P1".into(),
+            open: false,
+        })
+        .unwrap();
+    wait(&transport, |s| !s.plugins.parameters.contains_key("P1"));
+    transport
+        .plugin(Request::Parameters {
+            part_id: "P1".into(),
+            offset: 0,
+        })
+        .unwrap();
+    let edited = wait(&transport, |s| s.plugins.parameters.contains_key("P1"));
+    assert_eq!(edited.plugins.parameters["P1"].2[0].value, 0.72);
+}
+
+#[test]
 fn cancelling_a_busy_checkpoint_drops_only_its_owned_helper() {
     use audio::plugins::Request;
     let root = tempfile::tempdir().unwrap();
@@ -303,10 +471,7 @@ fn real_audio_host_muted_smoke() {
     );
 }
 
-pub(in crate::audio) fn fake(
-    root: &std::path::Path,
-    mode: &str,
-) -> (crate::omr::Settings, audio::Settings) {
+pub(crate) fn fake(root: &std::path::Path, mode: &str) -> (crate::omr::Settings, audio::Settings) {
     let host = root.join("audio-host");
     let script = format!(
         "#!/usr/bin/python3\nMODE = {mode:?}\nLOG = {}\n",
@@ -340,6 +505,7 @@ def send(obj, old=False):
     data = json.dumps(obj).encode()
     s.sendall(struct.pack('!I',len(data))+data)
 caps = ['soundfont','jack'] if MODE=='core' else ['soundfont','jack','vst3','plugin_state','parameters','presets','editor_x11']
+if MODE.startswith('editor_') and MODE!='editor_no_cap': caps.append('editor_keepalive')
 send(dict(type='hello',capabilities=caps))
 if MODE in ('version','session'): time.sleep(20); sys.exit(0)
 if sys.argv[1]=='probe':
@@ -440,9 +606,25 @@ while True:
         dirty=[]
     elif kind=='preset_load':
         assert state!='playing'
+        if MODE=='preset_changes': values[command['part_id']]=.63
         dirty=list(values)
         send(dict(type='ack',operation=kind,part_id=command['part_id']))
+    elif kind=='editor_open' and MODE.startswith('editor_'):
+        assert 'editor_keepalive' in hello['client_capabilities']
+        def busy():
+            frame=dict(version=2,session=session,request_id=1 if MODE=='editor_bad_id' else 0,
+                       epoch=0,type='editor_keepalive',editor_busy=MODE!='editor_bad_busy')
+            raw=json.dumps(frame).encode()
+            s.sendall(struct.pack('!I',len(raw))+raw)
+        if MODE in ('editor_no_cap','editor_bad_id','editor_bad_busy','editor_silent'):
+            busy(); time.sleep(30)
+        elif MODE=='editor_hang':
+            while True: busy(); time.sleep(.1)
+        else:
+            for _ in range(13): busy(); time.sleep(.5)
+        send(dict(type='ack',operation=kind,part_id=command['part_id']))
     elif kind in ('editor_open','editor_close','gain'):
+        if MODE=='preset_changes' and kind=='editor_close': values[command['part_id']]=.72
         send(dict(type='ack',operation=kind,part_id=command['part_id']))
     elif kind not in ('master_volume','mix'): raise RuntimeError(kind)
     status()

@@ -120,7 +120,7 @@ pub struct Music {
     movement: usize,
     selected: BTreeMap<String, bool>,
     sources: BTreeMap<String, crate::audio::plugins::Source>,
-    bundle_paths: BTreeMap<String, String>,
+    discovery_bundle: String,
     preset_paths: BTreeMap<String, String>,
     generation: u64,
     music_hash: Option<String>,
@@ -136,6 +136,10 @@ pub struct Music {
     plugin_task: Option<plugins::Task>,
     #[cfg(target_os = "linux")]
     helper_caps: Option<Vec<String>>,
+    #[cfg(target_os = "linux")]
+    discovery_notice: String,
+    #[cfg(target_os = "linux")]
+    discovery_error: Option<String>,
     #[cfg(target_os = "linux")]
     retiring: Vec<Receiver<Result<(), String>>>,
     manifest_guard: std::sync::Arc<std::sync::Mutex<()>>,
@@ -309,7 +313,6 @@ impl Music {
         self.movement = 0;
         self.selected.clear();
         self.sources.clear();
-        self.bundle_paths.clear();
         self.preset_paths.clear();
         self.music_hash = None;
         self.plugin_unsaved = false;
@@ -443,7 +446,7 @@ impl Music {
                         .collect();
                     self.error = None;
                     self.sources.clear();
-                    self.bundle_paths.clear();
+                    self.plugin_unsaved = false;
                     self.preset_paths.clear();
                     self.music_hash = Some(loaded.music_hash.clone());
                     if let Err(error) = self.load_mix() {
@@ -741,6 +744,13 @@ impl Music {
         }
     }
 
+    fn cancel_plugin_operation(&mut self) {
+        drop(self.playback.take());
+        self.checkpoint_id = 0;
+        self.synth_settings = None;
+        self.notice = "Plugin operation cancelled. Last valid saved checkpoint retained; unsaved edits may be lost.".into();
+    }
+
     fn start_transport(&mut self, settings: &Settings) -> Result<()> {
         self.start_transport_mode(settings, true)
     }
@@ -788,7 +798,10 @@ impl Music {
         }
         let snapshot = self.playback.as_ref().map(Transport::snapshot);
         let state = snapshot.as_ref().map(|s| s.state);
-        let ready = self.composition.is_some() && self.loading.is_none() && self.job.is_none();
+        let ready = self.composition.is_some()
+            && self.loading.is_none()
+            && self.job.is_none()
+            && !snapshot.as_ref().is_some_and(|s| s.plugins.busy);
         let seekable =
             ready && state != Some(State::Starting) && self.selected.values().any(|on| *on);
         ui.horizontal_wrapped(|ui| {
@@ -852,9 +865,7 @@ impl Music {
                 .clicked()
             {
                 if snapshot.as_ref().is_some_and(|s| s.plugins.busy) {
-                    drop(self.playback.take());
-                    self.synth_settings = None;
-                    self.notice = "Plugin operation cancelled. Last valid saved checkpoint retained; unsaved edits may be lost.".into();
+                    self.cancel_plugin_operation();
                 } else if state == Some(State::Starting) {
                     self.stop();
                 } else {
@@ -1126,7 +1137,7 @@ impl Music {
                         self.browse_audio_setting(field, audio_settings);
                     }
                     #[cfg(target_os = "linux")]
-                    self.plugin_settings_ui(ui, audio_settings);
+                    self.plugin_discovery_ui(ui, audio_settings);
                     save_settings = ui.button("Save music settings").clicked();
                 });
                 self.configure_audio(audio_settings);
@@ -1308,6 +1319,8 @@ pub(crate) fn audio_settings_ui(
         !busy,
     );
     let mut selected = browse.then_some(PathField::AudioHost);
+    ui.small("VST3 needs an SDK-enabled rms-audio-host, not jackd, yabridgectl or Wine. Probe helper capabilities below; the reply must include vst3.");
+    ui.small("Use native JACK for an already-running JACK server. PipeWire/JACK instead launches the helper through pw-jack.");
     for (field, label, value) in [
         (
             PathField::BridgeTool,
@@ -1471,6 +1484,29 @@ mod tests {
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
+    }
+
+    #[test]
+    fn vst3_movement_load_does_not_inherit_unsaved_plugin_edits() {
+        let (root, paths, score, source) = fixture();
+        let xml = root.path().join("first.musicxml");
+        let second = root.path().join("second.musicxml");
+        std::fs::write(&xml, XML).unwrap();
+        std::fs::write(&second, XML.replace("<step>C</step>", "<step>D</step>")).unwrap();
+        let ctx = egui::Context::default();
+        let mut music = Music::default();
+        music.open_for(&score, &source, &paths, &ctx);
+        music.start_load(xml, true, &paths, &ctx);
+        finish_load(&mut music, &paths, &ctx);
+        assert!(music.error.is_none(), "{:?}", music.error);
+        music.plugin_unsaved = true;
+        music.start_load(second, true, &paths, &ctx);
+        finish_load(&mut music, &paths, &ctx);
+        assert!(music.error.is_none(), "{:?}", music.error);
+        assert!(
+            !music.plugin_unsaved,
+            "Previous movement edits must not block selecting a VST3 in the new movement"
+        );
     }
 
     #[test]

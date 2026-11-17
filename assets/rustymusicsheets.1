@@ -194,9 +194,13 @@ Normal Cargo/CMake/Android builds do not download the SDK.
 Use --build-info to check protocol2/vst3 capability and rebuild the app/helper
 together; the older M0 helper used protocol1.
 .PP
-In Music / OMR engine settings expand VST3 discovery / existing yabridge
-diagnostics. Add search folder and Browse, then Scan selected roots, or Browse
-a Direct .vst3 bundle folder per part and Inspect this bundle.
+In application Settings (no score required), or Music / OMR engine settings,
+expand VST3 bundle discovery (shared by all parts). Browse the single Direct
+\&.vst3 bundle folder and Inspect this bundle, or Add search folder / Browse /
+Scan selected roots. Scan each bundle once: all part dropdowns share the
+catalogue, but assignments, instances, gain and state remain independent.
+Browsing/scanning never assigns a part. Retry this bundle retries quarantine.
+Selected bundles are shown read-only per part.
 Choose the exact class by vendor/path/ID. Linux .vst3 plugins are bundle
 directories containing Contents/x86_64-linux/<bundle-name>.so, not raw Windows
 files or loose VST2 DLL/SO files. Use Load instruments paused, then Open editor,
@@ -205,6 +209,23 @@ Post-plugin gain is separate from GM/CC7. Save plugin assignments and state
 before changing instruments; external samples/licenses are not bundled.
 Missing plugins never silently become SoundFonts. A VST-only session needs
 no SoundFont bank. MIDI export retains GM choices, not plugin audio/state.
+.PP
+SFZ instruments use a separately acquired native sfizz VST3 sampler, not the
+SF2/SF3 SoundFont field. Discover sfizz.vst3 globally and select the stereo
+sfizz class, not sfizz-multi. Load instruments paused, Open editor and choose
+the .sfz inside sfizz, or load a class-matching .vstpreset. Play at a low master
+level, then pause/stop and Save plugin assignments and state.
+SFZ definitions, samples and includes remain external and must stay available.
+Normal builds do not download/install sfizz; no second SFZ engine or
+vendor-specific production state format is added.
+.PP
+Rebuild both reader and helper for synchronous editor file pickers.
+The negotiated editor_keepalive capability on X11 distinguishes a busy
+editor callback from a missing heartbeat without acknowledging commands early.
+Transport is held until the dialog finishes. Finish/cancel it, or use Stop
+audio to cancel the owned helper and retain the previous saved checkpoint.
+The normal five-second missing-heartbeat watchdog remains enabled; continuous
+editor activity has a separate thirty-minute limit.
 .PP
 For existing yabridge use generated Linux VST3 wrappers, normally
 ~/.vst3/yabridge, and run Read-only bridge diagnostics before scanning.

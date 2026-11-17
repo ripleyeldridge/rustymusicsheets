@@ -13,6 +13,8 @@ verification in both directions. version is now 2, not 1. Every object has
 Parent initiates hello at id0/epoch0. Helper replies hello with capabilities.
 Required base capabilities: "soundfont","jack".
 SDK builds add "vst3","plugin_state","parameters","presets".
+Usable X11 builds also advertise "editor_keepalive" for the negotiated modal
+editor liveness extension below. Ordinary clients need not enable it.
 Advertise "editor_x11" only when actually implemented and usable.
 Child modes:
   rms-audio-host serve --socket PATH --parent-pid PID
@@ -34,6 +36,26 @@ Ordinary transport/heartbeat deadlines remain five seconds. Checkpoint/preset
 operations are allowed up to sixty seconds ONLY while paused/stopped; UI must
 remain cancellable, audio processing quiescent, and page position frozen.
 No indefinite shutdown/join on the egui thread.
+
+Modal editor liveness (optional protocol-2 extension)
+---------------------------------------------------
+The parent hello may offer client_capabilities:["editor_keepalive"].
+Only when offered by the parent and advertised by the helper, serve mode
+may send {type:"editor_keepalive",editor_busy:true} with request_id=0,epoch=0
+and the authenticated session envelope. These are liveness-only frames:
+they never acknowledge a command or provide new transport/parameter state.
+They are emitted off-RT while an actual editor/event/timer callback is active,
+including synchronous file choosers. Plugin calls remain on the main thread;
+control-socket writes are serialized, never written by the JACK callback.
+The reader keeps its five-second missing-heartbeat watchdog. A continuous
+editor callback is additionally bounded to thirty minutes. Pending command
+budgets exclude this authenticated busy interval and resume when normal
+status returns; non-editor state-operation limits are unchanged. New commands
+are refused while the editor is busy. Stop audio cancels the owned companion/
+process group and retains the previous valid checkpoint. Normal status clears
+editor-busy state. Older clients receive no extension frames. Buffered control
+bytes are drained after a blocked reader resumes; incomplete stalled frames
+still time out rather than gaining an indefinite grace period.
 
 Playback load and plan
 ----------------------

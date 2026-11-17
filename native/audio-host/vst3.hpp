@@ -4,6 +4,7 @@
 
 namespace rms {
 Json plugin_capabilities();
+bool plugin_editor_callback_active() noexcept;
 Json build_info();
 Json scan_plugin(const Json&);
 std::string module_digest(const std::string& bundle);

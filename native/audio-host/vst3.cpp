@@ -89,6 +89,16 @@ using namespace Steinberg;
 using namespace Steinberg::Vst;
 namespace {
 constexpr size_t state_limit = 64 * 1024 * 1024;
+// Host scratch capacity is not a reasonable plugin processing block size.
+// Keep setup and process calls bounded even with unusually large JACK buffers.
+constexpr uint32_t process_quantum = 1024;
+std::atomic<uint32_t> editor_callbacks{0};
+struct EditorCallback {
+    EditorCallback() { editor_callbacks.fetch_add(1); }
+    ~EditorCallback() { editor_callbacks.fetch_sub(1); }
+    EditorCallback(const EditorCallback&) = delete;
+    EditorCallback& operator=(const EditorCallback&) = delete;
+};
 void check(bool ok, const char* why) { if (!ok) throw std::runtime_error(why); }
 bool instrument(const VST3::Hosting::ClassInfo& c) {
     return c.category() == kVstAudioEffectClass &&
@@ -151,9 +161,19 @@ struct Queue final : U::ImplementsNonDestroyable<U::Directly<IParamValueQueue>> 
         offset = points[i].offset; value = points[i].value; return kResultOk;
     }
     tresult PLUGIN_API addPoint(int32 offset, ParamValue value, int32& index) override {
-        if (count == static_cast<int32>(points.size()) || offset < 0 || !std::isfinite(value) || value < 0 || value > 1)
+        if (offset < 0 || !std::isfinite(value) || value < 0 || value > 1)
             return kResultFalse;
-        index = count; points[count++] = {offset, value}; return kResultOk;
+        // Match SDK queue semantics: the latest value at a sample position
+        // replaces the previous one, including repeated edits while paused.
+        for (int32 i = 0; i < count; ++i) if (points[i].offset == offset) {
+            points[i].value = value; index = i; return kResultOk;
+        }
+        if (count == static_cast<int32>(points.size())) return kResultFalse;
+        index = count;
+        while (index > 0 && points[index-1].offset > offset) {
+            points[index] = points[index-1]; --index;
+        }
+        points[index] = {offset, value}; ++count; return kResultOk;
     }
 };
 struct Changes final : U::ImplementsNonDestroyable<U::Directly<IParameterChanges>> {
@@ -281,6 +301,7 @@ struct Vst3::Impl final : U::ImplementsNonDestroyable<U::Directly<IComponentHand
 #endif
     }
     void close_editor() {
+        EditorCallback callback;
         if (view) { view->removed(); view->setFrame(nullptr); view.reset(); }
 #ifdef RMS_X11
         if (display) { if (window) XDestroyWindow(display,window); XCloseDisplay(display); }
@@ -288,6 +309,7 @@ struct Vst3::Impl final : U::ImplementsNonDestroyable<U::Directly<IComponentHand
 #endif
     }
     void open_editor(const std::string& label) {
+        EditorCallback callback;
 #ifdef RMS_X11
         if (view) { XStoreName(display,window,label.c_str()); XRaiseWindow(display,window); return; }
         check(bool(controller), "instrument has no controller/editor");
@@ -327,18 +349,23 @@ struct Vst3::Impl final : U::ImplementsNonDestroyable<U::Directly<IComponentHand
         auto descriptors = fds;
         for (auto& f : descriptors) if (f.handler) {
             pollfd p{f.fd,POLLIN,0};
-            if (::poll(&p,1,0) > 0 && (p.revents & POLLIN)) f.handler->onFDIsSet(f.fd);
+            if (::poll(&p,1,0) > 0 && (p.revents & POLLIN)) {
+                EditorCallback callback;
+                f.handler->onFDIsSet(f.fd);
+            }
         }
         uint64_t now = milliseconds();
         auto snapshot = timers;
         for (size_t i = 0; i < timers.size(); ++i) if (snapshot[i].handler && now >= snapshot[i].next) {
             timers[i].next = now + snapshot[i].interval;
+            EditorCallback callback;
             snapshot[i].handler->onTimer();
         }
 #ifdef RMS_X11
         size_t events = 0;
         while (display && view && XPending(display) && events++ < 256) {
             XEvent e; XNextEvent(display,&e);
+            EditorCallback callback;
             if (e.type == ClientMessage && static_cast<Atom>(e.xclient.data.l[0]) == close_atom) { close_editor(); break; }
             if (e.type == ConfigureNotify && view->canResize() == kResultOk) {
                 ViewRect rect(0,0,e.xconfigure.width,e.xconfigure.height);
@@ -396,10 +423,15 @@ struct Vst3::Impl final : U::ImplementsNonDestroyable<U::Directly<IComponentHand
         if (!b.empty()) { check(bool(controller), "state requires controller"); Stream s(b); check(controller->setState(&s) == kResultOk, "controller rejected state"); }
     }
 };
+bool plugin_editor_callback_active() noexcept { return editor_callbacks.load() != 0; }
 Json plugin_capabilities() {
     Json caps = Json::array({"soundfont", "jack", "vst3", "plugin_state", "parameters", "presets"});
 #ifdef RMS_X11
-    if (auto* display = XOpenDisplay(nullptr)) { caps.push_back("editor_x11"); XCloseDisplay(display); }
+    if (auto* display = XOpenDisplay(nullptr)) {
+        caps.push_back("editor_x11");
+        caps.push_back("editor_keepalive");
+        XCloseDisplay(display);
+    }
 #endif
     return caps;
 }
@@ -455,7 +487,7 @@ Vst3::Vst3(const Source& s, uint32_t rate, uint32_t capacity) : impl_(std::make_
     if (!s.component.path.empty()) a = read_private(s.component);
     if (!s.controller.path.empty()) b = read_private(s.controller);
     p.restore(a, b);
-    ProcessSetup setup{kRealtime, kSample32, static_cast<int32>(capacity), static_cast<double>(rate)};
+    ProcessSetup setup{kRealtime, kSample32, static_cast<int32>(std::min(capacity,process_quantum)), static_cast<double>(rate)};
     check(p.processor->setupProcessing(setup) == kResultOk, "VST3 setupProcessing failed");
     p.latency_ = p.processor->getLatencySamples();
     check(p.latency_ <= uint64_t(rate) * 10, "plugin latency exceeds ten seconds");
@@ -476,6 +508,13 @@ void Vst3::render(float* l, float* r, uint32_t frames) noexcept {
     auto& p = *impl_;
     std::fill_n(l, frames, 0); std::fill_n(r, frames, 0);
     if (frames > p.capacity || p.failed_) { p.failed_ = true; return; }
+    if (frames > process_quantum) {
+        for (uint32_t offset = 0; offset < frames; offset += process_quantum) {
+            render(l+offset,r+offset,std::min(process_quantum,frames-offset));
+            if (p.failed_) return;
+        }
+        return;
+    }
     float* buffers[2]{l,r};
     AudioBusBuffers bus{}; bus.numChannels = p.channels; bus.channelBuffers32 = buffers;
     ProcessData data{};
@@ -488,12 +527,13 @@ void Vst3::render(float* l, float* r, uint32_t frames) noexcept {
     p.events.clear(); p.output_events.clear(); p.input.clear(); p.output.clear();
     p.context.projectTimeSamples += frames;
     p.context.continousTimeSamples += frames;
+    p.context.projectTimeMusic += frames * p.context.tempo / (60.0 * p.context.sampleRate);
 }
 bool Vst3::failed() const noexcept { return impl_->failed_; }
 uint32_t Vst3::latency() const noexcept { return impl_->latency_; }
 void Vst3::transport(double seconds, double bpm, bool playing, double quarters, uint64_t continuous) noexcept {
     auto& c = impl_->context;
-    c.state = ProcessContext::kTempoValid | ProcessContext::kContTimeValid |
+    c.state = ProcessContext::kTempoValid | ProcessContext::kContTimeValid | ProcessContext::kProjectTimeMusicValid |
         (playing ? ProcessContext::kPlaying : 0);
     c.sampleRate = impl_->rate; c.projectTimeSamples = static_cast<int64>(seconds * impl_->rate);
     c.projectTimeMusic = quarters;
@@ -593,7 +633,7 @@ bool Vst3::pump() {
             check(p.processor->setBusArrangements(nullptr,0,&arrangement,1) == kResultOk,"reconfigured arrangement rejected");
             check(p.component->activateBus(kAudio,kOutput,0,true) == kResultOk,"reconfigured bus activation failed");
         }
-        ProcessSetup setup{kRealtime,kSample32,static_cast<int32>(p.capacity),static_cast<double>(p.rate)};
+        ProcessSetup setup{kRealtime,kSample32,static_cast<int32>(std::min(p.capacity,process_quantum)),static_cast<double>(p.rate)};
         check(p.processor->setupProcessing(setup) == kResultOk,"plugin reprepare failed");
         check(p.component->setActive(true) == kResultOk,"plugin reactivation failed"); p.active = true;
         auto result = p.processor->setProcessing(true);
@@ -608,6 +648,7 @@ bool Vst3::pump() {
 #else
 namespace rms {
 struct Vst3::Impl {};
+bool plugin_editor_callback_active() noexcept { return false; }
 Json plugin_capabilities() { return Json::array({"soundfont", "jack"}); }
 Json scan_plugin(const Json&) { unsupported(); }
 Vst3::Vst3(const Source&, uint32_t, uint32_t) { unsupported(); }

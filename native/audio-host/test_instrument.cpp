@@ -4,15 +4,19 @@
 #include "public.sdk/source/vst/vsteditcontroller.h"
 #include "public.sdk/source/main/pluginfactory.h"
 #include "pluginterfaces/base/ibstream.h"
+#include "pluginterfaces/base/funknownimpl.h"
+#include "pluginterfaces/gui/iplugview.h"
 #include "pluginterfaces/vst/ivstevents.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
 #include "pluginterfaces/vst/ivstprocesscontext.h"
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <unistd.h>
 #ifdef RMS_X11
 #include <X11/Xlib.h>
@@ -69,6 +73,9 @@ class Processor final : public AudioEffect {
     std::array<float,32> delay{};
     uint32 latency_frames = delay_frames;
     size_t cursor = 0;
+    bool chunk_checks = std::getenv("RMS_TEST_PLUGIN_CHUNK_CHECKS") != nullptr;
+    int64 expected_samples = 0;
+    double expected_quarters = 0;
     void apply(ParamID id, double value) {
         if (id == 7) level = value;
         if (id == 8) { latency_frames = value >= .5 ? 32 : 16; delay.fill(0); cursor = 0; }
@@ -80,7 +87,7 @@ public:
         auto result = AudioEffect::initialize(context);
         if (result != kResultOk) return result;
         addEventInput(STR16("Notes"),1);
-        addAudioOutput(STR16("Output"),SpeakerArr::kStereo);
+        addAudioOutput(STR16("Output"),std::getenv("RMS_TEST_PLUGIN_MONO") ? SpeakerArr::kMono : SpeakerArr::kStereo);
         return kResultOk;
     }
     uint32 PLUGIN_API getLatencySamples() override { return latency_frames; }
@@ -90,11 +97,24 @@ public:
         level = value; return kResultOk;
     }
     tresult PLUGIN_API getState(IBStream* s) override { return write_value(s,level); }
+    tresult PLUGIN_API setupProcessing(ProcessSetup& setup) override {
+        // A valid instrument may reject host scratch-sized processing blocks.
+        if (setup.maxSamplesPerBlock > 1024) return kResultFalse;
+        return AudioEffect::setupProcessing(setup);
+    }
     tresult PLUGIN_API setProcessing(TBool state) override {
         (void)state; notes.fill(0); delay.fill(0); cursor = 0; return kResultOk;
     }
     tresult PLUGIN_API process(ProcessData& d) override {
         if (d.symbolicSampleSize != kSample32) return kResultFalse;
+        if (d.numSamples > processSetup.maxSamplesPerBlock) return kResultFalse;
+        if (chunk_checks && d.processContext) {
+            const auto& c = *d.processContext;
+            if (c.projectTimeSamples != expected_samples || c.continousTimeSamples != expected_samples ||
+                std::abs(c.projectTimeMusic-expected_quarters)>1e-9) return kResultFalse;
+            expected_samples += d.numSamples;
+            expected_quarters += d.numSamples*c.tempo/(60*c.sampleRate);
+        }
         if (d.processContext && (d.processContext->state & ProcessContext::kTimeSigValid))
             return kResultFalse; // Fixture plans have no recognized time signature.
         if (d.numSamples == 0 && d.inputParameterChanges) {
@@ -121,8 +141,10 @@ public:
                 Event e{};
                 if (d.inputEvents->getEvent(event_index,e) != kResultOk) return kResultFalse;
                 if (e.sampleOffset > i) break;
-                if (e.type == Event::kNoteOnEvent && e.noteOn.pitch >= 0 && e.noteOn.pitch < 128)
+                if (e.type == Event::kNoteOnEvent && e.noteOn.pitch >= 0 && e.noteOn.pitch < 128) {
+                    if (chunk_checks && notes[e.noteOn.pitch] != 0) return kResultFalse;
                     notes[e.noteOn.pitch] = e.noteOn.velocity;
+                }
                 if (e.type == Event::kNoteOffEvent && e.noteOff.pitch >= 0 && e.noteOff.pitch < 128)
                     notes[e.noteOff.pitch] = 0;
                 ++event_index;
@@ -138,9 +160,22 @@ public:
     }
 };
 #ifdef RMS_X11
+class ModalTimer final : public U::Implements<U::Directly<Linux::ITimerHandler>> {
+    unsigned long milliseconds_;
+    bool fired_ = false;
+public:
+    explicit ModalTimer(unsigned long milliseconds) : milliseconds_(milliseconds) {}
+    void PLUGIN_API onTimer() override {
+        if (fired_) return;
+        fired_ = true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds_));
+    }
+};
 class FixtureView final : public EditorView {
     Display* display = nullptr;
     Window window = 0;
+    IPtr<Linux::IRunLoop> loop_;
+    IPtr<ModalTimer> modal_timer_;
     void draw() {
         if (!display || !window) return;
         XClearWindow(display,window);
@@ -164,9 +199,24 @@ public:
         display = XOpenDisplay(nullptr); if (!display) return kResultFalse;
         window = XCreateSimpleWindow(display,reinterpret_cast<Window>(parent),0,0,480,160,0,0,0x203050);
         XMapWindow(display,window); XSync(display,False); draw();
+        if (const char* delay = std::getenv("RMS_TEST_PLUGIN_MODAL_MS")) {
+            char* end = nullptr;
+            auto milliseconds = std::strtoul(delay,&end,10);
+            if (!end || *end || milliseconds > 10000) return kInvalidArgument;
+            if (std::getenv("RMS_TEST_PLUGIN_MODAL_TIMER")) {
+                loop_ = U::cast<Linux::IRunLoop>(plugFrame);
+                if (!loop_) return kResultFalse;
+                modal_timer_ = owned(new ModalTimer(milliseconds));
+                if (loop_->registerTimer(modal_timer_,20) != kResultOk) return kResultFalse;
+            } else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
+            }
+        }
         return kResultOk;
     }
     tresult PLUGIN_API removed() override {
+        if (loop_ && modal_timer_) loop_->unregisterTimer(modal_timer_);
+        modal_timer_.reset(); loop_.reset();
         if (display) { if (window) XDestroyWindow(display,window); XCloseDisplay(display); }
         display = nullptr; window = 0; return kResultOk;
     }

@@ -78,6 +78,7 @@ jobs:
             --vst3-sdk "$PWD/target/vst3-sdk" \
             --build-dir target/audio-host-vst3
           target/audio-host-vst3/rms-audio-host --build-info
+          cmake --build target/audio-host-vst3 --target rms-sfizz-verify --parallel 2
       - name: Run native scheduler and protocol sanitizers
         run: |
           cmake -S native/audio-host -B target/audio-host-sanitize \

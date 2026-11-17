@@ -193,6 +193,7 @@ pub struct CheckpointPart {
 #[derive(Clone, Debug, Default)]
 pub struct View {
     pub busy: bool,
+    pub editor_busy: bool,
     pub capabilities: Vec<String>,
     pub dirty_parts: Vec<String>,
     pub parameters: BTreeMap<String, (u32, u32, Vec<Parameter>)>,

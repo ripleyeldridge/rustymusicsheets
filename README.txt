@@ -407,13 +407,16 @@ field's installed path. --skip-build reuses both binaries; verify their source
 first. Native packages retain build-host architecture/glibc requirements.
 
 To disable the preview, choose FluidSynth (legacy, default) and save preferences.
-To choose an instrument, open Music / OMR > Engine settings and expand
-"VST3 discovery / existing yabridge diagnostics". Probe helper capabilities
-and confirm vst3, then Add search folder / Browse / Scan selected roots.
-Use standard Linux roots fills existing conventional locations.
-In each part row, Browse for a Direct .vst3 bundle folder and Inspect this bundle,
-or select an instrument class from the scanned catalogue. Choose the exact
-vendor/path/class ID; two parts can use separate instances of the same plugin.
+To discover instruments, open application Settings (no score required), or
+Music / OMR > Engine settings, and expand "VST3 bundle discovery (shared by all
+parts)". Probe helper capabilities and confirm vst3. Browse the single Direct
+.vst3 bundle folder and Inspect this bundle, or Add search folder / Browse /
+Scan selected roots. Use standard Linux roots fills conventional locations.
+Scan each bundle once: every part's dropdown uses the shared catalogue, but
+browsing/scanning does not assign instruments or load playback. Retry this
+bundle explicitly retries quarantine. Each part retains its own selection,
+instance, gain and state, with selected bundle information shown read-only.
+Choose the exact vendor/path/class ID from each part's dropdown.
 Linux VST3 is a bundle DIRECTORY, normally with
 Contents/x86_64-linux/<bundle-name>.so. Windows originals, loose DLL/SO VST2,
 effects and wrong architectures are not directly loadable.
@@ -433,6 +436,25 @@ bus changes pause and reprepare alignment; unsupported layouts/full component
 reloads fail explicitly. Stop audio cancels a slow paused state operation,
 retaining the last valid checkpoint; unsaved edits may be lost.
 New metadata uses .audio-v2.json sidecars; original v1 mixes remain intact.
+
+SFZ instruments use an external native VST3 sampler such as sfizz, not the
+SF2/SF3 SoundFont field. Discover sfizz.vst3 once and select the stereo "sfizz"
+class, not "sfizz-multi". Load instruments paused, Open editor, and select the
+.sfz inside sfizz (or load a class-matching .vstpreset). Play at a low level,
+then pause/stop and Save plugin assignments and state. SFZ/sample/include paths
+remain external; keep their folder layout and licenses available on reload.
+Different parts can use independent sfizz instances and instruments.
+sfizz is separately acquired/built from official sources; normal app/helper
+builds do not download/install it. Official sfizz-ui 1.2.3 provides source for
+Linux. Bounded plugin process blocks avoid its oversized-block assertion.
+There is no additional built-in SFZ engine or vendor-specific state format.
+Rebuild/reopen both app and helper for modal file pickers. On X11, the
+negotiated editor_keepalive feature keeps a synchronous editor/file chooser
+from looking like a dead host. Transport is held while its callback is busy.
+Finish/cancel the dialog, or Stop audio to cancel only the owned helper and
+retain the last saved checkpoint. New control/state operations are refused
+until it finishes. The five-second missing-heartbeat watchdog stays enabled,
+with a separate thirty-minute limit for continuous editor activity.
 
 For existing Windows VST3, use Read-only bridge diagnostics before Use existing
 yabridge wrappers / Scan selected roots. Browse to the yabridgectl executable,

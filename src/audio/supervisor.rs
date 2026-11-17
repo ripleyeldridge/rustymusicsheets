@@ -34,6 +34,42 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const LOAD_TIMEOUT: Duration = Duration::from_secs(120);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
+const EDITOR_CALLBACK_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+
+#[derive(Default)]
+struct EditorWait {
+    since: Option<Instant>,
+}
+
+impl EditorWait {
+    fn keepalive(&mut self, now: Instant) -> Result<()> {
+        let since = *self.since.get_or_insert(now);
+        ensure!(
+            now.saturating_duration_since(since) < EDITOR_CALLBACK_TIMEOUT,
+            "Plugin editor exceeded its 30-minute limit; cancel the dialog and reload the instruments"
+        );
+        Ok(())
+    }
+
+    fn finish(
+        &mut self,
+        now: Instant,
+        outstanding: &mut VecDeque<(u64, u64, Instant)>,
+    ) -> Result<()> {
+        if self.since.is_some() {
+            self.keepalive(now)?;
+        }
+        if let Some(since) = self.since.take() {
+            let paused = now.saturating_duration_since(since);
+            for (_, _, started) in outstanding {
+                *started = started
+                    .checked_add(paused)
+                    .context("Editor wait duration overflow")?;
+            }
+        }
+        Ok(())
+    }
+}
 
 pub(crate) struct Session {
     pub audio: super::Settings,
@@ -60,6 +96,9 @@ struct Reply {
 enum Payload {
     Hello {
         capabilities: Vec<String>,
+    },
+    EditorKeepalive {
+        editor_busy: bool,
     },
     Status(Status),
     Error {
@@ -268,7 +307,12 @@ pub(crate) fn run(
         );
         std::thread::sleep(Duration::from_millis(10));
     };
-    connection.queue(&envelope(json!({"type":"hello"}), &token, 0, 0))?;
+    connection.queue(&envelope(
+        json!({"type":"hello","client_capabilities":["editor_keepalive"]}),
+        &token,
+        0,
+        0,
+    ))?;
     let mut ready = false;
     let mut loaded = false;
     let mut request_id = 0u64;
@@ -281,6 +325,7 @@ pub(crate) fn run(
     let mut checkpoint: Option<(u64, tempfile::TempDir, PathBuf)> = None;
     let mut plugin_view = super::plugins::View::default();
     let mut transport_state = State::Starting;
+    let mut editor_wait = EditorWait::default();
     let expected_duration = session.plan.seconds_at(session.plan.duration_ticks);
     loop {
         if cancelled.load(Ordering::Relaxed) {
@@ -311,7 +356,10 @@ pub(crate) fn run(
             );
             let operation_reply = !matches!(
                 &reply.payload,
-                Payload::Hello { .. } | Payload::Status(_) | Payload::Error { .. }
+                Payload::Hello { .. }
+                    | Payload::EditorKeepalive { .. }
+                    | Payload::Status(_)
+                    | Payload::Error { .. }
             );
             if operation_reply {
                 let expected = outstanding
@@ -353,6 +401,12 @@ pub(crate) fn run(
                                             .as_f64()
                                             .context("Invalid acknowledged parameter")?;
                                     }
+                                }
+                            }
+                            if request["type"] == "preset_load" || request["type"] == "editor_close"
+                            {
+                                if let Some(part) = request["part_id"].as_str() {
+                                    plugin_view.parameters.remove(part);
                                 }
                             }
                         }
@@ -476,11 +530,32 @@ pub(crate) fn run(
                         }
                     }
                 }
+                Payload::EditorKeepalive { editor_busy } => {
+                    ensure!(
+                        ready
+                            && loaded
+                            && has_plugins
+                            && plugin_view
+                                .capabilities
+                                .iter()
+                                .any(|cap| cap == "editor_keepalive")
+                            && editor_busy
+                            && reply.request_id == 0
+                            && reply.epoch == 0,
+                        "Invalid or unnegotiated editor keepalive"
+                    );
+                    let now = Instant::now();
+                    editor_wait.keepalive(now)?;
+                    plugin_view.editor_busy = true;
+                    heartbeat = now;
+                }
                 Payload::Status(status) => {
                     ensure!(
                         ready && reply.request_id >= 1,
                         "Status before audio-host load"
                     );
+                    editor_wait.finish(Instant::now(), &mut outstanding)?;
+                    plugin_view.editor_busy = false;
                     ensure!(
                         reply.request_id >= applied,
                         "Audio host command acknowledgement moved backwards"
@@ -572,15 +647,20 @@ pub(crate) fn run(
                     },
                 "Audio host heartbeat stopped; playback was terminated"
             );
+            if editor_wait.since.is_some() {
+                editor_wait.keepalive(Instant::now())?;
+            }
             ensure!(
-                outstanding.front().is_none_or(|(id, _, at)| at.elapsed()
-                    < if pending
-                        .get(id)
-                        .is_some_and(|p| p["type"] == "checkpoint" || p["type"] == "preset_load")
-                    {
-                        Duration::from_secs(60)
-                    } else {
-                        COMMAND_TIMEOUT
+                editor_wait.since.is_some()
+                    || outstanding.front().is_none_or(|(id, _, at)| {
+                        at.elapsed()
+                            < if pending.get(id).is_some_and(|p| {
+                                p["type"] == "checkpoint" || p["type"] == "preset_load"
+                            }) {
+                                Duration::from_secs(60)
+                            } else {
+                                COMMAND_TIMEOUT
+                            }
                     }),
                 "Audio host did not apply a transport command"
             );
@@ -591,9 +671,12 @@ pub(crate) fn run(
                 let Ok(command) = commands.try_recv() else {
                     break;
                 };
-                if checkpoint.is_some() || pending.values().any(|p| p["type"] == "preset_load") {
+                if editor_wait.since.is_some()
+                    || checkpoint.is_some()
+                    || pending.values().any(|p| p["type"] == "preset_load")
+                {
                     plugin_view.operation_error = Some(
-                        "Wait for the paused plugin operation to finish, or cancel playback".into(),
+                        "Finish the plugin editor/dialog or paused state operation, or use Stop audio to cancel".into(),
                     );
                     continue;
                 }
@@ -648,8 +731,9 @@ pub(crate) fn run(
                 "Audio host handshake or SoundFont load timed out"
             );
         }
-        plugin_view.busy =
-            checkpoint.is_some() || pending.values().any(|p| p["type"] == "preset_load");
+        plugin_view.busy = editor_wait.since.is_some()
+            || checkpoint.is_some()
+            || pending.values().any(|p| p["type"] == "preset_load");
         view.lock().unwrap_or_else(|e| e.into_inner()).plugins = plugin_view.clone();
         std::thread::sleep(Duration::from_millis(5));
     }

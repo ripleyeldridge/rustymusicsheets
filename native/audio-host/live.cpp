@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <csignal>
+#include <condition_variable>
 #include <limits>
 #include <stdexcept>
 #include <thread>
@@ -18,6 +19,43 @@ namespace {
 volatile std::sig_atomic_t interrupted = 0;
 void interrupt(int) { interrupted = 1; }
 void quiet_fluid(int, const char*, void*) {}
+class EditorKeepalive {
+    Wire& wire_;
+    const Envelope identity_;
+    std::atomic<bool> stopping_{false}, failed_{false};
+    std::mutex mutex_;
+    std::condition_variable wakeup_;
+    std::thread worker_;
+public:
+    EditorKeepalive(Wire& wire, const Envelope& identity, bool enabled)
+        : wire_(wire), identity_(identity) {
+        if (enabled) worker_ = std::thread([this] {
+            try {
+                for (;;) {
+                    std::unique_lock<std::mutex> lock(mutex_);
+                    if (wakeup_.wait_for(lock,std::chrono::milliseconds(250),[this] { return stopping_.load(); }))
+                        return;
+                    lock.unlock();
+                    if (plugin_editor_callback_active()) {
+                        auto message = identity_.message("editor_keepalive");
+                        message["editor_busy"] = true;
+                        wire_.send(message); // Serialized with normal main-thread frames.
+                    }
+                }
+            } catch (const std::exception&) {
+                failed_.store(true);
+            }
+        });
+    }
+    ~EditorKeepalive() {
+        stopping_.store(true);
+        wakeup_.notify_all();
+        if (worker_.joinable()) worker_.join();
+    }
+    bool failed() const noexcept { return failed_.load(); }
+    EditorKeepalive(const EditorKeepalive&) = delete;
+    EditorKeepalive& operator=(const EditorKeepalive&) = delete;
+};
 }
 Json Live::operation(const std::string& type, const Json& j) {
     // Control operations always own a quiescent graph; errors release the gate.
@@ -385,8 +423,15 @@ int serve(const std::string& path, pid_t parent, const std::string& mode) {
         auto hello = envelope.message("hello");
         hello["capabilities"] = plugin_capabilities();
         wire.send(hello);
+        const auto& capabilities = hello["capabilities"];
+        bool editor_keepalive = mode == "serve" && envelope.editor_keepalive &&
+            std::find(capabilities.begin(),capabilities.end(),Json("editor_keepalive")) != capabilities.end();
+        // The immutable hello identity has request/epoch zero. These frames
+        // attest only to an active UI callback and never acknowledge commands.
+        EditorKeepalive keepalive(wire,envelope,editor_keepalive);
         auto next_status = std::chrono::steady_clock::now();
         while (!interrupted && getppid() == parent) {
+            if (keepalive.failed()) throw std::runtime_error("editor keepalive socket failed");
             if (wire.receive(message, 10)) {
                 Envelope next = envelope;
                 std::string type = next.command(message);

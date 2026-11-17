@@ -241,6 +241,18 @@ void Envelope::hello(const Json& j) {
     if (text(j, "type", 32) != "hello" || integer(j, "request_id") || integer(j, "epoch"))
         fail("expected initial hello at request/epoch zero");
     session = text(j, "session", 64);
+    editor_keepalive = false;
+    if (j.contains("client_capabilities")) {
+        const auto& capabilities = j.at("client_capabilities");
+        if (!capabilities.is_array() || capabilities.size() > 32) fail("invalid client capabilities");
+        for (const auto& capability : capabilities) {
+            if (!capability.is_string()) fail("invalid client capability");
+            auto value = capability.get<std::string>();
+            if (value.empty() || value.size() > 128 || value.find('\0') != std::string::npos)
+                fail("invalid client capability");
+            if (value == "editor_keepalive") editor_keepalive = true;
+        }
+    }
 }
 std::string Envelope::command(const Json& j) {
     envelope(j);
@@ -294,12 +306,17 @@ Wire::Wire(const std::string& path, pid_t parent) {
 }
 Wire::~Wire() { if (fd_ >= 0) close(fd_); }
 bool Wire::receive(Json& message, int timeout) {
-    if (partial_since_ && now_ms() - partial_since_ > 3000) fail("partial control frame timeout");
+    bool partial_expired = partial_since_ && now_ms() - partial_since_ > 3000;
     pollfd p{fd_, POLLIN, 0};
-    int ready = poll(&p, 1, timeout);
+    // An editor can block this reader while the parent has already supplied
+    // the rest of a frame. Drain available bytes before declaring it stalled.
+    int ready = poll(&p, 1, partial_expired ? 0 : timeout);
     if (ready < 0 && errno == EINTR) return false;
     if (ready < 0 || (p.revents & (POLLERR | POLLNVAL))) fail("control socket poll failed");
-    if (!ready) return false;
+    if (!ready) {
+        if (partial_expired) fail("partial control frame timeout");
+        return false;
+    }
     std::array<uint8_t, 16384> buffer{};
     // Read only one frame, avoiding a peer flooding unbounded queued input.
     size_t remaining = input_.size() < 4 ? 4 - input_.size() : wanted_ + 4 - input_.size();
@@ -323,6 +340,7 @@ bool Wire::receive(Json& message, int timeout) {
     return false;
 }
 void Wire::send(const Json& message) {
+    std::lock_guard<std::mutex> guard(output_mutex_);
     auto contents = message.dump();
     if (contents.empty() || contents.size() > max_frame) fail("outgoing frame exceeds bound");
     uint32_t n = static_cast<uint32_t>(contents.size());
