@@ -14,7 +14,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, BTreeSet, VecDeque},
     fs::{self, File},
     io::{ErrorKind, Read, Write},
     os::unix::{
@@ -58,9 +58,31 @@ struct Reply {
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Payload {
-    Hello { capabilities: Vec<String> },
+    Hello {
+        capabilities: Vec<String>,
+    },
     Status(Status),
-    Error { message: String },
+    Error {
+        message: String,
+    },
+    Ack {
+        operation: String,
+        part_id: Option<String>,
+    },
+    OperationError {
+        operation: String,
+        part_id: Option<String>,
+        message: String,
+    },
+    ParametersResult {
+        part_id: String,
+        total: u32,
+        offset: u32,
+        parameters: Vec<super::plugins::Parameter>,
+    },
+    CheckpointResult {
+        parts: Vec<super::plugins::CheckpointPart>,
+    },
 }
 
 #[derive(Deserialize)]
@@ -74,9 +96,10 @@ struct Status {
     sample_rate: u32,
     latency_frames: u64,
     xruns: u64,
+    dirty_parts: Vec<String>,
 }
 
-fn envelope(mut payload: Value, session: &str, request_id: u64, epoch: u64) -> Value {
+pub(super) fn envelope(mut payload: Value, session: &str, request_id: u64, epoch: u64) -> Value {
     payload["version"] = json!(VERSION);
     payload["session"] = json!(session);
     payload["request_id"] = json!(request_id);
@@ -84,7 +107,7 @@ fn envelope(mut payload: Value, session: &str, request_id: u64, epoch: u64) -> V
     payload
 }
 
-fn private_directory() -> Result<tempfile::TempDir> {
+pub(super) fn private_directory() -> Result<tempfile::TempDir> {
     let root = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);
@@ -100,7 +123,7 @@ fn private_directory() -> Result<tempfile::TempDir> {
     Ok(private)
 }
 
-fn executable(settings: &super::Settings) -> Result<PathBuf> {
+pub(super) fn executable(settings: &super::Settings) -> Result<PathBuf> {
     let path = if settings.host_executable.trim().is_empty() {
         PathBuf::from("/usr/libexec/rustymusicsheets/rms-audio-host")
     } else {
@@ -145,7 +168,33 @@ pub(crate) fn run(
     slot: Arc<Mutex<Option<u32>>>,
 ) -> Result<()> {
     let helper = executable(&session.audio)?;
-    let bank = soundfont(&session.settings.soundfont)?;
+    let sources: BTreeMap<_, _> = session
+        .plan
+        .parts
+        .iter()
+        .map(|p| (p.id.clone(), p.source.clone()))
+        .collect();
+    let has_plugins = sources.values().any(|s| s.is_plugin());
+    for source in sources.values() {
+        if let super::plugins::Source::Vst3 {
+            path,
+            module_sha256,
+            ..
+        } = source
+        {
+            super::yabridge::check_bundle(path, &session.audio.yabridge)?;
+            ensure!(
+                super::plugins::inspect_bundle(path)? == *module_sha256,
+                "Plugin module changed; scan and select the exact class again"
+            );
+        }
+    }
+    super::checkpoint::verify_restore(&sources)?;
+    let bank = if sources.values().any(|s| !s.is_plugin()) {
+        Some(soundfont(&session.settings.soundfont)?)
+    } else {
+        None
+    };
     let private = private_directory()?;
     let socket = private.path().join("control");
     let listener = UnixListener::bind(&socket)
@@ -171,8 +220,12 @@ pub(crate) fn run(
         .to_str()
         .context("Audio plan path must be representable as UTF-8")?;
     let bank_name = bank
-        .to_str()
-        .context("Resolved SoundFont path must be representable as UTF-8")?;
+        .as_ref()
+        .map(|b| {
+            b.to_str()
+                .context("Resolved SoundFont path must be representable as UTF-8")
+        })
+        .transpose()?;
     let token = format!(
         "{:x}",
         Sha256::digest(socket.as_os_str().as_encoded_bytes())
@@ -190,7 +243,7 @@ pub(crate) fn run(
         .arg(&socket)
         .arg("--parent-pid")
         .arg(std::process::id().to_string());
-    command.env_remove("WINEPREFIX");
+    super::yabridge::apply_environment(&mut command, &session.audio.yabridge)?;
     let mut registration = slot.lock().unwrap_or_else(|e| e.into_inner());
     if cancelled.load(Ordering::Relaxed) {
         return Ok(());
@@ -224,6 +277,10 @@ pub(crate) fn run(
     let mut applied_epoch = 0u64;
     let mut heartbeat = Instant::now();
     let mut outstanding: VecDeque<(u64, u64, Instant)> = VecDeque::new();
+    let mut pending: BTreeMap<u64, Value> = BTreeMap::new();
+    let mut checkpoint: Option<(u64, tempfile::TempDir, PathBuf)> = None;
+    let mut plugin_view = super::plugins::View::default();
+    let mut transport_state = State::Starting;
     let expected_duration = session.plan.seconds_at(session.plan.duration_ticks);
     loop {
         if cancelled.load(Ordering::Relaxed) {
@@ -252,6 +309,93 @@ pub(crate) fn run(
                 reply.request_id <= request_id && reply.epoch <= epoch,
                 "Audio host acknowledged an unknown command"
             );
+            let operation_reply = !matches!(
+                &reply.payload,
+                Payload::Hello { .. } | Payload::Status(_) | Payload::Error { .. }
+            );
+            if operation_reply {
+                let expected = outstanding
+                    .iter()
+                    .find(|(id, _, _)| *id == reply.request_id)
+                    .context("Audio host returned an untracked operation")?;
+                ensure!(
+                    reply.request_id >= applied && reply.epoch == expected.1,
+                    "Audio host acknowledged the wrong transport epoch"
+                );
+                let request = pending
+                    .get(&reply.request_id)
+                    .context("Missing operation request")?;
+                match &reply.payload {
+                    Payload::Ack { operation, part_id }
+                    | Payload::OperationError {
+                        operation, part_id, ..
+                    } => {
+                        ensure!(
+                            request["type"] == *operation
+                                && request.get("part_id").and_then(Value::as_str)
+                                    == part_id.as_deref(),
+                            "Operation reply identity mismatch"
+                        );
+                        if matches!(&reply.payload, Payload::Ack { .. }) {
+                            ensure!(
+                                request["type"] != "parameters" && request["type"] != "checkpoint",
+                                "Expected operation result, not ack"
+                            );
+                            if request["type"] == "parameter" {
+                                if let Some((_, _, parameters)) = request["part_id"]
+                                    .as_str()
+                                    .and_then(|id| plugin_view.parameters.get_mut(id))
+                                {
+                                    if let Some(parameter) = parameters.iter_mut().find(|p| {
+                                        Some(u64::from(p.id)) == request["param_id"].as_u64()
+                                    }) {
+                                        parameter.value = request["value"]
+                                            .as_f64()
+                                            .context("Invalid acknowledged parameter")?;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Payload::ParametersResult {
+                        part_id,
+                        total,
+                        offset,
+                        parameters,
+                    } => {
+                        ensure!(
+                            request["type"] == "parameters"
+                                && request["part_id"] == *part_id
+                                && request["offset"] == *offset,
+                            "Parameter reply identity mismatch"
+                        );
+                        ensure!(
+                            *total <= 4096
+                                && *offset <= *total
+                                && parameters.len() <= 128
+                                && *offset as usize + parameters.len() <= *total as usize,
+                            "Invalid parameter page"
+                        );
+                        let mut ids = BTreeSet::new();
+                        for parameter in parameters {
+                            parameter.validate()?;
+                            ensure!(ids.insert(parameter.id), "Duplicate parameter ID");
+                        }
+                    }
+                    Payload::CheckpointResult { .. } => ensure!(
+                        request["type"] == "checkpoint",
+                        "Unexpected checkpoint reply"
+                    ),
+                    _ => {}
+                }
+                applied = reply.request_id;
+                applied_epoch = reply.epoch;
+                while outstanding.front().is_some_and(|(id, _, _)| *id <= applied) {
+                    outstanding.pop_front();
+                }
+                pending.retain(|id, _| *id > applied);
+                heartbeat = Instant::now();
+            }
             match reply.payload {
                 Payload::Hello { capabilities } => {
                     ensure!(
@@ -267,8 +411,19 @@ pub(crate) fn run(
                             && capabilities.iter().any(|cap| cap == "jack"),
                         "Audio host lacks required SoundFont/JACK capabilities"
                     );
+                    if has_plugins {
+                        for required in ["vst3", "plugin_state", "parameters", "presets"] {
+                            ensure!(
+                                capabilities.iter().any(|c| c == required),
+                                "Audio host lacks {required}; rebuild with the pinned VST3 SDK"
+                            );
+                        }
+                    }
+                    plugin_view.capabilities = capabilities;
                     ready = true;
                     request_id = 1;
+                    pending.insert(1, json!({"type":"load"}));
+                    outstanding.push_back((1, 0, Instant::now()));
                     connection.queue(&envelope(json!({
                         "type":"load", "plan_path":plan_name, "plan_sha256":plan_sha256,
                         "plan_bytes":plan_bytes, "soundfont":bank_name, "autoplay":session.autoplay,
@@ -279,6 +434,48 @@ pub(crate) fn run(
                     "Audio host: {}",
                     message.chars().take(2048).collect::<String>()
                 ),
+                Payload::Ack { .. } => {}
+                Payload::OperationError { message, .. } => {
+                    plugin_view.operation_error = Some(message.chars().take(2048).collect());
+                    if checkpoint
+                        .as_ref()
+                        .is_some_and(|(id, _, _)| *id == reply.request_id)
+                    {
+                        checkpoint = None;
+                    }
+                }
+                Payload::ParametersResult {
+                    part_id,
+                    total,
+                    offset,
+                    parameters,
+                } => {
+                    plugin_view
+                        .parameters
+                        .insert(part_id, (total, offset, parameters));
+                    plugin_view.operation_error = None;
+                }
+                Payload::CheckpointResult { mut parts } => {
+                    let (id, staging, destination) =
+                        checkpoint.take().context("Unrequested checkpoint")?;
+                    ensure!(id == reply.request_id, "Checkpoint request mismatch");
+                    match super::checkpoint::persist(
+                        staging.path(),
+                        &destination,
+                        &sources,
+                        &mut parts,
+                    ) {
+                        Ok(()) => {
+                            plugin_view.checkpoint = Some((id, parts));
+                            plugin_view.operation_error = None;
+                        }
+                        Err(error) => {
+                            plugin_view.operation_error = Some(format!(
+                                "Checkpoint rejected; previous saved state retained: {error:#}"
+                            ))
+                        }
+                    }
+                }
                 Payload::Status(status) => {
                     ensure!(
                         ready && reply.request_id >= 1,
@@ -288,6 +485,19 @@ pub(crate) fn run(
                         reply.request_id >= applied,
                         "Audio host command acknowledgement moved backwards"
                     );
+                    ensure!(
+                        !pending.iter().any(|(id, request)| *id <= reply.request_id
+                            && (request["type"] == "parameters"
+                                || request["type"] == "checkpoint")),
+                        "Audio host acknowledged an operation before its required result"
+                    );
+                    if checkpoint.is_some() || pending.values().any(|p| p["type"] == "preset_load")
+                    {
+                        ensure!(
+                            status.state != "playing",
+                            "Plugin state operation resumed processing unexpectedly"
+                        );
+                    }
                     let expected_epoch = if reply.request_id == applied {
                         applied_epoch
                     } else if reply.request_id == 1 {
@@ -308,6 +518,7 @@ pub(crate) fn run(
                     while outstanding.front().is_some_and(|(id, _, _)| *id <= applied) {
                         outstanding.pop_front();
                     }
+                    pending.retain(|id, _| *id > applied);
                     heartbeat = Instant::now();
                     loaded = true;
                     if reply.epoch != epoch {
@@ -315,6 +526,18 @@ pub(crate) fn run(
                     }
                     let state =
                         validate_status(&status, expected_duration, session.plan.duration_ticks)?;
+                    ensure!(
+                        status.dirty_parts.len() <= 32
+                            && status
+                                .dirty_parts
+                                .iter()
+                                .all(|id| sources.get(id).is_some_and(|s| s.is_plugin()))
+                            && status.dirty_parts.iter().collect::<BTreeSet<_>>().len()
+                                == status.dirty_parts.len(),
+                        "Invalid dirty plugin parts"
+                    );
+                    plugin_view.dirty_parts = status.dirty_parts;
+                    transport_state = state;
                     let source_page = session
                         .pages
                         .as_ref()
@@ -332,19 +555,33 @@ pub(crate) fn run(
                             latency_frames: status.latency_frames,
                             xruns: status.xruns,
                         }),
+                        plugins: plugin_view.clone(),
                     };
                 }
             }
         }
         if loaded {
             ensure!(
-                heartbeat.elapsed() < HEARTBEAT_TIMEOUT,
+                heartbeat.elapsed()
+                    < if checkpoint.is_some()
+                        || pending.values().any(|p| p["type"] == "preset_load")
+                    {
+                        Duration::from_secs(60)
+                    } else {
+                        HEARTBEAT_TIMEOUT
+                    },
                 "Audio host heartbeat stopped; playback was terminated"
             );
             ensure!(
-                outstanding
-                    .front()
-                    .is_none_or(|(_, _, at)| at.elapsed() < COMMAND_TIMEOUT),
+                outstanding.front().is_none_or(|(id, _, at)| at.elapsed()
+                    < if pending
+                        .get(id)
+                        .is_some_and(|p| p["type"] == "checkpoint" || p["type"] == "preset_load")
+                    {
+                        Duration::from_secs(60)
+                    } else {
+                        COMMAND_TIMEOUT
+                    }),
                 "Audio host did not apply a transport command"
             );
             for _ in 0..128 {
@@ -354,7 +591,30 @@ pub(crate) fn run(
                 let Ok(command) = commands.try_recv() else {
                     break;
                 };
+                if checkpoint.is_some() || pending.values().any(|p| p["type"] == "preset_load") {
+                    plugin_view.operation_error = Some(
+                        "Wait for the paused plugin operation to finish, or cancel playback".into(),
+                    );
+                    continue;
+                }
                 let (payload, advances_epoch) = match command {
+                    Command::Plugin(request) => {
+                        match plugin_request(
+                            request,
+                            &sources,
+                            &plugin_view.capabilities,
+                            transport_state,
+                            private.path(),
+                            request_id + 1,
+                            &mut checkpoint,
+                        ) {
+                            Ok(payload) => (payload, false),
+                            Err(error) => {
+                                plugin_view.operation_error = Some(format!("{error:#}"));
+                                continue;
+                            }
+                        }
+                    }
                     Command::Play => (json!({"type":"play"}), true),
                     Command::Pause => (json!({"type":"pause"}), true),
                     Command::Stop => (json!({"type":"stop"}), true),
@@ -378,7 +638,8 @@ pub(crate) fn run(
                 if advances_epoch {
                     epoch += 1;
                 }
-                connection.queue(&envelope(payload, &token, request_id, epoch))?;
+                connection.queue(&envelope(payload.clone(), &token, request_id, epoch))?;
+                pending.insert(request_id, payload);
                 outstanding.push_back((request_id, epoch, Instant::now()));
             }
         } else {
@@ -387,8 +648,105 @@ pub(crate) fn run(
                 "Audio host handshake or SoundFont load timed out"
             );
         }
+        plugin_view.busy =
+            checkpoint.is_some() || pending.values().any(|p| p["type"] == "preset_load");
+        view.lock().unwrap_or_else(|e| e.into_inner()).plugins = plugin_view.clone();
         std::thread::sleep(Duration::from_millis(5));
     }
+}
+
+fn plugin_request(
+    request: super::plugins::Request,
+    sources: &BTreeMap<String, super::plugins::Source>,
+    capabilities: &[String],
+    state: State,
+    private: &std::path::Path,
+    id: u64,
+    checkpoint: &mut Option<(u64, tempfile::TempDir, PathBuf)>,
+) -> Result<Value> {
+    use super::plugins::{Request, Source};
+    let require = |cap: &str| -> Result<()> {
+        ensure!(
+            capabilities.iter().any(|c| c == cap),
+            "Audio host does not support {cap}"
+        );
+        Ok(())
+    };
+    let part = match &request {
+        Request::Gain { part_id, .. }
+        | Request::Parameters { part_id, .. }
+        | Request::Parameter { part_id, .. }
+        | Request::Editor { part_id, .. }
+        | Request::Preset { part_id, .. } => Some(part_id),
+        Request::Checkpoint { .. } => None,
+    };
+    if let Some(part) = part {
+        ensure!(
+            sources.get(part).is_some_and(Source::is_plugin),
+            "Not a VST3 part"
+        );
+    }
+    Ok(match request {
+        Request::Gain { part_id, gain } => {
+            require("vst3")?;
+            ensure!(
+                gain.is_finite() && (0.0..=1.0).contains(&gain),
+                "Invalid gain"
+            );
+            json!({"type":"gain","part_id":part_id,"gain":gain})
+        }
+        Request::Parameters { part_id, offset } => {
+            require("parameters")?;
+            ensure!(offset <= 4096, "Parameter offset exceeds limit");
+            json!({"type":"parameters","part_id":part_id,"offset":offset,"limit":128})
+        }
+        Request::Parameter {
+            part_id,
+            param_id,
+            value,
+        } => {
+            require("parameters")?;
+            ensure!(
+                value.is_finite() && (0.0..=1.0).contains(&value),
+                "Invalid parameter value"
+            );
+            json!({"type":"parameter","part_id":part_id,"param_id":param_id,"value":value})
+        }
+        Request::Editor { part_id, open } => {
+            require("editor_x11")?;
+            json!({"type":if open {"editor_open"} else {"editor_close"},"part_id":part_id})
+        }
+        Request::Preset { part_id, path } => {
+            require("presets")?;
+            ensure!(
+                matches!(state, State::Paused | State::Stopped | State::Finished),
+                "Pause or stop before loading a preset"
+            );
+            let Some(Source::Vst3 { class_id, .. }) = sources.get(&part_id) else {
+                unreachable!()
+            };
+            super::plugins::validate_preset(&path, class_id)?;
+            json!({"type":"preset_load","part_id":part_id,"path":path})
+        }
+        Request::Checkpoint { destination } => {
+            require("plugin_state")?;
+            ensure!(
+                matches!(state, State::Paused | State::Stopped | State::Finished),
+                "Pause or stop before saving plugin state"
+            );
+            ensure!(
+                destination.is_absolute(),
+                "State destination must be absolute"
+            );
+            let staging = tempfile::Builder::new()
+                .prefix("checkpoint-")
+                .tempdir_in(private)?;
+            fs::set_permissions(staging.path(), fs::Permissions::from_mode(0o700))?;
+            let value = json!({"type":"checkpoint","directory":staging.path()});
+            *checkpoint = Some((id, staging, destination));
+            value
+        }
+    })
 }
 
 fn validate_status(status: &Status, duration: f64, max_tick: u64) -> Result<State> {
@@ -434,4 +792,4 @@ impl Write for LimitedWriter<'_> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

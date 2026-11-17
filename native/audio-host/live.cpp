@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <thread>
 #include <unistd.h>
+#include <sys/stat.h>
 
 namespace rms {
 static_assert(std::atomic<double>::is_always_lock_free, "callback telemetry must be lock-free");
@@ -17,6 +18,57 @@ namespace {
 volatile std::sig_atomic_t interrupted = 0;
 void interrupt(int) { interrupted = 1; }
 void quiet_fluid(int, const char*, void*) {}
+}
+Json Live::operation(const std::string& type, const Json& j) {
+    // Control operations always own a quiescent graph; errors release the gate.
+    quiesce();
+    control_hold_.store(true);
+    struct Resume { std::atomic<bool>& gate; ~Resume() { gate.store(false); } } resume{quiescent_};
+    if (type == "checkpoint") {
+        if (engine_->state() == State::playing) throw std::runtime_error("checkpoint requires paused/stopped playback");
+        auto directory = text(j, "directory", 4096);
+        absolute(directory);
+        struct stat st{};
+        if (lstat(directory.c_str(), &st) || !S_ISDIR(st.st_mode) || st.st_uid != getuid() || (st.st_mode & 0777) != 0700)
+            throw std::runtime_error("checkpoint directory must be owned private 0700 directory without final symlink");
+        Json parts = Json::array();
+        uint64_t total = 0;
+        auto descriptor = [](const StateFile& f) -> Json {
+            return {{"path",f.path},{"sha256",f.sha256},{"bytes",f.bytes}};
+        };
+        for (size_t i = 0; i < nodes_.size(); ++i) if (auto* plugin = dynamic_cast<Vst3*>(nodes_[i].get())) {
+            auto state = plugin->capture();
+            total += state.first.size() + state.second.size();
+            if (total > 256 * 1024 * 1024) throw std::runtime_error("checkpoint exceeds 256MiB");
+            std::string prefix = directory + "/part-" + std::to_string(i);
+            Json a = nullptr, b = nullptr;
+            if (!state.first.empty()) a = descriptor(write_private(prefix + "-component.bin", state.first));
+            if (!state.second.empty()) b = descriptor(write_private(prefix + "-controller.bin", state.second));
+            parts.push_back({{"part_id",plan_.parts[i].id},{"class_id",plan_.parts[i].source.class_id},
+                {"component_state",a},{"controller_state",b}});
+        }
+        for (auto& n : nodes_) if (auto* plugin = dynamic_cast<Vst3*>(n.get())) plugin->clean();
+        return {{"type","checkpoint_result"},{"parts",parts}};
+    }
+    auto id = text(j,"part_id",256);
+    auto found = std::find_if(plan_.parts.begin(),plan_.parts.end(),[&](const Part& p) { return p.id == id; });
+    if (found == plan_.parts.end()) throw std::runtime_error("unknown part_id");
+    size_t index = static_cast<size_t>(found - plan_.parts.begin());
+    auto* plugin = dynamic_cast<Vst3*>(nodes_[index].get());
+    if (!plugin) throw std::runtime_error("operation requires VST3 instrument source");
+    if (type == "gain") engine_->gain(index,number(j,"gain",0,1));
+    else if (type == "parameters") {
+        auto offset = integer(j,"offset",UINT32_MAX), limit = integer(j,"limit",128);
+        if (!limit) throw std::runtime_error("parameter limit must be 1..128");
+        auto result = plugin->parameters(static_cast<uint32_t>(offset),static_cast<uint32_t>(limit));
+        result["type"] = "parameters_result"; result["part_id"] = id; return result;
+    } else if (type == "parameter") plugin->parameter(static_cast<uint32_t>(integer(j,"param_id",UINT32_MAX)),number(j,"value",0,1));
+    else if (type == "preset_load") {
+        if (engine_->state() == State::playing) throw std::runtime_error("preset requires paused/stopped playback");
+        plugin->preset(text(j,"path",4096));
+    } else if (type == "editor_open" || type == "editor_close") plugin->editor(type == "editor_open","RustyMusicSheets — "+id);
+    else throw std::runtime_error("unsupported plugin operation");
+    return {{"type","ack"},{"operation",type},{"part_id",id}};
 }
 SoundFont::SoundFont(const std::string& path, uint32_t rate) {
     settings_ = new_fluid_settings();
@@ -99,8 +151,13 @@ Live::Live(Plan p, const std::string& soundfont, double master, double scale, bo
         std::string destination_l = ports[0], destination_r = ports[1];
         jack_free(ports);
         std::vector<Instrument*> instruments;
+        uint64_t state_bytes = 0;
         for (size_t i = 0; i < plan_.parts.size(); ++i) {
-            nodes_.push_back(std::make_unique<SoundFont>(soundfont, rate_));
+            const auto& s = plan_.parts[i].source;
+            state_bytes += s.component.bytes + s.controller.bytes;
+            if (state_bytes > 256 * 1024 * 1024) throw std::runtime_error("session state exceeds 256MiB");
+            if (s.vst3) nodes_.push_back(std::make_unique<Vst3>(s, rate_, capacity));
+            else nodes_.push_back(std::make_unique<SoundFont>(soundfont, rate_));
             instruments.push_back(nodes_.back().get());
         }
         engine_ = std::make_unique<Engine>(plan_, rate_, capacity, instruments);
@@ -120,7 +177,7 @@ Live::Live(Plan p, const std::string& soundfont, double master, double scale, bo
         jack_latency_range_t l{}, r{};
         jack_port_get_latency_range(left_, JackPlaybackLatency, &l);
         jack_port_get_latency_range(right_, JackPlaybackLatency, &r);
-        latency_.store(std::max(l.max, r.max));
+        latency_.store(std::max(l.max, r.max) + engine_->plugin_latency());
         if (latency_.load() > uint64_t(rate_) * 10)
             throw std::runtime_error("JACK downstream playback latency exceeds supported ten-second profile");
         control_hold_.store(true);
@@ -255,7 +312,7 @@ Json Live::status(const Envelope& envelope) {
     jack_latency_range_t l{}, r{};
     jack_port_get_latency_range(left_, JackPlaybackLatency, &l);
     jack_port_get_latency_range(right_, JackPlaybackLatency, &r);
-    latency_.store(std::max(l.max, r.max));
+    latency_.store(std::max(l.max, r.max) + engine_->plugin_latency());
     if (latency_.load() > uint64_t(rate_) * 10)
         throw std::runtime_error("JACK downstream playback latency exceeds supported ten-second profile");
     // All payload members remain atomic (a seqlock over plain C++ fields would
@@ -287,9 +344,31 @@ Json Live::status(const Envelope& envelope) {
     j["sample_rate"] = rate_;
     j["latency_frames"] = latency_.load();
     j["xruns"] = xruns_.load();
+    j["dirty_parts"] = Json::array();
+    quiesce();
+    control_hold_.store(true);
+    struct Resume { std::atomic<bool>& gate; ~Resume() { gate.store(false); } } resume{quiescent_};
+    bool reconfigured = false;
+    for (size_t i = 0; i < nodes_.size(); ++i)
+        if (auto* plugin = dynamic_cast<Vst3*>(nodes_[i].get())) {
+            reconfigured = plugin->pump() || reconfigured;
+            if (plugin->dirty()) j["dirty_parts"].push_back(plan_.parts[i].id);
+        }
+    if (reconfigured) {
+        try { engine_->rebuild_latency(); }
+        catch (...) { lost_.store(true); throw; }
+        latency_.store(std::max(l.max,r.max)+engine_->plugin_latency());
+        if (latency_.load() > uint64_t(rate_)*10) {
+            lost_.store(true); throw std::runtime_error("combined latency exceeds supported ten seconds");
+        }
+        publish();
+        j["state"] = state_name(engine_->state());
+        j["position"] = engine_->audible(); j["rendered_position"] = engine_->position();
+        j["score_tick"] = engine_->score_tick(); j["latency_frames"] = latency_.load();
+    }
     return j;
 }
-int serve(const std::string& path, pid_t parent) {
+int serve(const std::string& path, pid_t parent, const std::string& mode) {
     Wire wire(path, parent);
     Envelope envelope;
     std::unique_ptr<Live> live;
@@ -304,7 +383,7 @@ int serve(const std::string& path, pid_t parent) {
         }
         envelope.hello(message);
         auto hello = envelope.message("hello");
-        hello["capabilities"] = Json::array({"soundfont", "jack"});
+        hello["capabilities"] = plugin_capabilities();
         wire.send(hello);
         auto next_status = std::chrono::steady_clock::now();
         while (!interrupted && getppid() == parent) {
@@ -312,21 +391,50 @@ int serve(const std::string& path, pid_t parent) {
                 Envelope next = envelope;
                 std::string type = next.command(message);
                 if (type == "shutdown") { live.reset(); return 0; }
+                if (mode == "probe") throw std::runtime_error("probe accepts hello then shutdown only");
+                if (mode == "scan") {
+                    if (type != "scan" || next.request != 1) throw std::runtime_error("scan accepts one scan request only");
+                    Json reply = next.message("scan_result");
+                    try { reply.update(scan_plugin(message)); }
+                    catch (const std::exception& error) {
+                        reply = next.message("operation_error"); reply["operation"] = "scan";
+                        reply["part_id"] = nullptr; reply["message"] = std::string(error.what()).substr(0,1024);
+                    }
+                    wire.send(reply); envelope = next; continue;
+                }
+                bool operation = type == "gain" || type == "parameters" || type == "parameter" || type == "checkpoint" ||
+                    type == "preset_load" || type == "editor_open" || type == "editor_close";
+                if (operation) {
+                    Json reply;
+                    try {
+                        if (!live) throw std::runtime_error("load a playback graph first");
+                        reply = live->operation(type,message);
+                    } catch (const std::exception& error) {
+                        reply = {{"type","operation_error"},{"operation",type},{"part_id",message.value("part_id",Json(nullptr))},
+                            {"message",std::string(error.what()).substr(0,1024)}};
+                    }
+                    auto complete = next.message("ack"); complete.update(reply); wire.send(complete);
+                    envelope = next; continue;
+                }
                 if (!live) {
                     if (type != "load" || next.request != 1 || next.epoch != 0)
                         throw std::runtime_error("expected load at request one, epoch zero");
-                    auto soundfont = text(message, "soundfont", 4096);
-                    if (soundfont[0] != '/') throw std::runtime_error("SoundFont path must be absolute");
+                    std::string soundfont;
                     bool autoplay = boolean(message, "autoplay");
                     double master = number(message, "master_volume", 0, 100);
                     double scale = number(message, "tempo_scale", 0.1, 4);
                     Plan plan = read_plan(message);
+                    if (std::any_of(plan.parts.begin(),plan.parts.end(),[](const Part& p) { return !p.source.vst3; })) {
+                        soundfont = text(message,"soundfont",4096); absolute(soundfont);
+                    }
                     live = std::make_unique<Live>(std::move(plan), soundfont, master, scale, autoplay);
                 } else {
                     if (type == "load") throw std::runtime_error("load already applied; start a new helper session");
                     live->apply(type, message);
                 }
                 envelope = std::move(next); // acknowledge only after safe graph application
+                auto ack = envelope.message("ack"); ack["operation"] = type;
+                ack["part_id"] = message.value("part_id",Json(nullptr)); wire.send(ack);
                 next_status = std::chrono::steady_clock::now();
             }
             auto now = std::chrono::steady_clock::now();

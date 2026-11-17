@@ -66,14 +66,31 @@ jobs:
       - name: Build optional native audio host and run no-audio tests
         run: |
           sudo apt-get install --yes --no-install-recommends \
-            cmake libjack-jackd2-dev libfluidsynth-dev libssl-dev
+            cmake libjack-jackd2-dev libfluidsynth-dev libssl-dev xvfb xauth
           python3 scripts/build-audio-host.py --test
+      - name: Acquire and verify pinned VST3 SDK explicitly
+        run: |
+          python3 scripts/fetch-vst3-sdk.py
+          python3 scripts/fetch-vst3-sdk.py --verify-only
+      - name: Build SDK-enabled host and exercise generated VST3 fixture
+        run: |
+          xvfb-run -a python3 scripts/build-audio-host.py --test \
+            --vst3-sdk "$PWD/target/vst3-sdk" \
+            --build-dir target/audio-host-vst3
+          target/audio-host-vst3/rms-audio-host --build-info
       - name: Run native scheduler and protocol sanitizers
         run: |
           cmake -S native/audio-host -B target/audio-host-sanitize \
             -DRMS_CORE_ONLY=ON -DRMS_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug
           cmake --build target/audio-host-sanitize --parallel 2
           ctest --test-dir target/audio-host-sanitize --output-on-failure
+      - name: Sanitize SDK-backed VST3 lifecycle and editor fixture
+        run: |
+          cmake -S native/audio-host -B target/audio-host-vst3-sanitize \
+            -DRMS_CORE_ONLY=ON -DRMS_SANITIZE=ON \
+            -DRMS_VST3_SDK="$PWD/target/vst3-sdk" -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          cmake --build target/audio-host-vst3-sanitize --parallel 2
+          xvfb-run -a ctest --test-dir target/audio-host-vst3-sanitize --output-on-failure
       - name: Run Clippy
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Build Linux release

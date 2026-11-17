@@ -119,6 +119,10 @@ pub struct MusicApp {
     auto_detection_pending: std::collections::HashSet<i64>,
     help: Help,
     music: Music,
+    #[cfg(target_os = "linux")]
+    closing_plugins: bool,
+    #[cfg(target_os = "linux")]
+    allow_close: bool,
 }
 
 impl MusicApp {
@@ -222,6 +226,10 @@ impl MusicApp {
             auto_detection_pending: std::collections::HashSet::new(),
             help: Help::default(),
             music: Music::default(),
+            #[cfg(target_os = "linux")]
+            closing_plugins: false,
+            #[cfg(target_os = "linux")]
+            allow_close: false,
         })
     }
 
@@ -1987,15 +1995,15 @@ impl MusicApp {
                 if let Some(field)=crate::music::settings_ui(ui, &mut self.prefs.music,self.picker.is_some()) {
                     self.music.browse_settings(field,&self.prefs.music);
                 }
-                if crate::music::audio_settings_ui(ui, &mut self.prefs.audio, self.picker.is_some()) {
-                    self.music.browse_audio_host(&self.prefs.audio);
+                if let Some(field) = crate::music::audio_settings_ui(ui, &mut self.prefs.audio, self.picker.is_some()) {
+                    self.music.browse_audio_setting(field, &self.prefs.audio);
                 }
                 ui.label("Open a score in Reader, then Music / OMR. Save preferences to retain engine settings.");
                 ui.separator();
                 ui.label(format!("Music folder: {}", self.paths.score_dir().display()));
                 ui.label(format!("Metadata: {}", self.paths.data.display()));
                 ui.label(format!("Version {} — PDF library / reader milestone.", env!("CARGO_PKG_VERSION")));
-                ui.label("Annotations, VST hosting, sync and full feature parity are not implemented yet.");
+                ui.label("Annotations, sync and full feature parity are not implemented yet.");
             });
     }
 
@@ -2281,6 +2289,31 @@ impl eframe::App for MusicApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.ime.prepare(ctx);
         self.poll(ctx);
+        #[cfg(target_os = "linux")]
+        if !self.allow_close {
+            if ctx.input(|i| i.viewport().close_requested()) && self.music.has_plugin_session() {
+                self.closing_plugins = true;
+                self.music.begin_shutdown();
+            }
+            if self.closing_plugins {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                egui::Window::new("Saving plugin state before closing").collapsible(false).show(ctx, |ui| {
+                    ui.label("Pausing and capturing plugin state asynchronously (up to 65 seconds). Last valid checkpoints remain safe if this fails.");
+                    if let Some(error) = self.music.shutdown_error() {
+                        ui.colored_label(Color32::LIGHT_RED, error);
+                        if ui.button("Keep the reader open").clicked() { self.closing_plugins = false; }
+                    }
+                    if ui.button("Close without waiting (unsaved changes may be lost)").clicked() {
+                        self.allow_close = true;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                });
+                if !self.music.shutdown_pending() && self.music.shutdown_error().is_none() {
+                    self.allow_close = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
         self.shortcuts(ctx);
         self.text_input_active = false;
         let dropped: Vec<_> = ctx.input(|i| {

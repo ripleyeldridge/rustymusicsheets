@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub(super) const VERSION: u32 = 1;
+pub(super) const VERSION: u32 = 2;
 pub(super) const MAX_MESSAGE: usize = 1024 * 1024;
 const MAX_PENDING: usize = 128;
 

@@ -30,6 +30,7 @@ pub struct Part {
     pub enabled: bool,
     pub volume: u8,
     pub program: u8,
+    pub source: super::plugins::Source,
     pub notes: Vec<Note>,
 }
 
@@ -43,6 +44,14 @@ pub struct Note {
 
 /// Validate the whole graph, including initially muted parts that can be enabled live.
 pub fn compile(score: &Composition, options: &MidiOptions) -> Result<Plan> {
+    compile_with_sources(score, options, &BTreeMap::new())
+}
+
+pub fn compile_with_sources(
+    score: &Composition,
+    options: &MidiOptions,
+    sources: &BTreeMap<String, super::plugins::Source>,
+) -> Result<Plan> {
     ensure!(
         !score.parts.is_empty() && score.parts.len() <= MAX_PARTS,
         "Audio host supports 1–32 parts"
@@ -57,6 +66,13 @@ pub fn compile(score: &Composition, options: &MidiOptions) -> Result<Plan> {
     );
     let ids: BTreeSet<_> = score.parts.iter().map(|part| part.id.as_str()).collect();
     ensure!(ids.len() == score.parts.len(), "Duplicate part IDs");
+    ensure!(
+        sources.len() <= MAX_PARTS && sources.keys().all(|id| ids.contains(id.as_str())),
+        "Unknown plugin part"
+    );
+    for source in sources.values() {
+        source.validate()?;
+    }
     ensure!(
         ids.iter()
             .all(|id| !id.is_empty() && id.len() <= 256 && !id.contains('\0')),
@@ -110,7 +126,7 @@ pub fn compile(score: &Composition, options: &MidiOptions) -> Result<Plan> {
         tempos.insert(tempo.tick, tempo.bpm);
     }
     let mut plan = Plan {
-        version: 1,
+        version: 2,
         ticks_per_quarter: TICKS_PER_QUARTER,
         duration_ticks: score.duration_ticks,
         tempos: tempos
@@ -171,6 +187,7 @@ pub fn compile(score: &Composition, options: &MidiOptions) -> Result<Plan> {
                 .is_none_or(|ids| ids.contains(&part.id)),
             volume: *options.volumes.get(&part.id).unwrap_or(&127),
             program,
+            source: sources.get(&part.id).cloned().unwrap_or_default(),
             notes,
         });
     }

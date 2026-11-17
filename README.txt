@@ -323,7 +323,7 @@ Playback interprets partwise MusicXML with chords, voices, multi-staff parts,
 rests, transposition, ties, tempo changes, basic repeats and first/second endings.
 Read warnings for fixed velocity and unsupported expression/pedal, grace notes,
 advanced navigation/nested repeats. There is no notation editor, microphone-based tracking,
-looping, metronome or VST host. Default GUI transport uses a background sequencer and
+looping or metronome. Default GUI transport uses a background sequencer and
 persistent external FluidSynth process. Other target OSes do not
 support the recognition/audio workflow yet.
 Audiveris is AGPLv3, FluidSynth LGPL, and SoundFonts have separate licenses;
@@ -331,13 +331,13 @@ these optional engines/data are not bundled or relicensed with the MIT app.
 
 Optional audio-host foundation (development preview)
 ---------------------------------------------------
-An opt-in C++ companion now provides supervised process isolation, bounded
-versioned Unix-socket control, a device-clock scheduler and stereo mixing of up
-to 32 independent SoundFont parts. VST3 loading, scanning, editors, plugin state,
-yabridge and Wine setup are NOT implemented in this stage.
+An opt-in C++ companion provides supervised process isolation, bounded
+versioned Unix-socket control and shared-clock stereo SoundFont/VST3 mixing.
+VST3 requires an SDK-enabled helper; the ordinary build is SoundFont-only.
+The initial native target is Linux x86_64 VST3 instruments, not VST2/effects.
 
 Ordinary Cargo and Android builds remain independent of native audio SDKs.
-The initial native target is Linux x86_64. No Wine, yabridge or VST3 SDK is needed.
+Native Linux VST3 needs no Wine/yabridge. SoundFont-only builds need no SDK.
 Complete the normal source-build setup above, including Rust >=1.86.
 The helper additionally needs CMake >=3.16, C++17, pkg-config and development
 packages for JACK, FluidSynth >=2.2 and OpenSSL. Ubuntu package example:
@@ -389,12 +389,64 @@ can delay actual note onset. Test before relying on the preview in performance.
 python3 scripts/build-deb.py --with-audio-host explicitly packages the helper,
 native runtime dependencies and notices. Default packages omit the helper.
 No Wine/yabridge installation, system Wine changes or release changes occur.
+For VST3, additionally use CMake >=3.25 and X11 development headers
+(libx11-dev on Ubuntu), then from the repository root:
+    python3 scripts/fetch-vst3-sdk.py
+    python3 scripts/fetch-vst3-sdk.py --verify-only
+    python3 scripts/build-audio-host.py --test --vst3-sdk "$PWD/target/vst3-sdk"
+    target/audio-host/rms-audio-host --build-info
+    cargo build --locked --release
+The official pinned MIT SDK/submodules are acquired only by this explicit
+command into ignored target/vst3-sdk/. Builds do not download it automatically.
+Rebuild app/helper together: this integration uses protocol v2, not M0's v1.
+VST3 packages add --vst3-sdk "$PWD/target/vst3-sdk" to --with-audio-host,
+including SDK license/provenance. Packaging checks features even with --skip-build.
 Building a .deb does not install it; install the explicitly chosen output with
 your normal package manager. A helper-enabled package uses the empty helper
 field's installed path. --skip-build reuses both binaries; verify their source
 first. Native packages retain build-host architecture/glibc requirements.
 
 To disable the preview, choose FluidSynth (legacy, default) and save preferences.
+To choose an instrument, open Music / OMR > Engine settings and expand
+"VST3 discovery / existing yabridge diagnostics". Probe helper capabilities
+and confirm vst3, then Add search folder / Browse / Scan selected roots.
+Use standard Linux roots fills existing conventional locations.
+In each part row, Browse for a Direct .vst3 bundle folder and Inspect this bundle,
+or select an instrument class from the scanned catalogue. Choose the exact
+vendor/path/class ID; two parts can use separate instances of the same plugin.
+Linux VST3 is a bundle DIRECTORY, normally with
+Contents/x86_64-linux/<bundle-name>.so. Windows originals, loose DLL/SO VST2,
+effects and wrong architectures are not directly loadable.
+
+Use Load instruments paused before editing. Open editor uses a separate X11
+window where supported; Generic parameters and class-matching .vstpreset
+loading remain available without a custom editor. Native Wayland embedding is
+not claimed. Plugin level is post-plugin gain; GM/CC7 controls are SoundFont-only.
+While paused/stopped, Save plugin assignments and state to preserve component
+and controller chunks for this score/MusicXML identity. Missing plugins do
+not silently fall back. Dirty state is indicated; external samples/licenses
+are not bundled. MIDI export retains GM choices, not plugin audio/state.
+Failed scans are quarantined; retry/rescan is explicit.
+Initial routing requires zero audio inputs and one mono/stereo main output;
+multi-output instruments are rejected rather than misrouted. Supported latency/
+bus changes pause and reprepare alignment; unsupported layouts/full component
+reloads fail explicitly. Stop audio cancels a slow paused state operation,
+retaining the last valid checkpoint; unsaved edits may be lost.
+New metadata uses .audio-v2.json sidecars; original v1 mixes remain intact.
+
+For existing Windows VST3, use Read-only bridge diagnostics before Use existing
+yabridge wrappers / Scan selected roots. Browse to the yabridgectl executable,
+generated Linux wrapper root (normally ~/.vst3/yabridge), and an existing Wine
+loader as needed. Vendor installation/activation and user-reviewed yabridge
+registration/sync must already be complete. Never register generated output
+as plugin source or recursively nest wrappers.
+Wine 9.22/10.x with yabridge <=5.1.1 is upstream-incompatible: the local
+Wine10.0/yabridge5.1.0 pair is blocked before wrapper scans/loads.
+Updating only to5.1.1 is not a fix. Choose a separately verified existing
+runtime/profile; no Wine/prefix changes, automatic sync or installs occur.
+WINELOADER is helper-scoped, no global WINEPREFIX override is used.
+Version preflight is not proof of plugin compatibility; real Windows audio,
+editor and state remain unverified here until a compatible profile is supplied.
 Backend changes stop playback; explicitly press Play to start the selected engine.
 For a muted real-helper check from the repository root:
     RMS_TEST_AUDIO_HOST="$PWD/target/audio-host/rms-audio-host" cargo test --locked --lib real_audio_host_muted_smoke -- --ignored --nocapture
@@ -415,6 +467,10 @@ Troubleshooting:
 - Header/library validation overrides are CMake-cached. Use a fresh --build-dir
   when changing FLUIDSYNTH_INCLUDE_DIR/FLUIDSYNTH_LIBRARY and browse to its helper.
   The package builder expects the default target/audio-host/ output.
+- If desktop launch stalls during graphics initialization, try the verified
+  X11 startup/close route from the source root:
+    env -u WAYLAND_DISPLAY WINIT_UNIX_BACKEND=x11 ./target/release/rustymusicsheets
+  This changes only that command's environment, not desktop/global settings.
 
 Standalone commands (do not open/change the library database):
     rustymusicsheets --omr SOURCE.pdf OUTPUT_DIR --audiveris /opt/audiveris/bin/Audiveris

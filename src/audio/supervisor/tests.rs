@@ -22,6 +22,220 @@ fn score() -> notation::Composition {
     score
 }
 
+pub(crate) fn plugin_session(
+    root: &std::path::Path,
+    mode: &str,
+) -> (
+    Transport,
+    BTreeMap<String, audio::plugins::Source>,
+    audio::Settings,
+) {
+    let (mut settings, audio) = fake(root, mode);
+    settings.soundfont = "/no-soundfont-required".into();
+    let bundle = audio::plugins::fixture(root, "Synth été.v1");
+    let hash = audio::plugins::inspect_bundle(&bundle).unwrap();
+    let mut composition = score();
+    let mut second = composition.parts[0].clone();
+    second.id = "P2".into();
+    second.staves = 2;
+    composition.parts.push(second);
+    let sources = ["P1", "P2"]
+        .map(|id| {
+            (
+                id.into(),
+                audio::plugins::Source::Vst3 {
+                    path: bundle.clone(),
+                    class_id: "A".repeat(32),
+                    module_sha256: hash.clone(),
+                    gain: 0.5,
+                    component_state: None,
+                    controller_state: None,
+                },
+            )
+        })
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+    let transport = Transport::start_with_sources(
+        settings,
+        audio.clone(),
+        composition,
+        MidiOptions::default(),
+        false,
+        0,
+        sources.clone(),
+    )
+    .unwrap();
+    (transport, sources, audio)
+}
+
+#[test]
+fn independent_plugin_state_survives_reload_with_parameters_gain_editors_and_presets() {
+    use audio::plugins::{Request, Source};
+    let root = tempfile::tempdir().unwrap();
+    let (transport, mut sources, audio) = plugin_session(root.path(), "normal");
+    wait(&transport, |s| s.state == State::Stopped);
+    transport
+        .plugin(Request::Parameters {
+            part_id: "P1".into(),
+            offset: 128,
+        })
+        .unwrap();
+    let page = wait(&transport, |s| s.plugins.parameters.contains_key("P1"));
+    assert_eq!(page.plugins.parameters["P1"].0, 129);
+    assert_eq!(page.plugins.parameters["P1"].2.len(), 1);
+    transport
+        .plugin(Request::Parameters {
+            part_id: "P1".into(),
+            offset: 0,
+        })
+        .unwrap();
+    wait(&transport, |s| s.plugins.parameters["P1"].1 == 0);
+    for (id, value) in [("P1", 0.2), ("P2", 0.8)] {
+        transport
+            .plugin(Request::Parameter {
+                part_id: id.into(),
+                param_id: 0,
+                value,
+            })
+            .unwrap();
+    }
+    wait(&transport, |s| s.plugins.dirty_parts.len() == 2);
+    wait(&transport, |s| s.plugins.parameters["P1"].2[0].value == 0.2);
+    for open in [true, false, true, false] {
+        transport
+            .plugin(Request::Editor {
+                part_id: "P1".into(),
+                open,
+            })
+            .unwrap();
+    }
+    transport
+        .plugin(Request::Gain {
+            part_id: "P2".into(),
+            gain: 0.3,
+        })
+        .unwrap();
+    let mut preset = [0u8; 48];
+    preset[..4].copy_from_slice(b"VST3");
+    preset[8..40].copy_from_slice("A".repeat(32).as_bytes());
+    let preset_path = root.path().join("Preset été.vstpreset");
+    fs::write(&preset_path, preset).unwrap();
+    transport
+        .plugin(Request::Preset {
+            part_id: "P1".into(),
+            path: preset_path,
+        })
+        .unwrap();
+    // Let preset ack complete before issuing the serialized quiescent checkpoint.
+    std::thread::sleep(Duration::from_millis(100));
+    transport
+        .plugin(Request::Checkpoint {
+            destination: root.path().join("persistent-state"),
+        })
+        .unwrap();
+    let saved = wait(&transport, |s| s.plugins.checkpoint.is_some());
+    for part in saved.plugins.checkpoint.unwrap().1 {
+        let Source::Vst3 {
+            component_state,
+            controller_state,
+            ..
+        } = sources.get_mut(&part.part_id).unwrap()
+        else {
+            unreachable!()
+        };
+        assert_ne!(part.component_state, part.controller_state);
+        *component_state = part.component_state;
+        *controller_state = part.controller_state;
+    }
+    drop(transport);
+    let mut composition = score();
+    let mut second = composition.parts[0].clone();
+    second.id = "P2".into();
+    composition.parts.push(second);
+    let reloaded = Transport::start_with_sources(
+        crate::omr::Settings::default(),
+        audio,
+        composition,
+        MidiOptions::default(),
+        false,
+        0,
+        sources,
+    )
+    .unwrap();
+    wait(&reloaded, |s| s.state == State::Stopped);
+    for (id, expected) in [("P1", 0.2), ("P2", 0.8)] {
+        reloaded
+            .plugin(Request::Parameters {
+                part_id: id.into(),
+                offset: 0,
+            })
+            .unwrap();
+        let snapshot = wait(&reloaded, |s| s.plugins.parameters.contains_key(id));
+        assert_eq!(snapshot.plugins.parameters[id].2[0].value, expected);
+    }
+}
+
+#[test]
+fn cancelling_a_busy_checkpoint_drops_only_its_owned_helper() {
+    use audio::plugins::Request;
+    let root = tempfile::tempdir().unwrap();
+    let (transport, _, _) = plugin_session(root.path(), "state_hang");
+    wait(&transport, |s| s.state == State::Stopped);
+    let destination = root.path().join("saved");
+    std::fs::create_dir(&destination).unwrap();
+    let previous = destination.join("previous.state");
+    std::fs::write(&previous, b"previous valid checkpoint").unwrap();
+    transport
+        .plugin(Request::Checkpoint { destination })
+        .unwrap();
+    wait(&transport, |s| s.plugins.busy);
+    let at = Instant::now();
+    drop(transport);
+    assert!(at.elapsed() < Duration::from_millis(200));
+    assert_eq!(
+        std::fs::read(previous).unwrap(),
+        b"previous valid checkpoint"
+    );
+}
+
+#[test]
+fn plugin_capabilities_result_order_and_untrusted_checkpoint_fail_safely() {
+    use audio::plugins::Request;
+    for mode in ["core", "result_order", "bad_parameters", "bad_checkpoint"] {
+        let root = tempfile::tempdir().unwrap();
+        let (transport, _, _) = plugin_session(root.path(), mode);
+        if mode == "core" {
+            assert!(wait(&transport, |s| s.state == State::Failed)
+                .error
+                .unwrap()
+                .contains("lacks vst3"));
+            continue;
+        }
+        wait(&transport, |s| s.state == State::Stopped);
+        if mode == "bad_checkpoint" {
+            transport
+                .plugin(Request::Checkpoint {
+                    destination: root.path().join("saved"),
+                })
+                .unwrap();
+            let snapshot = wait(&transport, |s| s.plugins.operation_error.is_some());
+            assert!(snapshot.plugins.checkpoint.is_none());
+            assert_eq!(snapshot.state, State::Stopped);
+            assert!(!root.path().join("saved").exists());
+        } else {
+            transport
+                .plugin(Request::Parameters {
+                    part_id: "P1".into(),
+                    offset: 0,
+                })
+                .unwrap();
+            assert!(wait(&transport, |s| s.state == State::Failed)
+                .error
+                .is_some());
+        }
+    }
+}
+
 #[test]
 #[ignore = "Requires RMS_TEST_AUDIO_HOST, a real SoundFont and a running PipeWire/JACK server; master stays muted"]
 fn real_audio_host_muted_smoke() {
@@ -37,6 +251,7 @@ fn real_audio_host_muted_smoke() {
             Backend::PipeWire
         },
         host_executable: helper,
+        ..Default::default()
     };
     let mut composition = score();
     let mut piano = composition.parts[0].clone();
@@ -88,7 +303,10 @@ fn real_audio_host_muted_smoke() {
     );
 }
 
-fn fake(root: &std::path::Path, mode: &str) -> (crate::omr::Settings, audio::Settings) {
+pub(in crate::audio) fn fake(
+    root: &std::path::Path,
+    mode: &str,
+) -> (crate::omr::Settings, audio::Settings) {
     let host = root.join("audio-host");
     let script = format!(
         "#!/usr/bin/python3\nMODE = {mode:?}\nLOG = {}\n",
@@ -96,7 +314,7 @@ fn fake(root: &std::path::Path, mode: &str) -> (crate::omr::Settings, audio::Set
     ) + r#"
 import hashlib, json, os, select, socket, stat, struct, sys, time
 args = dict(zip(sys.argv[2::2], sys.argv[3::2]))
-assert sys.argv[1] == 'serve'
+assert sys.argv[1] in ('serve','probe','scan')
 assert int(args['--parent-pid']) == os.getppid()
 s = socket.socket(socket.AF_UNIX)
 s.connect(args['--socket'])
@@ -117,12 +335,27 @@ hello = receive()
 session = hello['session']
 request, epoch = 0, 0
 def send(obj, old=False):
-    obj.update(version=2 if MODE=='version' else 1, session='bad' if MODE=='session' else session,
+    obj.update(version=1 if MODE=='version' else 2, session='bad' if MODE=='session' else session,
                request_id=request, epoch=epoch-1 if MODE=='bad_epoch' and request>1 else epoch)
     data = json.dumps(obj).encode()
     s.sendall(struct.pack('!I',len(data))+data)
-send(dict(type='hello',capabilities=['soundfont','jack']))
+caps = ['soundfont','jack'] if MODE=='core' else ['soundfont','jack','vst3','plugin_state','parameters','presets','editor_x11']
+send(dict(type='hello',capabilities=caps))
 if MODE in ('version','session'): time.sleep(20); sys.exit(0)
+if sys.argv[1]=='probe':
+    assert receive()['type']=='shutdown'
+    sys.exit(0)
+if sys.argv[1]=='scan':
+    scan=receive()
+    request=scan['request_id']
+    with open(LOG,'a') as log: log.write(json.dumps(scan)+'\n')
+    if MODE=='scan_crash': os._exit(7)
+    if MODE=='scan_hang': time.sleep(30); sys.exit(0)
+    classes=[dict(class_id='A'*32,name='Generated synth',vendor='Test',version='1'),dict(class_id='B'*32,name='Other class',vendor='Test',version='1')]
+    if MODE=='duplicate': classes.append(classes[0])
+    send(dict(type='scan_result',path=scan['path'],module_sha256=scan['module_sha256'],classes=classes))
+    assert receive()['type']=='shutdown'
+    sys.exit(0)
 load = receive()
 assert load['type']=='load'
 path = load['plan_path']
@@ -131,6 +364,16 @@ assert stat.S_IMODE(os.stat(path).st_mode)==0o600
 raw = open(path,'rb').read()
 assert len(raw)==load['plan_bytes'] and hashlib.sha256(raw).hexdigest()==load['plan_sha256']
 plan = json.loads(raw)
+assert plan['version']==2
+assert all('source' in p for p in plan['parts'])
+if all(p['source']['kind']=='vst3' for p in plan['parts']): assert load['soundfont'] is None
+values = {}
+for p in plan['parts']:
+    if p['source']['kind']=='vst3':
+        values[p['id']]=.5
+        statefile=p['source'].get('component_state')
+        if statefile: values[p['id']]=json.load(open(statefile['path']))['value']
+dirty=[]
 request = load['request_id']
 duration = 0.
 for index, tempo in enumerate(plan['tempos']):
@@ -143,10 +386,10 @@ state = 'playing' if load['autoplay'] else 'stopped'
 def status():
     send(dict(type='status',state=state,position=position,rendered_position=position,
               duration=duration,score_tick=int(position*1920),
-              tempo_scale=scale,sample_rate=48000,latency_frames=480,xruns=0))
+              tempo_scale=scale,sample_rate=48000,latency_frames=480,xruns=0,dirty_parts=dirty))
 status()
 with open(LOG,'a') as log:
-    log.write(json.dumps(dict(type='loaded',pid=os.getpid(),path=path,parts=len(plan['parts'])))+'\n')
+    log.write(json.dumps(dict(type='loaded',pid=os.getpid(),path=path,parts=len(plan['parts']),values=values))+'\n')
 if MODE=='heartbeat': time.sleep(30); sys.exit(0)
 while True:
     if not select.select([s],[],[],.02)[0]:
@@ -170,6 +413,37 @@ while True:
     elif kind=='seek': position=max(0.,min(duration,position+command['delta']*scale))
     elif kind=='tempo': scale=command['scale']
     elif kind=='shutdown': sys.exit(0)
+    elif kind=='parameters':
+        if MODE=='result_order': status()
+        offset=command['offset']
+        parameters=[dict(id=i,title='Parameter '+str(i),units='',value=values[command['part_id']],default_value=.5,step_count=0,flags=2 if i==1 else 0) for i in range(offset,min(129,offset+command['limit']))]
+        send(dict(type='parameters_result',part_id=command['part_id'],total=5000 if MODE=='bad_parameters' else 129,offset=offset,parameters=parameters))
+    elif kind=='parameter':
+        values[command['part_id']]=command['value']; dirty=list(values)
+        send(dict(type='ack',operation=kind,part_id=command['part_id']))
+    elif kind=='checkpoint':
+        assert state!='playing'
+        if MODE=='state_hang': time.sleep(30)
+        parts=[]
+        for i,p in enumerate(plan['parts']):
+            if p['source']['kind']!='vst3': continue
+            files=[]
+            for component in ('component','controller'):
+                path=os.path.join(command['directory'],str(i)+'.'+component)
+                raw=json.dumps(dict(value=values[p['id']],part=p['id'],chunk=component)).encode()
+                fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+                with os.fdopen(fd,'wb') as output: output.write(raw)
+                files.append(dict(path=path,sha256=hashlib.sha256(raw).hexdigest(),bytes=len(raw)))
+            parts.append(dict(part_id=p['id'],class_id=p['source']['class_id'],component_state=files[0],controller_state=files[1]))
+        if MODE=='bad_checkpoint': parts[0]['component_state']['sha256']='0'*64
+        send(dict(type='checkpoint_result',parts=parts))
+        dirty=[]
+    elif kind=='preset_load':
+        assert state!='playing'
+        dirty=list(values)
+        send(dict(type='ack',operation=kind,part_id=command['part_id']))
+    elif kind in ('editor_open','editor_close','gain'):
+        send(dict(type='ack',operation=kind,part_id=command['part_id']))
     elif kind not in ('master_volume','mix'): raise RuntimeError(kind)
     status()
 "#;
@@ -185,6 +459,7 @@ while True:
         audio::Settings {
             backend: Backend::Jack,
             host_executable: host.to_str().unwrap().into(),
+            ..Default::default()
         },
     )
 }
@@ -362,6 +637,7 @@ fn status_and_plan_writer_reject_unbounded_values() {
         sample_rate: 48000,
         latency_frames: 480,
         xruns: 0,
+        dirty_parts: Vec::new(),
     };
     assert_eq!(
         validate_status(&status, 10.0, 19200).unwrap(),

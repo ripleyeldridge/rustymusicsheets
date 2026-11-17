@@ -18,7 +18,16 @@ https://github.com/FluidSynth/fluidsynth
 https://openssl-library.org/
 https://github.com/nlohmann/json
 
-No VST3 SDK, yabridge, Wine, SoundFonts or third-party plugins are bundled.
+SDK-enabled builds statically link hosting utilities from official VST3 SDK
+v3.8.1_build_84 (Steinberg Media Technologies GmbH, MIT). The exact root and
+required submodule commits are recorded in native/vst3-sdk.lock.json. Optional
+Debian VST3 packages include the SDK LICENSE.txt and provenance beneath
+audio-host/vst3-sdk/. No SDK checkout or VSTGUI is redistributed. The host's
+X11 editor/runloop and generated test instrument are original implementations;
+per-file third-party notices must be retained if SDK example code is added.
+
+X11 editor support dynamically links the system X11 client library (MIT/X11).
+No yabridge, Wine, SoundFonts or third-party plugin binaries are bundled.
 Optional Debian packages include this notice, dependencies.json and the
 nlohmann license/provenance under /usr/share/doc/rustymusicsheets/audio-host/.
 Runtime shared libraries are provided separately by the distribution and

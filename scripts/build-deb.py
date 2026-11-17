@@ -4,6 +4,7 @@ import argparse
 import email.utils
 from datetime import datetime, timezone
 import gzip
+import json
 import os
 from pathlib import Path
 import re
@@ -39,14 +40,35 @@ def validate_native_binary(binary, arch):
         raise ValueError(f"binary {binary.name} does not match supported native architecture {arch}")
 
 
+def native_build_info(binary):
+    try:
+        text = subprocess.check_output([str(binary), "--build-info"], text=True, timeout=5)
+        if len(text) > 64 * 1024:
+            raise ValueError("native helper build metadata exceeds limit")
+        info = json.loads(text)
+        if info.get("protocol") != 2 or not isinstance(info.get("capabilities"), list):
+            raise ValueError("native helper protocol/build metadata is incompatible; rebuild it")
+        return info
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError, AttributeError) as error:
+        raise ValueError("cannot verify native helper build metadata; rebuild from this source") from error
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--skip-build", action="store_true",
                         help="package the existing native release executable")
     parser.add_argument("--revision", default="1", help="Debian package revision")
     parser.add_argument("--with-audio-host", action="store_true",
-                        help="explicitly build/package the optional Linux SoundFont audio-host preview")
+                        help="explicitly build/package the optional Linux audio-host preview")
+    parser.add_argument("--vst3-sdk", type=Path,
+                        help="verified pinned SDK source; requires --with-audio-host and packages VST3 notices")
     args = parser.parse_args()
+    if args.vst3_sdk and not args.with_audio_host:
+        parser.error("--vst3-sdk requires --with-audio-host")
+    if args.vst3_sdk:
+        args.vst3_sdk = args.vst3_sdk.expanduser().resolve()
+        run("python3", str(ROOT / "scripts/fetch-vst3-sdk.py"), "--verify-only",
+            "--destination", str(args.vst3_sdk), cwd=ROOT)
     if not re.fullmatch(r"[0-9][A-Za-z0-9.+~]*", args.revision):
         parser.error("revision must start with a digit and contain Debian version characters")
     for tool in ("cargo", "dpkg", "dpkg-deb", "dpkg-shlibdeps", "readelf", "strip"):
@@ -61,13 +83,24 @@ def main():
     if not args.skip_build:
         run("cargo", "build", "--locked", "--release", cwd=ROOT)
         if args.with_audio_host:
-            run("python3", str(ROOT / "scripts/build-audio-host.py"), "--test", cwd=ROOT)
+            native_command = ["python3", str(ROOT / "scripts/build-audio-host.py"), "--test"]
+            if args.vst3_sdk:
+                native_command.extend(["--vst3-sdk", str(args.vst3_sdk)])
+            run(*native_command, cwd=ROOT)
     binary = ROOT / "target/release" / PACKAGE
     helper = ROOT / "target/audio-host/rms-audio-host"
     try:
         validate_native_binary(binary, arch)
         if args.with_audio_host:
             validate_native_binary(helper, arch)
+            info = native_build_info(helper)
+            sdk_enabled = "vst3" in info["capabilities"]
+            if sdk_enabled != bool(args.vst3_sdk):
+                raise ValueError("helper VST3 capability differs from --vst3-sdk selection; rebuild or supply the matching SDK for notices")
+            if sdk_enabled:
+                lock = json.loads((ROOT / "native/vst3-sdk.lock.json").read_text())
+                if info.get("sdk_revision") != lock["commit"]:
+                    raise ValueError("helper SDK revision differs from pinned provenance")
     except ValueError as error:
         parser.error(str(error))
     epoch = int(os.environ.get("SOURCE_DATE_EPOCH", int(time.time())))
@@ -141,7 +174,6 @@ def main():
         man.parent.mkdir(parents=True)
         man.write_bytes(gzip.compress((ROOT / "assets/rustymusicsheets.1").read_bytes(), mtime=0))
         metadata = output("cargo", "metadata", "--locked", "--format-version=1", cwd=ROOT)
-        import json
         packages = json.loads(metadata)["packages"]
         notices = docs / "third-party-licenses"
         notices.mkdir()
@@ -163,6 +195,9 @@ def main():
                 install(ROOT / "native/audio-host" / name, native_docs / name)
             for name in ("LICENSE.MIT", "provenance.json"):
                 install(ROOT / "native/vendor/nlohmann" / name, native_docs / "nlohmann" / name)
+            if args.vst3_sdk:
+                install(args.vst3_sdk / "LICENSE.txt", native_docs / "vst3-sdk/LICENSE.txt")
+                install(ROOT / "native/vst3-sdk.lock.json", native_docs / "vst3-sdk/provenance.json")
         installed_kib = (sum(p.stat().st_size for p in stage.rglob("*") if p.is_file()) + 1023) // 1024
         control = stage / "DEBIAN"
         control.mkdir()

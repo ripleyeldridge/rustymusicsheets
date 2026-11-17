@@ -14,6 +14,7 @@ def main():
     parser.add_argument("--test", action="store_true", help="run deterministic CTest tests (no live audio)")
     parser.add_argument("--core-only", action="store_true", help="no JACK/FluidSynth headers or libraries required")
     parser.add_argument("--build-dir", type=Path, help="default: repository target/audio-host")
+    parser.add_argument("--vst3-sdk", type=Path, help="absolute pinned SDK directory; enables VST3")
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     build = (args.build_dir or root / "target" / "audio-host").resolve()
@@ -25,6 +26,12 @@ def main():
         "-DCMAKE_BUILD_TYPE=RelWithDebInfo", "-DBUILD_TESTING=ON",
         f"-DRMS_CORE_ONLY={'ON' if args.core_only else 'OFF'}",
     ]
+    if args.vst3_sdk:
+        if not args.vst3_sdk.is_absolute() or not args.vst3_sdk.is_dir():
+            parser.error("--vst3-sdk must name an existing absolute SDK directory")
+        command.append(f"-DRMS_VST3_SDK={args.vst3_sdk}")
+    else:
+        command.append("-DRMS_VST3_SDK=")
     # Optional validation-only overrides; normal builds use pkg-config.
     for key in ("FLUIDSYNTH_INCLUDE_DIR", "FLUIDSYNTH_LIBRARY"):
         if os.environ.get(key):

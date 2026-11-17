@@ -55,13 +55,14 @@ def run(binary, scenario, soundfont=None, pw_jack=False):
                         assert process.wait(timeout=5) == 1
                         return
                     session = "c" * 64
-                    message = {"version": 1, "session": session, "request_id": 0, "epoch": 0, "type": "hello"}
+                    message = {"version": 2, "session": session, "request_id": 0, "epoch": 0, "type": "hello"}
                     # Exercise a header and UTF-8 payload fragmented across writes.
                     payload = json.dumps(message).encode()
                     for byte in struct.pack(">I", len(payload)) + payload:
                         connection.sendall(bytes([byte]))
                     hello = receive(connection)
-                    assert hello == {**message, "capabilities": ["soundfont", "jack"]}
+                    assert {key: hello[key] for key in message} == message
+                    assert set(hello["capabilities"]) >= {"soundfont", "jack"}
                     if scenario == "oversize":
                         connection.sendall(struct.pack(">I", 1024 * 1024 + 1))
                         error = receive(connection)
@@ -82,7 +83,7 @@ def run(binary, scenario, soundfont=None, pw_jack=False):
                         pass  # leaving context closes socket; helper must exit
                     elif scenario == "audio":
                         notes = [{"start_tick": 0, "duration_ticks": 1920, "pitch": 60, "velocity": 80}]
-                        plan = {"version": 1, "ticks_per_quarter": 960, "duration_ticks": 3840,
+                        plan = {"version": 2, "ticks_per_quarter": 960, "duration_ticks": 3840,
                                 "tempos": [{"tick": 0, "bpm": 120}], "parts": [
                                     {"id": f"p{i}", "enabled": True, "volume": 80, "program": i,
                                      "notes": notes} for i in range(2)]}
@@ -102,6 +103,9 @@ def run(binary, scenario, soundfont=None, pw_jack=False):
                             status = receive(connection)
                             if status["type"] == "error":
                                 raise RuntimeError(status["message"])
+                            if status["type"] == "ack":
+                                assert status["operation"] == "load"
+                                continue
                             assert status["type"] == "status" and status["request_id"] == 1
                             assert status["state"] in ("playing", "finished") and status["sample_rate"] > 0
                             seen += 1

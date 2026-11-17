@@ -15,7 +15,9 @@ void rejected(const std::function<void()>& operation) {
 void tests() {
     using rms::Json;
     rms::Envelope envelope;
-    Json hello = {{"version", 1}, {"session", std::string(64, 'a')}, {"request_id", 0}, {"epoch", 0}, {"type", "hello"}};
+    Json hello = {{"version", 2}, {"session", std::string(64, 'a')}, {"request_id", 0}, {"epoch", 0}, {"type", "hello"}};
+    auto old = hello; old["version"] = 1;
+    rejected([&] { envelope.hello(old); });
     envelope.hello(hello);
     auto command = hello;
     command["type"] = "load"; command["request_id"] = 1;
@@ -34,7 +36,7 @@ void tests() {
     rejected([] { rms::parse_json(R"({"a":1,"a":2})"); });
     rejected([] { rms::parse_json(std::string(40, '[') + "0" + std::string(40, ']')); });
     rejected([] { rms::parse_json(R"({"x":1e9999})"); });
-    Json p = rms::parse_json(R"({"version":1,"ticks_per_quarter":960,"duration_ticks":1920,
+    Json p = rms::parse_json(R"({"version":2,"ticks_per_quarter":960,"duration_ticks":1920,
         "tempos":[{"tick":0,"bpm":120}],
         "parts":[{"id":"piano","enabled":true,"volume":100,"program":0,
         "notes":[{"start_tick":960,"duration_ticks":960,"pitch":60,"velocity":100},

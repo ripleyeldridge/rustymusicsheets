@@ -143,6 +143,9 @@ pub(super) fn run(
         let mut master = None;
         for command in pending {
             match command {
+                super::Command::Plugin(_) => {
+                    anyhow::bail!("VST3 commands require the audio-host backend")
+                }
                 super::Command::Mix(id, enabled, volume, program) => {
                     mixes.insert(id, (enabled, volume, program));
                 }
@@ -238,6 +241,7 @@ pub(super) fn run(
             source_page: timeline.source_page(position.min(timeline.duration)),
             score_tick: timeline.score_tick(position.min(timeline.duration)),
             audio: None,
+            plugins: Default::default(),
         };
         // ~5ms scheduling resolution; audio buffers add their own device latency.
         std::thread::sleep(Duration::from_millis(5));

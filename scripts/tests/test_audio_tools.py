@@ -84,6 +84,16 @@ class AudioBuildTests(unittest.TestCase):
 
 
 class AudioPackageTests(unittest.TestCase):
+    def test_helper_metadata_requires_protocol_and_never_opens_audio(self):
+        info = {"protocol": 2, "capabilities": ["soundfont", "jack", "vst3"],
+                "sdk_revision": "3cdf9ca5d1f5b1b21e0a86832aa4abe55607bd96"}
+        with mock.patch.object(package.subprocess, "check_output", return_value=json.dumps(info)) as output:
+            self.assertEqual(package.native_build_info(Path("/fixture/host")), info)
+            output.assert_called_once_with(["/fixture/host", "--build-info"], text=True, timeout=5)
+        for bad in ('{}', '{"protocol":1,"capabilities":[]}', '{"protocol":2,"capabilities":"vst3"}', "not JSON"):
+            with mock.patch.object(package.subprocess, "check_output", return_value=bad):
+                with self.assertRaises(ValueError):
+                    package.native_build_info(Path("/fixture/host"))
     def test_both_helper_and_app_need_matching_native_elf_architecture(self):
         with tempfile.TemporaryDirectory() as temp:
             binary = Path(temp) / "rms-audio-host"

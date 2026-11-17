@@ -23,18 +23,66 @@ int64_t now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
 }
-void absolute(const std::string& path) {
-    if (path.empty() || path[0] != '/' || path.find('\0') != std::string::npos)
-        fail("absolute path without NUL required");
-}
 void envelope(const Json& j) {
-    if (!j.is_object() || integer(j, "version", 1) != 1) fail("unsupported protocol version");
+    if (!j.is_object() || integer(j, "version") != 2) fail("unsupported protocol version; reader/helper both require protocol 2");
     hex64(text(j, "session", 64));
     integer(j, "request_id");
     integer(j, "epoch");
     text(j, "type", 32);
 }
 } // namespace
+void absolute(const std::string& path) {
+    if (path.empty() || path[0] != '/' || path.find('\0') != std::string::npos)
+        fail("absolute path without NUL required");
+}
+std::string digest_bytes(const std::string& contents) {
+    unsigned char hash[EVP_MAX_MD_SIZE];
+    unsigned int size = 0;
+    if (EVP_Digest(contents.data(), contents.size(), hash, &size, EVP_sha256(), nullptr) != 1 || size != 32)
+        fail("SHA256 computation failed");
+    static const char hex[] = "0123456789abcdef";
+    std::string result;
+    for (unsigned i = 0; i < size; ++i) { result += hex[hash[i] >> 4]; result += hex[hash[i] & 15]; }
+    return result;
+}
+std::string read_private(const StateFile& file, uint64_t maximum) {
+    absolute(file.path);
+    hex64(file.sha256);
+    if (file.bytes > maximum) fail("state exceeds size limit");
+    int fd = open(file.path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    if (fd < 0) fail("cannot open private state file");
+    struct Guard { int fd; ~Guard() { close(fd); } } guard{fd};
+    struct stat st{};
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_uid != getuid() ||
+        (st.st_mode & 0077) || st.st_nlink != 1 || st.st_size < 0 ||
+        static_cast<uint64_t>(st.st_size) != file.bytes) fail("state must be private owned regular file");
+    std::string data(static_cast<size_t>(file.bytes), '\0');
+    size_t offset = 0;
+    while (offset < data.size()) {
+        auto n = read(fd, data.data() + offset, data.size() - offset);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) fail("short state read");
+        offset += static_cast<size_t>(n);
+    }
+    char extra;
+    if (read(fd, &extra, 1) != 0 || digest_bytes(data) != file.sha256) fail("state changed or digest mismatch");
+    return data;
+}
+StateFile write_private(const std::string& path, const std::string& data) {
+    absolute(path);
+    int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (fd < 0) fail("cannot create fresh state file");
+    struct Guard { int fd; ~Guard() { close(fd); } } guard{fd};
+    size_t offset = 0;
+    while (offset < data.size()) {
+        auto n = write(fd, data.data() + offset, data.size() - offset);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) fail("state write failed");
+        offset += static_cast<size_t>(n);
+    }
+    if (fsync(fd)) fail("state sync failed");
+    return {path, digest_bytes(data), data.size()};
+}
 uint64_t integer(const Json& j, const char* key, uint64_t maximum) {
     const auto& v = j.at(key);
     if (!v.is_number_unsigned() && !(v.is_number_integer() && v.get<int64_t>() >= 0))
@@ -85,7 +133,7 @@ Json parse_json(const std::string& input) {
     });
 }
 Plan parse_plan(const Json& j) {
-    if (!j.is_object() || integer(j, "version", 1) != 1 ||
+    if (!j.is_object() || integer(j, "version") != 2 ||
         integer(j, "ticks_per_quarter", 960) != 960) fail("unsupported plan format");
     Plan p;
     p.duration_ticks = integer(j, "duration_ticks", max_tick);
@@ -105,6 +153,35 @@ Plan parse_plan(const Json& j) {
         v.enabled = boolean(part, "enabled");
         v.volume = static_cast<uint8_t>(integer(part, "volume", 127));
         v.program = static_cast<uint8_t>(integer(part, "program", 127));
+        if (part.contains("source")) {
+            const auto& source = part.at("source");
+            auto kind = text(source, "kind", 32);
+            if (kind != "soundfont" && kind != "vst3") fail("unsupported instrument source");
+            if (kind == "vst3") {
+                v.source.vst3 = true;
+                v.source.path = text(source, "path", 4096);
+                absolute(v.source.path);
+                v.source.class_id = text(source, "class_id", 32);
+                if (v.source.class_id.size() != 32 || !std::all_of(v.source.class_id.begin(), v.source.class_id.end(),
+                    [](char c) { return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F'); }))
+                    fail("class_id must be 32 uppercase hex digits");
+                v.source.module_sha256 = text(source, "module_sha256", 64);
+                hex64(v.source.module_sha256);
+                v.source.gain = number(source, "gain", 0, 1);
+                auto state = [&](const char* key) {
+                    StateFile file;
+                    const auto& s = source.at(key);
+                    if (!s.is_null()) {
+                        file = {text(s, "path", 4096), text(s, "sha256", 64), integer(s, "bytes", max_plan)};
+                        absolute(file.path); hex64(file.sha256);
+                    }
+                    return file;
+                };
+                v.source.component = state("component_state");
+                v.source.controller = state("controller_state");
+                if (v.source.component.bytes + v.source.controller.bytes > max_plan) fail("combined state exceeds 64MiB");
+            }
+        }
         const auto& notes = part.at("notes");
         if (!notes.is_array() || notes.size() > max_items - count) fail("invalid/excessive notes");
         count += notes.size();
@@ -174,14 +251,16 @@ std::string Envelope::command(const Json& j) {
     bool transport = type == "play" || type == "pause" || type == "stop" || type == "seek" || type == "tempo";
     if (transport ? ep <= epoch : ep != epoch) fail("invalid command epoch");
     if (type != "load" && type != "play" && type != "pause" && type != "stop" && type != "seek" &&
-        type != "tempo" && type != "mix" && type != "master_volume" && type != "shutdown") fail("unknown command");
+        type != "tempo" && type != "mix" && type != "master_volume" && type != "shutdown" &&
+        type != "scan" && type != "gain" && type != "parameters" && type != "parameter" &&
+        type != "editor_open" && type != "editor_close" && type != "preset_load" && type != "checkpoint") fail("unknown command");
     // The caller invokes this on a copy and commits only after safe application.
     request = id;
     epoch = ep;
     return type;
 }
 Json Envelope::message(const char* type) const {
-    return {{"version", 1}, {"session", session}, {"request_id", request}, {"epoch", epoch}, {"type", type}};
+    return {{"version", 2}, {"session", session}, {"request_id", request}, {"epoch", epoch}, {"type", type}};
 }
 Wire::Wire(const std::string& path, pid_t parent) {
     absolute(path);

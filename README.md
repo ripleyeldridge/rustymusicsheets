@@ -191,14 +191,14 @@ Use **Load corrected or existing MusicXML** to load a private copy of a `.mxl`, 
 
 Successful recognition artifacts and logs live under the app-data `omr/<source-hash>/run-*/` tree, with a small `omr-index/` for reuse across restarts. Per-movement mixer settings live under `omr-mix/`, keyed by source and MusicXML content hashes. Include app data in backups. Failed/cancelled runs and temporary helper files are cleaned up. The backing score is hash-checked when loading results; detected later changes invalidate playback until the score is rescanned/reopened.
 
-Supported playback includes partwise MusicXML, chords/voices, multi-staff parts, rests, transposition, ties, tempo changes, basic repeats and first/second endings. Recognition and performance are **not guaranteed faithful**: expression, pedal, grace notes, advanced navigation/nested repeats and other unsupported constructs are warned about or approximated. GUI playback uses an application sequencer driving a persistent FluidSynth command process; the CLI retains one-shot MIDI playback. Note velocity is fixed, with independent part volume. A full notation editor, microphone/live-performance score tracking, looping, metronome, VST hosting, and Android/Windows OMR/audio are not implemented.
+Supported playback includes partwise MusicXML, chords/voices, multi-staff parts, rests, transposition, ties, tempo changes, basic repeats and first/second endings. Recognition and performance are **not guaranteed faithful**: expression, pedal, grace notes, advanced navigation/nested repeats and other unsupported constructs are warned about or approximated. Default GUI playback drives a persistent FluidSynth command process; the optional host below renders SoundFonts and VST3 instruments. The CLI retains one-shot MIDI playback. Note velocity is fixed, with independent part volume. A full notation editor, microphone/live-performance score tracking, looping, metronome, and Android/Windows OMR/audio are not implemented.
 
 Audiveris is **AGPLv3**, FluidSynth is **LGPL**, and SoundFonts have their own licenses. Legacy playback uses separately installed programs/data; the optional helper below links the system FluidSynth library. Their licenses are not replaced by this application's MIT license.
 
-### Optional audio-host foundation (development preview)
-The first stage of the plugin-engine design is implemented: a separately supervised C++ audio process, bounded/versioned Unix-socket IPC, a device-clock scheduler, and independent SoundFont instruments mixed to stereo. **This does not load VST3 plugins yet.** Plugin discovery, editors, plugin state, yabridge and Wine setup remain later milestones.
+### Optional audio host and VST3 instruments (development preview)
+The separately supervised C++ host provides bounded/versioned Unix-socket control, shared-clock SoundFont/VST3 mixing, isolated plugin scanning, per-part instrument assignments, generic parameters/presets and saved plugin state. Custom editors use separate X11 windows when supported. **VST3 requires an SDK-enabled helper**; the ordinary helper build below remains SoundFont-only.
 
-Legacy FluidSynth playback remains the default. The initial preview target is native Linux x86_64. Ordinary Cargo/Android builds do not build or download native dependencies. **Wine, yabridge and the VST3 SDK are not needed for this stage.**
+Legacy FluidSynth playback remains the default. The preview targets native Linux x86_64. Ordinary Cargo/Android builds do not build/download the helper or SDK. **Wine/yabridge are not needed for native Linux VST3**; they are only relevant to existing Windows-plugin wrappers. A SoundFont-only helper does not need the SDK.
 
 #### 1. Prepare the optional dependencies
 Complete the normal source-build setup above, including Rust >=1.86. The helper additionally needs CMake >=3.16, a C++17 compiler, pkg-config and development packages for JACK, FluidSynth >=2.2 and OpenSSL. Ubuntu package example:
@@ -240,7 +240,7 @@ Core-only mode does not create a live helper; it also tests the protocol when Op
 #### 3. Enable and test the preview
 1. In **Settings → Music recognition and MIDI playback**, or **Music / OMR → Engine settings**, select **Audio host preview — PipeWire/JACK** or **Audio host preview — native JACK** under **Playback backend (Linux)**.
 2. Use **Browse…** for **Audio-host executable** and select the absolute path of `target/audio-host/rms-audio-host`. An empty field instead selects `/usr/libexec/rustymusicsheets/rms-audio-host`, which requires a helper-enabled package; it does not search PATH.
-3. Choose an existing `.sf2`/`.sf3` **SoundFont** and save preferences/music settings. The external FluidSynth executable field is for legacy playback, not this backend.
+3. For SoundFont parts, choose an existing `.sf2`/`.sf3` **SoundFont** and save preferences/music settings. A pure-VST3 session needs no bank file. The external FluidSynth executable field is for legacy playback, not this backend.
 4. Load existing MusicXML or recognize a score using the workflow above. Audiveris is only needed for recognition, not existing MusicXML. Start with a low master level, then **Play selected parts**. Sample rate, estimated output latency and xruns appear with the transport.
 5. To return to the previous backend, choose **FluidSynth (legacy, default)** and save preferences. Backend changes stop playback; explicitly press Play to start the selected engine. There is no silent fallback or restart loop.
 
@@ -250,8 +250,40 @@ The preview supports up to 32 independent musical parts, preserving piano staff 
 
 Position and page following use estimated audible device-clock timing, including output latency and tempo changes. **Real loopback calibration is still required.** FluidSynth may delay note onset within its internal 64-frame synthesis quantum. Preview chorus/reverb are disabled to flush voices on pause/seek, so its sound is not acoustically identical to the legacy engine. Each part currently loads its own SoundFont instance, which can use substantial RAM. Test levels, timing and memory before relying on it in performance.
 
+#### 4. Build VST3 support explicitly
+For plugin loading, additionally supply **CMake >=3.25** and X11 development headers (`libx11-dev` on Ubuntu). Acquire the pinned official MIT-licensed SDK explicitly, then rebuild the helper:
+
+```bash
+python3 scripts/fetch-vst3-sdk.py
+python3 scripts/fetch-vst3-sdk.py --verify-only
+python3 scripts/build-audio-host.py --test --vst3-sdk "$PWD/target/vst3-sdk"
+target/audio-host/rms-audio-host --build-info
+cargo build --locked --release
+./target/release/rustymusicsheets
+```
+
+SDK setup downloads only the pinned official source/submodules to ignored `target/vst3-sdk/`. It never overwrites an existing modified checkout, installs packages or touches Wine. Normal Cargo/CMake/Android builds do not download it. SDK-enabled and non-SDK helpers use protocol v2; rebuild the app and helper together rather than mixing them with the older M0 protocol-v1 binary.
+
+#### 5. Browse, assign and configure an instrument
+1. Choose an audio-host backend and its freshly rebuilt helper as above. In **Music / OMR → Engine settings**, expand **VST3 discovery / existing yabridge diagnostics** and use **Probe helper capabilities**. The reply must include `vst3`.
+2. Use **Add search folder → Browse…**, then **Scan selected roots**. **Use standard Linux roots** fills existing conventional folders. Alternatively, in a part row use **Direct .vst3 bundle folder → Browse…**, then **Inspect this bundle**. Browsing alone never executes a plugin; scanning explicitly does, in a separate helper process.
+3. Choose the exact instrument class from the part's dropdown. Vendor, module path and class ID disambiguate duplicate names; two parts may choose the same plugin independently. The previous GM program is retained for explicit SoundFont selection and MIDI export, not sent to the VST3 instrument.
+4. Use **Load instruments paused** to prepare the graph without playing notes. Use **Open editor** for a supported custom X11 window, **Generic parameters** for paginated host controls, or Browse to a class-matching `.vstpreset` and **Load selected .vstpreset** while paused/stopped. Use a low master level initially. Plugin level is **Post-plugin audio gain**, not CC7.
+5. While paused/stopped, use **Save plugin assignments and state**. Assignments/checkpoints are tied to the original score and MusicXML hashes; component/controller chunks remain separate. A plugin's external samples/licenses are not bundled. Dirty changes are indicated; missing plugins never silently become SoundFonts.
+
+Linux `.vst3` plugins are **bundle directories**, usually containing `Contents/x86_64-linux/<bundle-name>.so`; choose the outer `.vst3` folder in the browser. A Windows `.vst3` file, VST2 `.dll`/loose `.so`, effect or wrong-architecture plugin cannot be loaded directly. VST2, CLAP/LV2, effects chains and plugin audio export are not implemented. MIDI export contains retained GM choices, not plugin audio/state. Failed scans are quarantined until an explicit **Retry quarantined / rescan** or a changed module/runtime profile.
+
+Initial DSP routing requires zero audio inputs and one mono/stereo main output bus; multi-output instruments are rejected rather than silently misrouted. Supported latency/bus changes pause and reprepare processing/alignment; press Play after reviewing the change. A requested full component reload or unsupported bus layout is reported explicitly. During a paused preset/checkpoint operation, **Stop audio** cancels the owned helper and keeps the last valid checkpoint; unsaved edits may be lost. Save before changing instruments. New mix metadata uses `.audio-v2.json` sidecars, leaving the original v1 mix intact.
+
+#### Existing yabridge wrappers
+The host loads yabridge's generated **Linux VST3 bundles**, normally under `~/.vst3/yabridge`, through the same VST3 adapter. It does not load the original Windows file or install/activate the vendor plugin.
+
+Use **Read-only bridge diagnostics** before **Use existing yabridge wrappers → Scan selected roots**. The yabridgectl executable, generated wrapper root and existing Wine loader each have Browse controls. The Wine loader is scoped to the helper; there is no global `WINEPREFIX` override, installation, automatic `add`/`sync`/`prune`, prefix modification or Wine downgrade. Vendor installation and user-reviewed yabridge registration/synchronization must already be complete; do not register generated output as a source or recursively nest wrapper roots.
+
+**Known local blocker:** upstream says Wine 9.22/10.x is incompatible with yabridge 5.1.1 and earlier. Wine 10.0 with yabridge 5.1.0 is therefore blocked before scanning/loading known wrappers. Updating only to 5.1.1 is not a fix. Choose a separately verified compatible existing runtime/profile using the loader browser; consult [official yabridge guidance](https://github.com/robbert-vdh/yabridge#troubleshooting-common-issues). An allowed version preflight is not a guarantee that a specific plugin's audio, editor, samples or state works. This machine's Windows-plugin playback remains unverified until a compatible profile is supplied.
+
 #### Optional native package
-`python3 scripts/build-deb.py --with-audio-host` builds/packages both binaries, derives their shared-library dependencies and includes native notices. Default packages omit the helper. Install the explicitly chosen output `.deb` using your normal package manager; for a helper-enabled package, leave **Audio-host executable** empty to use the installed location. Building a package does not install/publish it or change Wine/yabridge. `--skip-build` reuses both existing binaries and requires checking they match the intended source. Native packages retain build-host architecture/glibc requirements; this is not a universal Ubuntu binary.
+`python3 scripts/build-deb.py --with-audio-host` builds/packages a SoundFont-only helper. Add `--vst3-sdk "$PWD/target/vst3-sdk"` for a VST3-enabled package with pinned SDK provenance/license notices. Default packages omit the helper. Install the explicitly chosen output `.deb` using your normal package manager; leave **Audio-host executable** empty for its installed location. Building does not install/publish a package or change Wine/yabridge. `--skip-build` checks helper protocol/features and SDK provenance; it does not rebuild stale binaries. Native packages retain build-host architecture/glibc requirements and are not universal Ubuntu binaries.
 
 #### Verification and troubleshooting
 
@@ -270,6 +302,11 @@ It uses the detected SoundFont and PipeWire by default; optionally set `RMS_TEST
 - **Device/rate/output changed or host stalled:** fix the device/routing and explicitly press Play again. More than ten seconds of reported latency or exhausted retained timing history is rejected, not guessed.
 - **High RAM/repeated xruns:** reduce instrument instances and other heavy audio workloads, and review the existing server's buffer settings. Muting does not unload a SoundFont or free its sample RAM. Test on your setup before performance use.
 - **Old extracted-header overrides:** `FLUIDSYNTH_INCLUDE_DIR`/`FLUIDSYNTH_LIBRARY` and CMake's cached values are validation overrides, not portable prerequisites. Use a fresh `--build-dir` when changing them and Browse to its helper output. Debian packaging expects the default `target/audio-host/` output.
+- **Desktop launch stalls during graphics initialization:** try the command-scoped X11 route below, which passes startup/close validation. This does not change global desktop/environment settings, and is not evidence of native Wayland plugin-editor support:
+
+```bash
+env -u WAYLAND_DISPLAY WINIT_UNIX_BACKEND=x11 ./target/release/rustymusicsheets
+```
 
 ### Standalone music commands
 These commands do not open or change the library database. Output directories/files are explicit:
@@ -304,7 +341,7 @@ By default:
 The app honors `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, and `XDG_CACHE_HOME`. For a complete backup, **close the app**, then copy the selected music folder **and** the entire app data and config directories. Automatic pre-rescan/schema-migration snapshots contain metadata only, not copies of your scores.
 
 ## Current limitations
-Not implemented yet: annotations, crop/rotation/page reordering, in-score navigation links, vertical/half-page display, metronome, VST hosting, ChordPro/text, assembling image sequences, document printing/export, portable backup/restore, cloud integration, and multi-device sync. MusicXML/MIDI export and experimental Linux MIDI playback are available as described above.
+Not implemented yet: annotations, crop/rotation/page reordering, in-score navigation links, vertical/half-page display, metronome, VST2/CLAP/LV2 hosting, ChordPro/text, assembling image sequences, document printing/export, portable backup/restore, cloud integration, and multi-device sync. MusicXML/MIDI export, experimental Linux SoundFont/VST3 instrument playback and compatibility limits are described above.
 
 Instrument OCR remains conservative label detection; musical transcription uses the separate optional Audiveris workflow. Faint scans, handwriting, uncommon abbreviations, and labels outside inspected regions may need manual entry. Audiveris targets printed notation, not handwriting. Physical pedals and touchscreens require device-specific testing. No compatibility is claimed for MobileSheets proprietary formats.
 

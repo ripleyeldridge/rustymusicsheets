@@ -139,7 +139,7 @@ automatically starts another setlist score. Help/Library suspend visual followin
 Recognition and musical performance are unverified approximations: review pitches,
 rhythm, ties, repeats, part names and pagination. Expression, pedal, grace notes,
 advanced navigation and nested repeats may be unsupported or approximated.
-There is no VST host, microphone score tracking, looping or metronome.
+There is no VST2/CLAP/LV2 hosting, microphone score tracking, looping or metronome.
 Android OMR/synth parity is not implemented.
 .SS OPTIONAL AUDIO-HOST PREVIEW
 Legacy FluidSynth remains the default. Explicitly select Audio host preview
@@ -151,7 +151,9 @@ connected automatically. Output-routing selection is not implemented yet.
 .PP
 The companion provides process supervision, bounded Unix-socket control and a
 shared device-clock SoundFont mixer for up to 32 parts.
-VST3 loading/editors/state and yabridge/Wine setup remain unimplemented.
+VST3 instruments, scanning, parameters/presets and state require an SDK-enabled
+helper. Custom editors use separate X11 windows when available.
+Wine installation, prefix management and automatic bridge setup are not provided.
 MIDI export and legacy playback retain the 15-pitched-part limit.
 Host failure stops audio without closing the reader or silently switching engines.
 Press Play explicitly to retry. Only owned processes/private files are cleaned up.
@@ -184,6 +186,39 @@ server/backend and enable stereo output. Device/rate/output changes require
 fixing routing and retrying explicitly. More than ten seconds of reported
 latency or exhausted timing history fails closed. Muting does not unload
 SoundFonts/free sample RAM. See the README for a muted real-helper smoke test.
+.PP
+For VST3 use CMake >=3.25 and libx11-dev. Explicitly acquire the pinned official
+SDK with python3 scripts/fetch-vst3-sdk.py, then build the helper with
+python3 scripts/build-audio-host.py --test --vst3-sdk "$PWD/target/vst3-sdk".
+Normal Cargo/CMake/Android builds do not download the SDK.
+Use --build-info to check protocol2/vst3 capability and rebuild the app/helper
+together; the older M0 helper used protocol1.
+.PP
+In Music / OMR engine settings expand VST3 discovery / existing yabridge
+diagnostics. Add search folder and Browse, then Scan selected roots, or Browse
+a Direct .vst3 bundle folder per part and Inspect this bundle.
+Choose the exact class by vendor/path/ID. Linux .vst3 plugins are bundle
+directories containing Contents/x86_64-linux/<bundle-name>.so, not raw Windows
+files or loose VST2 DLL/SO files. Use Load instruments paused, then Open editor,
+Generic parameters, or a matching .vstpreset while paused/stopped.
+Post-plugin gain is separate from GM/CC7. Save plugin assignments and state
+before changing instruments; external samples/licenses are not bundled.
+Missing plugins never silently become SoundFonts. A VST-only session needs
+no SoundFont bank. MIDI export retains GM choices, not plugin audio/state.
+.PP
+For existing yabridge use generated Linux VST3 wrappers, normally
+~/.vst3/yabridge, and run Read-only bridge diagnostics before scanning.
+Tool/wrapper-root/Wine-loader paths have Browse controls.
+Vendor installation/activation and user-reviewed registration/sync are external.
+Wine9.22/10.x with yabridge <=5.1.1 is incompatible upstream; the local
+Wine10.0/yabridge5.1.0 pair is blocked before known wrapper loads/scans.
+Updating only to5.1.1 is not a fix. Select a verified compatible existing
+runtime/profile; no automatic installs, sync/prune or prefix changes occur.
+WINELOADER is helper-scoped; WINEPREFIX is not globally overridden.
+Version preflight is not individual plugin compatibility certification.
+Real Windows audio/editor/state remain unverified here without a compatible
+runtime. VST3 packages require --with-audio-host --vst3-sdk SDK_PATH so pinned
+SDK license/provenance is included. Building does not install/publish a package.
 .PP
 Audible position is an estimate requiring loopback calibration. FluidSynth's
 internal 64-frame quantum may delay acoustic onset. Chorus/reverb are disabled
