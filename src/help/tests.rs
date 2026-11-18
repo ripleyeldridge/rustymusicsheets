@@ -34,6 +34,11 @@ fn current_docs_and_embedded_music_reference_remain_consistent() {
         "Turn pages early by",
         "Browse",
         "Previous page / Next page",
+        "Combine parts",
+        "Uncombine",
+        "Save and unload instruments",
+        ".audio-v3.json",
+        "Export original MusicXML",
     ] {
         assert!(
             article("music").contains(term),
@@ -61,6 +66,76 @@ fn current_docs_and_embedded_music_reference_remain_consistent() {
     assert!(include_str!("../../README.md").contains(&format!("**Version:** {VERSION}")));
     assert!(include_str!("../../README.txt")
         .starts_with(&format!("RustyMusicSheets {VERSION} preview")));
+}
+
+#[test]
+fn published_release_docs_link_current_assets_and_distinguish_android_limits() {
+    let release =
+        format!("https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v{VERSION}");
+    let apk = format!("RustyMusicSheets-{VERSION}-android-arm64-debug.apk");
+    for documentation in [
+        include_str!("../../README.md"),
+        include_str!("../../README.txt"),
+        include_str!("../../android/README.txt"),
+    ] {
+        assert!(documentation.contains(&release));
+        for term in [&apk, "SHA256SUMS", "build-record.json"] {
+            assert!(
+                documentation.contains(term),
+                "Missing release artifact: {term}"
+            );
+        }
+        let normalized = documentation
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase();
+        assert!(normalized.contains("not executed on a device"));
+        assert!(normalized.contains("debug-signed"));
+        assert!(normalized.contains("signer"));
+    }
+    assert!(include_str!("../../README.md")
+        .contains(&format!("## Latest published preview: v{VERSION}")));
+    assert!(include_str!("../../README.txt").contains("contains 29 subjects"));
+}
+
+#[test]
+fn music_guides_distinguish_packaged_host_source_builds_and_v3_layout() {
+    let embedded = ["requirements", "music", "audio-host"]
+        .iter()
+        .map(|id| topics().iter().find(|topic| topic.id == *id).unwrap().body)
+        .collect::<Vec<_>>()
+        .join(" ");
+    for documentation in [
+        include_str!("../../README.md"),
+        include_str!("../../README.txt"),
+        include_str!("../../assets/rustymusicsheets.1"),
+        &embedded,
+    ] {
+        let normalized = documentation
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        for term in [
+            "/usr/libexec/rustymusicsheets/rms-audio-host",
+            "SDK-enabled",
+            "2.43",
+            "--vst3-sdk",
+            "editor_keepalive",
+            "sfizz",
+            "Save and unload instruments",
+            "Uncombine",
+            ".audio-v3.json",
+            "Export original MusicXML",
+        ] {
+            assert!(
+                normalized.contains(term),
+                "Missing v0.4 music guidance: {term}"
+            );
+        }
+        assert!(!normalized.contains("New metadata uses .audio-v2.json"));
+        assert!(!normalized.contains("New mix metadata uses `.audio-v2.json`"));
+    }
 }
 
 #[test]

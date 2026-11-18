@@ -3,15 +3,28 @@ RustyMusicSheets Android foundation
 
 This is the experimental Android foundation introduced with the 0.2.2
 preview, NOT a production Android release or desktop feature parity.
-Current source includes the foundation, but v0.3.1 ships only a Linux .deb.
-The 0.4.0 local release build may also provide a separately labelled ARM64
-debug APK. Its static verification does not establish current device coverage,
-production signing or Linux OMR/audio parity; it is not automatically published.
-The separate published Android preview is available in the v0.2.3 release:
-    https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.2.3
-Its corrected APK reports 0.2.3 and is locally debug-signed; release notes
-identify the actual build commit. Do not assume Linux OMR, synth, page-follow
-or desktop Browse features are implemented on Android.
+The v0.4.0 prerelease includes RustyMusicSheets-0.4.0-android-arm64-debug.apk:
+    https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.4.0
+Direct APK:
+    https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.4.0/RustyMusicSheets-0.4.0-android-arm64-debug.apk
+It matches commit 207ba1c750a6e6e39052ba5b5aa2e5fccbfbb356 and reports
+versionName 0.4.0/versionCode 16778240, arm64-v8a, minimum API 26/target API 36.
+It is debuggable and locally debug-signed, NOT production signed. Signature,
+manifest, ABI and ZIP/16 KiB ELF alignment checks passed; this APK was NOT
+executed on a device. Static verification does not establish device coverage
+or Linux OMR/audio parity. The v0.2.3 APK is a historical foundation build.
+Do not assume Linux OMR, synth, page-follow or desktop Browse features work here.
+
+Download SHA256SUMS, build-record.json, LICENSE and
+rustymusicsheets-0.4.0-third-party-notices.tar.gz from the same release.
+All GitHub attachment names are flat. From their download directory:
+    sha256sum --ignore-missing -c SHA256SUMS
+This verifies only downloaded files; omit --ignore-missing after downloading
+the complete set to verify everything. The build record is unsigned provenance,
+not an attestation; checksums are not a release signature.
+Check signer_certificate_sha256 in build-record.json against the installed
+app's signing identity before updating. Local/CI debug signers can differ.
+Preserve data and never uninstall a valuable library to bypass a mismatch.
 
 M0 includes generated fixtures, isolated provider/import/rendering tests and
 integrated CI. A historical hosted API 35 x86_64 baseline passed all ten
@@ -87,7 +100,7 @@ ARM64 debug APK. APK Signature Scheme v2/v3 verification, ZIP alignment,
 identity and URI filters, and absence of broad storage permissions passed.
 Desktop tests also exercise URI validation, private import, deduplication,
 cancellation/cleanup and shared-UI integration using generated documents.
-The debug APK and a safe-area update were installed on an authorized Pixel 8
+Earlier foundation APKs and a safe-area update were installed on an authorized Pixel 8
 Pro (API 37, ARM64, 4 KiB pages). Activity startup and continued process
 execution were checked. After the system-inset correction was installed,
 the user confirmed that the layout works on their Pixel. Broader rendering,
