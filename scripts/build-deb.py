@@ -166,7 +166,11 @@ def main():
             "    standalone PNG/JPEG score support, searchable offline Help/About,\n"
             "    large-library instrument detection warnings, platform-specific\n"
             "    picker/power backends, and an experimental Android activity,\n"
-            "    content-URI import, and safe-area layout foundation.\n\n"
+            "    content-URI import, and safe-area layout foundation.\n"
+            "  * Native SoundFont/VST3 host with shared discovery, saved plugin\n"
+            "    state, X11 editors and modal-dialog liveness protection.\n"
+            "  * Reviewable reversible OMR part combination with v3 mixes and\n"
+            "    shared-timing recovery of empty implicit MusicXML measures.\n\n"
             f" -- Ripley Eldridge <noreply@rustymusicsheets.invalid>  {date}\n"
         )
         (docs / "changelog.Debian.gz").write_bytes(gzip.compress(changelog.encode(), mtime=0))

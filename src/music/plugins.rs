@@ -34,7 +34,15 @@ impl Music {
     }
 
     pub(super) fn refresh_saved_plugin_states(&mut self) -> Result<()> {
-        if !self.sources.values().any(Source::is_plugin) {
+        let result = self.refresh_saved_plugin_states_inner();
+        if let Err(error) = &result {
+            self.shutdown_error = Some(format!("Saved plugin checkpoint changed: {error:#}"));
+        }
+        result
+    }
+
+    fn refresh_saved_plugin_states_inner(&mut self) -> Result<()> {
+        if !self.effective_sources().values().any(Source::is_plugin) {
             return Ok(());
         }
         let Some(path) = &self.mix_path else {
@@ -47,13 +55,16 @@ impl Music {
         anyhow::ensure!(file.metadata()?.len() <= MAX_MIX, "Oversized saved mix");
         let saved: SavedMix = serde_json::from_reader(file.take(MAX_MIX + 1))?;
         anyhow::ensure!(
-            saved.version == 2
+            saved.version == 3
                 && saved.score_hash == self.binding.as_ref().map(|(_, hash)| hash.clone())
-                && saved.music_hash == self.music_hash,
+                && saved.music_hash == self.music_hash
+                && saved.groups == self.part_groups,
             "Plugin checkpoint identity changed; reload movement"
         );
+        let mut updated = self.sources.clone();
         for (id, prior) in saved.sources {
             prior.validate()?;
+            anyhow::ensure!(updated.contains_key(&id), "Unknown saved plugin part");
             if let (
                 Some(Source::Vst3 {
                     class_id,
@@ -67,23 +78,25 @@ impl Music {
                     controller_state: controller,
                     ..
                 },
-            ) = (self.sources.get_mut(&id), prior)
+            ) = (updated.get_mut(&id), prior)
             {
-                if *class_id == saved_class {
-                    *component_state = component;
-                    *controller_state = controller;
-                }
+                anyhow::ensure!(*class_id == saved_class, "Saved plugin class changed");
+                *component_state = component;
+                *controller_state = controller;
             }
         }
+        self.sources = updated;
         Ok(())
     }
     pub(crate) fn has_plugin_session(&self) -> bool {
-        self.playback.is_some() && self.sources.values().any(Source::is_plugin)
+        self.playback.is_some() && self.effective_sources().values().any(Source::is_plugin)
     }
     pub(crate) fn begin_shutdown(&mut self) {
         self.shutdown_error = None;
         if let Err(error) = self.save_mix() {
-            self.error = Some(format!("Saving before shutdown: {error:#}"));
+            let message = format!("Saving before shutdown: {error:#}");
+            self.shutdown_error = Some(message.clone());
+            self.error = Some(message);
         }
         self.stop();
     }
@@ -95,80 +108,145 @@ impl Music {
     }
     pub(super) fn retire_transport(&mut self, transport: Transport) {
         use std::time::{Duration, Instant};
-        if !self.sources.values().any(Source::is_plugin)
-            || matches!(transport.snapshot().state, State::Starting | State::Failed)
-        {
+        let cancel = self.combine_cancel.take();
+        let effective = self.effective_sources();
+        if !effective.values().any(Source::is_plugin) {
+            return;
+        }
+        let snapshot = transport.snapshot();
+        if matches!(snapshot.state, State::Starting | State::Failed) {
+            let error = snapshot.error.unwrap_or_else(|| {
+                "Plugin session was not ready for a shutdown checkpoint; last saved state retained"
+                    .into()
+            });
+            self.shutdown_error = Some(error.clone());
+            self.error = Some(error);
             return;
         }
         let Some(path) = self.mix_path.clone() else {
+            let error =
+                "No movement path for plugin checkpoint; last saved state retained".to_owned();
+            self.shutdown_error = Some(error.clone());
+            self.error = Some(error);
             return;
         };
         if self.retiring.len() >= 4 {
-            self.error = Some("Too many pending shutdown checkpoints; last saved state retained. Save explicitly before switching again.".into());
+            let error = "Too many pending shutdown checkpoints; last saved state retained. Save explicitly before switching again.".to_owned();
+            self.shutdown_error = Some(error.clone());
+            self.error = Some(error);
             return;
         }
-        let mut mix = SavedMix {
-            version: 2,
-            score_hash: self.binding.as_ref().map(|(_, h)| h.clone()),
-            music_hash: self.music_hash.clone(),
-            sources: self.sources.clone(),
-            selected: self.selected.clone(),
-            programs: self.programs.clone(),
-            volumes: self.volumes.clone(),
-            tempo_scale: self.tempo_scale,
-            master_volume: self.master_volume,
-            follow_pages: self.follow_pages,
-            turn_lead_measures: self.turn_lead_measures,
-        };
+        let mut mix = self.saved_mix();
         let (tx, rx) = bounded(1);
         self.retiring.push(rx);
         let guard = self.manifest_guard.clone();
         std::thread::spawn(move || {
             let result = (|| -> Result<()> {
+                let deadline = Instant::now() + Duration::from_secs(60);
+                let check = || -> Result<()> {
+                    anyhow::ensure!(
+                        !cancel.as_ref().is_some_and(|cancel| cancel.load(std::sync::atomic::Ordering::Relaxed)),
+                        "Instrument unload cancelled; previous saved state retained"
+                    );
+                    anyhow::ensure!(
+                        Instant::now() < deadline,
+                        "Shutdown checkpoint timed out; previous saved state retained"
+                    );
+                    let snapshot = transport.snapshot();
+                    anyhow::ensure!(snapshot.state != State::Failed, "{}", snapshot.error.unwrap_or_default());
+                    anyhow::ensure!(
+                        snapshot.plugins.operation_error.is_none(),
+                        "Plugin shutdown operation failed: {}",
+                        snapshot.plugins.operation_error.unwrap_or_default()
+                    );
+                    Ok(())
+                };
+                check()?;
+                anyhow::ensure!(!snapshot.plugins.busy && !snapshot.plugins.editor_busy,
+                    "Finish the plugin editor/dialog or state operation before saving and unloading");
                 let parent = path.parent().context("Missing movement directory")?;
                 let previous = match std::fs::read(&path) {
                     Ok(bytes) => Some(bytes),
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
                     Err(e) => return Err(e.into()),
                 };
+                check()?;
                 transport.pause()?;
-                let deadline = Instant::now() + Duration::from_secs(5);
-                while !matches!(transport.snapshot().state, State::Paused | State::Stopped | State::Finished) {
-                    let snapshot = transport.snapshot();
-                    anyhow::ensure!(snapshot.state != State::Failed, "{}", snapshot.error.unwrap_or_default());
-                    anyhow::ensure!(Instant::now() < deadline, "Pause before shutdown checkpoint timed out");
+                let pause_deadline = Instant::now() + Duration::from_secs(5);
+                while transport.snapshot().state != State::Paused {
+                    check()?;
+                    anyhow::ensure!(Instant::now() < pause_deadline, "Pause before shutdown checkpoint timed out");
                     std::thread::sleep(Duration::from_millis(10));
                 }
+                check()?;
+                if snapshot.plugins.capabilities.iter().any(|cap| cap == "editor_x11") {
+                    // View has no open-window list. Closing every effective plugin
+                    // is idempotent and also captures edits made on editor close.
+                    for (id, source) in &effective {
+                        if source.is_plugin() {
+                            check()?;
+                            transport.plugin(Request::Editor { part_id: id.clone(), open: false })?;
+                        }
+                    }
+                    // The ordered Paused -> Stopped acknowledgement is a barrier
+                    // after every close request, even for a zero-parameter plugin.
+                    check()?;
+                    transport.stop()?;
+                    let close_deadline = Instant::now() + Duration::from_secs(10);
+                    while transport.snapshot().state != State::Stopped {
+                        check()?;
+                        anyhow::ensure!(Instant::now() < close_deadline, "Closing plugin editors timed out");
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                }
+                check()?;
                 let last = transport.snapshot().plugins.checkpoint.as_ref().map(|(id, _)| *id);
                 transport.plugin(Request::Checkpoint { destination: parent.join("states") })?;
-                let deadline = Instant::now() + Duration::from_secs(60);
                 let parts = loop {
+                    check()?;
                     let snapshot = transport.snapshot();
                     anyhow::ensure!(snapshot.state != State::Failed, "{}", snapshot.error.unwrap_or_default());
                     if let Some((id, parts)) = snapshot.plugins.checkpoint {
                         if Some(id) != last { break parts; }
                     }
-                    anyhow::ensure!(Instant::now() < deadline, "Shutdown checkpoint timed out; previous saved state retained");
                     std::thread::sleep(Duration::from_millis(10));
                 };
+                check()?;
+                let mut checkpoint_ids = std::collections::BTreeSet::new();
                 for part in parts {
+                    anyhow::ensure!(effective.get(&part.part_id).is_some_and(Source::is_plugin)
+                        && checkpoint_ids.insert(part.part_id.clone()), "Unexpected checkpoint part");
                     let Some(Source::Vst3 { class_id, component_state, controller_state, .. }) = mix.sources.get_mut(&part.part_id) else { anyhow::bail!("Unknown checkpoint part") };
                     anyhow::ensure!(*class_id == part.class_id, "Checkpoint class mismatch");
                     *component_state = part.component_state;
                     *controller_state = part.controller_state;
                 }
+                anyhow::ensure!(checkpoint_ids.len() == effective.values().filter(|source| source.is_plugin()).count(), "Incomplete plugin checkpoint");
+                check()?;
                 std::fs::create_dir_all(parent)?;
                 let mut output = tempfile::NamedTempFile::new_in(parent)?;
                 write_mix(&mut output, &mix)?;
                 output.as_file().sync_all()?;
+                check()?;
                 // Never replace a newer explicit save or another session's manifest.
-                let _guard = guard.lock().unwrap_or_else(|e| e.into_inner());
+                let _guard = loop {
+                    check()?;
+                    match guard.try_lock() {
+                        Ok(guard) => break guard,
+                        Err(std::sync::TryLockError::Poisoned(error)) => break error.into_inner(),
+                        Err(std::sync::TryLockError::WouldBlock) => std::thread::sleep(Duration::from_millis(10)),
+                    }
+                };
                 let current = std::fs::read(&path).ok();
                 anyhow::ensure!(current == previous, "Movement changed while saving shutdown state; previous/newer manifest retained. Save explicitly before switching");
+                check()?;
                 output.persist(&path)?;
-                std::fs::File::open(parent)?.sync_all()?;
+                sync_committed_mix_directory(parent);
                 Ok(())
             })().map_err(|e| format!("Unsaved plugin changes during shutdown: {e:#}"));
+            // Release transport ownership and initiate owned-helper teardown
+            // before polling can consider this retirement complete.
+            drop(transport);
             let _ = tx.send(result);
             // Owned transport/process teardown is on this worker, never egui.
         });
@@ -183,14 +261,24 @@ impl Music {
                 self.error = Some(error);
                 false
             }
-            Err(crossbeam_channel::TryRecvError::Disconnected) => false,
+            Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                let error =
+                    "Plugin shutdown worker disconnected; reload movement before combining parts"
+                        .to_owned();
+                self.shutdown_error = Some(error.clone());
+                self.error = Some(error);
+                false
+            }
             Err(crossbeam_channel::TryRecvError::Empty) => true,
         });
         if was_retiring && self.retiring.is_empty() && self.playback.is_none() {
             if let Err(error) = self.refresh_saved_plugin_states() {
-                self.error = Some(format!(
-                    "Saved plugin checkpoint changed; reload movement: {error:#}"
-                ));
+                let message =
+                    format!("Saved plugin checkpoint changed; reload movement: {error:#}");
+                self.shutdown_error = Some(message.clone());
+                self.error = Some(message);
+            } else if self.shutdown_error.is_none() {
+                self.plugin_unsaved = false;
             }
         }
         if self.catalogue_path.is_none() {
@@ -679,6 +767,230 @@ impl Music {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn paths(root: &Path) -> Paths {
+        let paths = Paths {
+            data: root.join("data"),
+            cache: root.join("cache"),
+            config: root.join("config"),
+            music: None,
+        };
+        paths.create().unwrap();
+        paths
+    }
+
+    fn wait_for(mut ready: impl FnMut() -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+        while !ready() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Lifecycle test timed out"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    fn grouped_session(root: &Path, mode: &str) -> Music {
+        let (transport, mut sources, _) =
+            crate::audio::supervisor::tests::plugin_session(root, mode);
+        wait_for(|| {
+            assert_ne!(transport.snapshot().state, State::Failed);
+            transport.snapshot().state == State::Stopped
+        });
+        let mut xml = "<score-partwise><part-list>".to_owned();
+        for id in ["P1", "P2", "P3", "P4"] {
+            xml.push_str(&format!(
+                "<score-part id=\"{id}\"><part-name>Generated</part-name></score-part>"
+            ));
+        }
+        xml.push_str("</part-list>");
+        for id in ["P1", "P2", "P3", "P4"] {
+            xml.push_str(&format!(
+                "<part id=\"{id}\"><measure number=\"1\"><note><pitch><step>C</step><octave>4</octave></pitch><duration>1</duration></note></measure></part>"
+            ));
+        }
+        xml.push_str("</score-partwise>");
+        let original = notation::parse_musicxml(&xml).unwrap();
+        let groups = [("P1", "P3"), ("P2", "P4")]
+            .map(|(target, member)| notation::PartGroup {
+                target_id: target.into(),
+                members: vec![target.into(), member.into()],
+                name: format!("Generated {target}"),
+            })
+            .to_vec();
+        let composition = notation::apply_part_groups(&original, &groups).unwrap();
+        // A retained but hidden assignment must never receive live requests.
+        sources.insert("P3".into(), sources["P1"].clone());
+        let mut music = Music {
+            playback: Some(transport),
+            sources,
+            composition: Some(composition),
+            original_composition: Some(original),
+            part_groups: groups,
+            mix_path: Some(root.join("movement.audio-v3.json")),
+            binding: Some((1, "generated-score".into())),
+            music_hash: Some("generated-movement".into()),
+            tempo_scale: 1.0,
+            ..Default::default()
+        };
+        for id in ["P1", "P2", "P3", "P4"] {
+            music.selected.insert(id.into(), true);
+            music.programs.insert(id.into(), 0);
+            music.volumes.insert(id.into(), 100);
+        }
+        music
+    }
+
+    fn commands(root: &Path) -> Vec<serde_json::Value> {
+        std::fs::read_to_string(root.join("commands"))
+            .unwrap_or_default()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn retirement_closes_effective_editors_before_v3_checkpoint_and_keeps_hidden_state() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = paths(root.path());
+        let mut music = grouped_session(root.path(), "preset_changes");
+        music.plugin_unsaved = true;
+        assert!(music.has_plugin_session());
+        music.stop();
+        assert!(music.shutdown_pending());
+        wait_for(|| {
+            music.poll_plugins(&paths);
+            !music.shutdown_pending()
+        });
+        assert!(music.shutdown_error.is_none(), "{:?}", music.shutdown_error);
+        assert!(!music.plugin_unsaved);
+        let saved: SavedMix =
+            serde_json::from_reader(std::fs::File::open(music.mix_path.as_ref().unwrap()).unwrap())
+                .unwrap();
+        assert_eq!(saved.version, 3);
+        assert_eq!(saved.groups, music.part_groups);
+        assert!(matches!(
+            &saved.sources["P3"],
+            Source::Vst3 {
+                component_state: None,
+                controller_state: None,
+                ..
+            }
+        ));
+        for id in ["P1", "P2"] {
+            let Source::Vst3 {
+                component_state: Some(state),
+                ..
+            } = &saved.sources[id]
+            else {
+                panic!("Missing generated checkpoint state");
+            };
+            let value: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&state.path).unwrap()).unwrap();
+            assert_eq!(
+                value["value"], 0.72,
+                "Editor-close edits must precede capture"
+            );
+        }
+        let log = commands(root.path());
+        let checkpoint = log.iter().position(|c| c["type"] == "checkpoint").unwrap();
+        let pause = log.iter().position(|c| c["type"] == "pause").unwrap();
+        let stop = log.iter().position(|c| c["type"] == "stop").unwrap();
+        for id in ["P1", "P2"] {
+            let close = log
+                .iter()
+                .position(|c| c["type"] == "editor_close" && c["part_id"] == id)
+                .unwrap();
+            assert!(pause < close && close < stop && stop < checkpoint);
+        }
+        assert!(!log.iter().any(|c| c["part_id"] == "P3"));
+        assert!(music.playback.is_none());
+    }
+
+    #[test]
+    fn cancellation_during_checkpoint_retains_manifest_and_blocks_grouping() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = paths(root.path());
+        let mut music = grouped_session(root.path(), "state_hang");
+        let mut saved = Vec::new();
+        write_mix(&mut saved, &music.saved_mix()).unwrap();
+        std::fs::write(music.mix_path.as_ref().unwrap(), &saved).unwrap();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        music.combine_cancel = Some(cancel.clone());
+        music.stop();
+        assert!(music.combine_cancel.is_none());
+        wait_for(|| {
+            commands(root.path())
+                .iter()
+                .any(|c| c["type"] == "checkpoint")
+        });
+        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        wait_for(|| {
+            music.poll_plugins(&paths);
+            !music.shutdown_pending()
+        });
+        assert!(music.shutdown_error.as_ref().unwrap().contains("cancelled"));
+        assert_eq!(
+            std::fs::read(music.mix_path.as_ref().unwrap()).unwrap(),
+            saved
+        );
+        assert!(music.playback.is_none());
+    }
+
+    #[test]
+    fn disconnected_retirement_worker_sets_shutdown_error() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = paths(root.path());
+        let mut music = Music::default();
+        let (tx, rx) = bounded(1);
+        music.retiring.push(rx);
+        drop(tx);
+        music.poll_plugins(&paths);
+        assert!(!music.shutdown_pending());
+        assert!(music
+            .shutdown_error
+            .as_ref()
+            .unwrap()
+            .contains("disconnected"));
+    }
+
+    #[test]
+    fn stale_v3_group_identity_and_invalid_sources_fail_refresh_transactionally() {
+        let root = tempfile::tempdir().unwrap();
+        let mut music = grouped_session(root.path(), "normal");
+        drop(music.playback.take());
+        let prior = music.sources.clone();
+        let mut saved = music.saved_mix();
+        saved.groups[0].name.push_str(" changed");
+        let mut bytes = Vec::new();
+        write_mix(&mut bytes, &saved).unwrap();
+        std::fs::write(music.mix_path.as_ref().unwrap(), bytes).unwrap();
+        assert!(music.refresh_saved_plugin_states().is_err());
+        assert!(music.shutdown_error.is_some());
+        assert_eq!(music.sources, prior);
+        let mut saved = music.saved_mix();
+        let Source::Vst3 { gain, .. } = saved.sources.get_mut("P3").unwrap() else {
+            unreachable!();
+        };
+        *gain = -1.0;
+        let mut bytes = Vec::new();
+        write_mix(&mut bytes, &saved).unwrap();
+        std::fs::write(music.mix_path.as_ref().unwrap(), bytes).unwrap();
+        assert!(music.refresh_saved_plugin_states().is_err());
+        assert_eq!(music.sources, prior);
+    }
+
+    #[test]
+    fn hidden_plugin_assignments_do_not_count_as_an_active_plugin_session() {
+        let root = tempfile::tempdir().unwrap();
+        let mut music = grouped_session(root.path(), "normal");
+        music.sources.insert("P1".into(), Source::Soundfont);
+        music.sources.insert("P2".into(), Source::Soundfont);
+        assert!(music.sources.values().any(Source::is_plugin));
+        assert!(!music.has_plugin_session());
+        // Release generated transport without triggering an irrelevant checkpoint.
+        drop(music.playback.take());
+    }
     #[test]
     fn one_global_scan_is_shared_across_parts_and_movements_without_assigning() {
         let root = tempfile::tempdir().unwrap();

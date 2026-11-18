@@ -4,6 +4,9 @@ RustyMusicSheets Android foundation
 This is the experimental Android foundation introduced with the 0.2.2
 preview, NOT a production Android release or desktop feature parity.
 Current source includes the foundation, but v0.3.1 ships only a Linux .deb.
+The 0.4.0 local release build may also provide a separately labelled ARM64
+debug APK. Its static verification does not establish current device coverage,
+production signing or Linux OMR/audio parity; it is not automatically published.
 The separate published Android preview is available in the v0.2.3 release:
     https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.2.3
 Its corrected APK reports 0.2.3 and is locally debug-signed; release notes

@@ -1,4 +1,4 @@
-.TH RUSTYMUSICSHEETS 1 "November 2026" "RustyMusicSheets 0.3.1" "User Commands"
+.TH RUSTYMUSICSHEETS 1 "November 2026" "RustyMusicSheets 0.4.0" "User Commands"
 .SH NAME
 rustymusicsheets \- sheet music library and performance reader
 .SH SYNOPSIS
@@ -122,6 +122,15 @@ and 0\-100% level. Both staves of a piano part stay together.
 Master volume scales all instruments without changing their balance.
 Master gain affects playback output, not exported MIDI part levels.
 Mix settings are saved per recognized movement.
+.PP
+Combine parts reunites explicitly selected OMR fragments at their existing
+absolute times. Save and unload instruments first; choose a retained target,
+name and preview before applying. No automatic abbreviation merges occur.
+Uncombine restores original notes/names while retaining subsequent target
+instrument settings. Exact-score/MusicXML-bound .audio-v3.json mixes retain
+hidden member settings and leave older sidecars untouched.
+Playback/MIDI use combinations; Export original MusicXML preserves source
+bytes and original parts. Finish plugin dialogs before saving/unloading.
 .PP
 Enable Follow score pages for optional automatic original-score page turning.
 Consistent Audiveris source-sheet/page/system metadata is required; page duration

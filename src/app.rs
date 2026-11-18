@@ -831,6 +831,10 @@ impl MusicApp {
             return;
         }
         if ctx.input(|i| i.key_pressed(Key::Escape)) {
+            if self.music.combine_open() {
+                self.music.close_combine();
+                return;
+            }
             if self.music.open || self.music.controls_active {
                 self.music.open = false;
                 return;
@@ -848,6 +852,7 @@ impl MusicApp {
             || (self.left_editor.is_some() && !self.performance)
             || self.setlist_manager.is_some()
             || self.music.open
+            || self.music.combine_open()
             || self.music.controls_active
             || self.picker.is_some()
         {
@@ -2666,6 +2671,44 @@ mod tests {
             assert_eq!(app.reader.page, 1);
             assert!(app.performance);
         }
+    }
+
+    #[test]
+    fn combine_editor_blocks_reader_keys_and_escape_closes_only_the_editor() {
+        let (_root, ctx, mut app) = test_app();
+        let id = app
+            .db
+            .insert("combine-shortcuts", "Generated", 4, "")
+            .unwrap();
+        app.reload();
+        app.load_score(id, Some(1));
+        app.performance = true;
+        app.music.open = false;
+        app.music.open_combine();
+        for key in [
+            Key::PageDown,
+            Key::ArrowRight,
+            Key::Home,
+            Key::End,
+            Key::Escape,
+        ] {
+            let _ = ctx.run(
+                egui::RawInput {
+                    events: vec![egui::Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                    ..Default::default()
+                },
+                |ctx| app.shortcuts(ctx),
+            );
+            assert_eq!(app.reader.page, 1);
+            assert!(app.performance);
+        }
+        assert!(!app.music.combine_open());
     }
 
     fn test_app() -> (tempfile::TempDir, egui::Context, MusicApp) {

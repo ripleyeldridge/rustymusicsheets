@@ -9,8 +9,10 @@ use std::fs::File;
 use std::io::{Read, Seek};
 use std::path::{Component, Path};
 
+mod combine;
 mod midi;
 mod pagination;
+pub use combine::{apply_part_groups, preview_part_group, PartGroup, PartGroupPreview};
 pub use midi::to_midi;
 #[cfg(test)]
 mod tests;

@@ -2,9 +2,15 @@
 A native Linux sheet-music library and performance reader, written in Rust with egui.
 **A headline feature: offline instrument detection that helps turn a folder of scores into an instrument-searchable library—even when the parts are scanned PDFs or standalone images.**
 
-**Version:** 0.3.1 preview · **Author:** [Ripley Eldridge](https://github.com/ripleyeldridge) · **Release year:** 2026 · **License:** [MIT](LICENSE)
+**Version:** 0.4.0 preview · **Author:** [Ripley Eldridge](https://github.com/ripleyeldridge) · **Release year:** 2026 · **License:** [MIT](LICENSE)
 
-## Latest preview: v0.3.1
+## Release 0.4.0
+- Native SoundFont/VST3 audio-host playback, shared plugin discovery, independent instrument state and X11 editors, with modal-dialog liveness protection.
+- Explicit, previewed and reversible OMR part combinations; original notes/timing and individual instrument settings are preserved in v3 sidecars.
+- Recovery of layout-only empty implicit measures using shared timing, without rewriting source MusicXML.
+Final local artifacts are staged under `dist/releases/v0.4.0/`; building/tagging does not upload them or create a GitHub Release. The Linux amd64 package includes the SDK-enabled helper, not plugins, samples, the SDK or personal data. Any Android APK is separately labelled experimental/debug-signed, statically verified only for this build, and does not provide Linux OMR/audio parity.
+
+## Latest published preview: v0.3.1
 - [Release notes](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.3.1)
 - [Linux amd64 `.deb` — 0.3.1-1](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.3.1/rustymusicsheets_0.3.1-1_amd64.deb)
 - [SHA256SUMS](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.3.1/SHA256SUMS)
@@ -98,7 +104,7 @@ To build a native Debian package without installing it or requiring root:
 python3 scripts/build-deb.py
 ```
 
-Packaging also requires Python 3.9+, dpkg-dev, dpkg-deb, and binutils. The builder performs a locked release build and writes `dist/rustymusicsheets_0.3.1-1_<architecture>.deb`. `--revision 2` selects Debian revision 2; `--skip-build` is only for a separately verified, current release executable. See [Publishing a release](#publishing-a-release) for commit/tag/checksum requirements.
+Packaging also requires Python 3.9+, dpkg-dev, dpkg-deb, and binutils. The builder performs a locked release build and writes `dist/rustymusicsheets_0.4.0-1_<architecture>.deb`. `--revision 2` selects Debian revision 2; `--skip-build` is only for a separately verified, current release executable. See [Publishing a release](#publishing-a-release) for commit/tag/checksum requirements.
 
 ## Start the app
 **After installing the package:** launch **RustyMusicSheets** from your desktop application menu, or run:
@@ -164,7 +170,16 @@ This is an **experimental, review-first OMR workflow**, separate from instrument
 3. Review warnings and the exported notation. Part names and instrument guesses can be wrong: a cello line may be labelled “Voice.” Choose **Cello (GM 43)** explicitly when needed; Piano is GM 1. Numbers in the UI/CLI are one-based.
 4. Tick the parts to hear and set each **Volume %** independently. A recognized piano grand staff stays one selectable part, with both staves and voices. Part choices, volume, instruments and tempo apply live and are remembered for that recognized movement.
 5. Use **Play selected parts / Pause**, **Rewind 5s**, **Fast-forward 5s**, and **Stop audio**. Pause freezes position and silences active voices; resuming or seeking reconstructs notes held at the target position. Stop resets to the beginning. Seek while paused to stay paused, or seek before the first Play to prepare a starting position. Instrument envelopes restart on reconstructed notes; this is musical-position seeking, not sample-exact audio seeking.
-6. Enter destination filenames and **Export MusicXML** or **Export selected MIDI**. Existing files are never overwritten. `.mxl` remains compressed MusicXML; use the matching extension. MusicXML preserves all recognized parts; MIDI reflects your selected parts, instruments, per-part channel volumes, and tempo.
+6. Enter destination filenames and **Export original MusicXML** or **Export selected MIDI**. Existing files are never overwritten. `.mxl` remains compressed MusicXML; use the matching extension. MusicXML preserves all original recognized parts; MIDI reflects your combined layout, selected parts, instruments, per-part channel volumes, and tempo.
+
+### Combine split OMR parts
+If Audiveris creates separate parts for a full instrument name and its later abbreviation, use **Combine parts…** beside the recognized parts or in **Parts / volume**. Nothing is combined automatically from names such as Vln., Vc. or V0.
+- If instruments are loaded, finish any editor/file dialog, then **Save and unload instruments**. Saving runs asynchronously; cancellation retains the last valid checkpoint and requires a movement reload before structural changes.
+- Use the separate combination checkboxes to select at least two ungrouped original IDs. Choose the retained target ID and a display name, then **Preview combination**. Review note ranges, simultaneous/unison/duplicate counts and each member's settings before **Apply combination**.
+- Notes overlay at their original absolute times; they are not concatenated, silent gaps remain, and no cross-part ties are inferred. Playback/MIDI's existing overlapping-unison coalescing may affect doubled-note articulation or loudness; raw notes are never deleted.
+- The target supplies the instrument/state, gain, volume and mute setting. Absorbed parts' settings remain stored but their plugins are not loaded. **Uncombine** or **Restore original part layout** restores the original notes/names; subsequent target instrument edits stay with that target.
+- Close Combine parts and press Play explicitly to restart from the beginning. Combinations affect playback and MIDI only; **Export original MusicXML** preserves the original bytes and parts.
+Groups and original-ID settings are stored in exact-score/MusicXML-bound `.audio-v3.json` sidecars. Older v1/v2 mixes are read as fallbacks and left untouched. Rejected/stale mixes are protected from autosave; the explicit recovery action preserves a backup before saving the current reviewed layout/settings.
 
 ### Performance accompaniment
 The **Master volume %** slider below the transport controls adjusts all instruments together, from mute (0%) to normal output (100%), without changing their individual balances. It applies live and is remembered per recognized movement. The same slider appears in Music / OMR. This is a playback-output control; exported MIDI retains the individual part levels.

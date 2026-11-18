@@ -1,4 +1,4 @@
-RustyMusicSheets 0.3.1 preview
+RustyMusicSheets 0.4.0 preview
 ===================
 
 A native Rust desktop sheet-music library and PDF/image performance reader for Linux,
@@ -7,7 +7,15 @@ This is an evolving preview, NOT full MobileSheets feature parity.
 
 Downloads and install
 ---------------------
-Current Linux preview and release notes:
+Release 0.4.0 adds native VST3/SoundFont hosting, shared plugin discovery and
+state, modal-editor liveness protection, reversible OMR part combinations,
+and shared-timing recovery of layout-only empty implicit measures.
+Final local artifacts are staged under dist/releases/v0.4.0/. Building and
+tagging do not publish them. The Linux package includes the SDK-enabled helper,
+not plugins, samples, SDK source or personal settings. Any separate Android
+APK is experimental/debug-signed; static checks are not current device tests.
+
+Latest published Linux preview and release notes:
     https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.3.1
 Download rustymusicsheets_0.3.1-1_amd64.deb and SHA256SUMS from that page.
 In their shared download directory, after confirming amd64/glibc compatibility:
@@ -278,6 +286,23 @@ Master volume % below the transport controls adjusts all instruments together
 is remembered per movement, and does not change exported MIDI levels.
 Volume, instrument and tempo changes apply live without restarting. Choices are
 remembered per recognized movement in app-data/omr-mix/.
+For fragmented OMR instruments, open Combine parts… beside recognized parts or
+in Parts / volume. Finish any instrument dialog; Save and unload instruments
+before structural changes. Select at least two original IDs with the separate
+combination checkboxes, choose the retained target and display name, then
+Preview combination. Review note ranges, overlaps and member settings before
+Apply combination. Nothing is automatically merged from abbreviated names.
+Notes overlay at existing ticks, without concatenation, removed silence or
+inferred cross-part ties. Playback/MIDI coalesces overlapping unisons, which
+can change doubled articulation/loudness; every raw note is retained.
+The target supplies instrument/state, gain, volume and mute. Hidden member
+settings remain stored without loading their plugins. Uncombine or Restore
+original part layout restores notes/names; subsequent target edits remain.
+Close Combine parts and explicitly Play to restart. Export original MusicXML
+preserves the original bytes/parts; combinations affect playback/MIDI only.
+Exact-score/MusicXML-bound .audio-v3.json sidecars read older v2/v1 fallbacks
+without changing them. Rejected mixes are protected from autosave; explicit
+recovery backs up the rejected file before saving the current layout/settings.
 Play changes to Pause while playing. Pause freezes position and silences voices;
 Play resumes there. Rewind 5s / Fast-forward 5s seek by five playback seconds,
 clamped to the score. Seeking while paused stays paused; seeking before Play
@@ -718,7 +743,7 @@ Build a native package without installing it or requiring root:
 
 This requires Python 3.9+, Cargo/Rust, dpkg-deb, dpkg-shlibdeps (dpkg-dev),
 and binutils. The result is written to:
-    dist/rustymusicsheets_0.3.1-1_<architecture>.deb
+    dist/rustymusicsheets_0.4.0-1_<architecture>.deb
 --revision 2 selects Debian revision 2; the application version comes from
 Cargo.toml. Numeric application versions must match the root Cargo.lock entry.
 
@@ -743,7 +768,7 @@ Do not force-install it or replace the reader's glibc to bypass dependencies.
 
 After confirming compatibility, install the package with APT so dependencies
 are resolved:
-    sudo apt install ./dist/rustymusicsheets_0.3.1-1_amd64.deb
+    sudo apt install ./dist/rustymusicsheets_0.4.0-1_amd64.deb
 
 Replace the filename with the package matching your reader's architecture.
 Personal music-library data and preferences are not shipped in the package.
@@ -779,7 +804,7 @@ valuable library to bypass a signature mismatch. Build records are unsigned.
 Current limitations
 --------------------
 Annotations, crop/rotation/page reordering, in-score navigation links,
-vertical/half-page display, metronome, VST hosting, microphone-based tracking,
+vertical/half-page display, metronome, VST2/CLAP/LV2 hosting, microphone-based tracking,
 ChordPro/text, image-sequence assembly, document printing/export, portable
 backup/restore, cloud integration and multi-device sync are not implemented.
 Linux MusicXML/MIDI export, synth transport/mixing and optional original-page
