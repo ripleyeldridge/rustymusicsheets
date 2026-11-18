@@ -27,6 +27,44 @@ fn frame(
 }
 
 #[test]
+fn annotation_docs_preserve_originals_and_state_storage_and_device_limits() {
+    let article = topics()
+        .iter()
+        .find(|t| t.id == "annotations")
+        .unwrap()
+        .body;
+    for documentation in [
+        include_str!("../../README.md"),
+        include_str!("../../README.txt"),
+        include_str!("../../assets/rustymusicsheets.1"),
+        article,
+    ] {
+        let text = documentation
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        for term in [
+            "Stroke eraser",
+            "Hand / Pan",
+            "Save now",
+            "annotations/",
+            "ink-v1.json",
+            "200,000",
+            "10,000",
+            "palm rejection",
+            "Pressure",
+        ] {
+            assert!(
+                text.to_lowercase().contains(&term.to_lowercase()),
+                "Missing annotation guidance: {term}"
+            );
+        }
+    }
+    assert!(article.contains("not part of existing published v0.4.0"));
+    assert!(article.contains("MIDI exports do not include drawn ink"));
+}
+
+#[test]
 fn current_docs_and_embedded_music_reference_remain_consistent() {
     let article = |id| topics().iter().find(|topic| topic.id == id).unwrap().body;
     for term in [
@@ -96,7 +134,7 @@ fn published_release_docs_link_current_assets_and_distinguish_android_limits() {
     }
     assert!(include_str!("../../README.md")
         .contains(&format!("## Latest published preview: v{VERSION}")));
-    assert!(include_str!("../../README.txt").contains("contains 29 subjects"));
+    assert!(include_str!("../../README.txt").contains("contains 30 subjects"));
 }
 
 #[test]
@@ -214,7 +252,7 @@ fn click(help: &mut Help, ctx: &egui::Context, size: [f32; 2], label: &str) {
 fn embedded_articles_are_unique_and_cover_all_workflows() {
     let ids: HashSet<_> = topics().iter().map(|t| t.id).collect();
     assert_eq!(ids.len(), topics().len());
-    assert_eq!(topics().len(), 29);
+    assert_eq!(topics().len(), 30);
     for id in [
         "welcome",
         "layout",
@@ -237,6 +275,7 @@ fn embedded_articles_are_unique_and_cover_all_workflows() {
         "list-order",
         "reading",
         "bookmarks",
+        "annotations",
         "performance",
         "shortcuts",
         "settings",
@@ -269,6 +308,8 @@ fn search_matches_body_keywords_and_all_terms_case_insensitively() {
     assert!(ids("large libraries").contains(&"instrument-detect"));
     assert!(ids("audio host latency").contains(&"audio-host"));
     assert!(ids("Alto Violoncello").contains(&"instrument-manual"));
+    assert!(ids("Surface Pen").contains(&"annotations"));
+    assert!(ids("ink-v1.json").contains(&"annotations"));
     assert_eq!(search("  \t ").len(), topics().len());
     assert!(search("no_such_help_word").is_empty());
     assert!(ids(VERSION).contains(&"about"));

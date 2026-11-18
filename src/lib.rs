@@ -1,3 +1,4 @@
+pub mod annotations;
 pub mod app;
 pub mod audio;
 pub mod display_names;

@@ -268,6 +268,25 @@ Reading position is remembered automatically. Reader controls scroll in short wi
 
 Rendering runs in the background with nearby-page prefetch and bounded caches. UI render resolution is capped at 2560 pixels along the longest edge; zoom cannot restore detail absent from the source. Retry renders retries failed page loads.
 
+@annotations|Reader and performance|Handwritten page annotations|annotate ink stylus surface pen mouse highlighter stroke eraser undo redo save
+This is new source-branch work, not part of existing published v0.4.0 downloads. Rebuild the app to use it. Original PDF/PNG/JPEG score files remain unchanged.
+
+Choose Annotate in Reader or Performance. Use Pen, translucent Highlighter, Stroke eraser, Hand / Pan, color/thickness, Undo, Redo, Save now and Show ink. A tap makes a dot; the eraser removes whole strokes, not pixels. Clear page requires confirmation and is undoable within bounded session history. Done restores ordinary page clicks.
+
+Ink uses page-relative vectors and stays aligned through zoom, fit-width, scrolling, resize and two-page view. A gesture belongs to its starting page and cannot cross the gutter. Drawing/erasing does not also scroll or turn pages. Hand / Pan permits drag-scrolling; explicit page buttons and keyboard/pedal turns work between gestures. Escape leaves annotation mode before leaving Performance. Ctrl+Z, Ctrl+Shift+Z/Ctrl+Y and Ctrl+S control ink only while annotation tools own input.
+
+Entering annotation mode disables synth page following so it cannot turn the page under your pen. Audio may continue; expand Accompaniment (audio controls) if needed. Explicitly re-enable following afterward.
+
+Score identity is verified before editing. Completed gestures autosave on a background worker; watch pending/saved/error status. Save now flushes work. Sidecars live in app-data/annotations/<score-sha256>/<zero-based-page>.ink-v1.json, not in the PDF/image or SQLite schema. Identical content moved/renamed or repeated in a setlist shares ink; changed contents do not inherit annotations by filename.
+
+Atomic replacement and content-token checks retain the last saved page. Errors keep unsaved ink in memory; retry or explicitly confirm reload/discard. Rejected sidecars remain read-only until a backed-up reset. Closing/switching scores waits for pending saves and offers recovery/cancel/discard choices. Forced termination can lose a live or not-yet-acknowledged gesture. Back up annotations/ with all app data; Rescan/removal does not delete it.
+
+Limits: 8 MiB, 200,000 points and 10,000 strokes per page; eight cached pages with bounded session undo/redo. Unsaved pages are not evicted or silently truncated. A lock error may mean another writer or a stale .json.lock after a crash. Close all writers and preserve sidecar/lock before manually resolving a stale lock; unknown locks are not automatically deleted.
+
+Mouse and OS-recognized stylus/Surface Pen pointer/touch input use constant-width ink and one active contact. Pressure, palm rejection, pen buttons/inverted eraser and particular hardware are NOT guaranteed. Test your device; the app changes no drivers or global input settings. Android shares drawing/storage for supported images, not native PDF/OMR/audio parity; hardware behavior needs testing.
+
+Text/stamps, object moving, partial-stroke erasing and flattened annotated PDF/image export are deferred. Overlays appear in the reader only. Original score/MusicXML and MIDI exports do not include drawn ink.
+
 @bookmarks|Reader and performance|Bookmarks and remembered positions|mark page toggle resume jump saved
 In Reader, click Bookmark to toggle a bookmark on the current page. Click it again on that page to remove the bookmark.
 
@@ -275,14 +294,14 @@ Open Bookmarks to list marked pages and select one to jump there. Bookmarks belo
 
 The current reading position is remembered automatically; opening the score again resumes there. The Reader toolbar button returns to the already-open score without reloading its position.
 
-Rescan cleanup of a missing score removes its bookmarks with its metadata. A metadata backup contains these records, but not the score files. Custom annotation tools and handwritten notes on page images are not implemented.
+Rescan cleanup of a missing score removes its bookmarks with its metadata. A metadata backup contains these records, but not score files or drawn annotation sidecars. See Handwritten page annotations for separate saved ink.
 
 @performance|Reader and performance|Performance mode and fullscreen|stage touch tap exit f11 escape
 Open a score, then click Performance. The app enters fullscreen Reader and hides library/editing controls. Tap/click page halves or use page-turn keys/pedals. Setlist playback continues across score boundaries.
 
 The bottom bar always retains Previous page / Next page and Exit performance, even without recognition or the synth. Accompaniment loads saved recognition automatically; otherwise use Recognize music with saved engine settings. Play/Pause, Rewind 5s, Fast-forward 5s, Stop, Master volume and Parts / volume work while the score remains visible. Follow score pages and Turn pages early by … measures are optional saved settings. Manual navigation disables following. See Music recognition and playback for setup, original-page metadata requirements and limitations.
 
-Escape closes Combine parts first, then an open music window or Parts / volume mixer before leaving performance/fullscreen; F11 toggles fullscreen. Fullscreen and Performance are distinct: F11 alone does not hide the normal controls.
+Escape closes Combine parts or leaves annotation mode before closing an open music window or Parts / volume mixer and leaving performance/fullscreen; F11 toggles fullscreen. Fullscreen and Performance are distinct: F11 alone does not hide the normal controls.
 
 F1 can open Help even during performance. Closing it preserves the active setlist snapshot; enabled synth page following catches up when Reader returns. Help itself does not perform manual page turns or discard drafts.
 
@@ -292,7 +311,7 @@ Configure and test page-turn mappings, layout, and power settings before a perfo
 F1: open Help contents.
 Escape while Help is open: close Help without turning pages.
 F11 outside Help: toggle fullscreen.
-Escape outside Help: close Combine parts first, then an open music window/mixer, otherwise leave performance/fullscreen.
+Escape outside Help: close Combine parts or leave annotation mode first, then an open music window/mixer, otherwise leave performance/fullscreen.
 
 Default Reader shortcuts:
 PageDown or ArrowRight: next page.
@@ -330,6 +349,8 @@ Default locations:
 XDG_DATA_HOME, XDG_CONFIG_HOME, and XDG_CACHE_HOME override these bases. The selected music folder stores documents separately; its location and score-relative paths are saved together in the database. Rendered pages currently live in memory, not disk.
 
 GUI recognition artifacts, editable OMR projects and logs live in app-data/omr/, with omr-index/ result references, omr-corrected/ private MusicXML copies and omr-mix/ saved movement settings. Include these in a full backup. SQLite-only backups do not include original scores or recognized notation.
+
+Current annotation source work stores ink under app-data/annotations/, bound to score content hash and original page index. Include it in backups; wait for ink saves before closing for a snapshot. SQLite-only metadata backups omit drawn ink. Source files are not rewritten.
 
 For a complete backup, CLOSE the application and copy the selected music folder AND the entire app data and config directories. Do not copy only the SQLite main file while the app is open; WAL files may be needed. Do not manually rename managed files.
 
@@ -387,7 +408,7 @@ Follow score pages disabled? It needs consistent Audiveris original source-sheet
 @limits|Reference and troubleshooting|Current limitations|annotations midi audio sync printing export crop rotate mobilesheets
 This release is a functional native reader/library milestone, not full MobileSheets feature parity.
 
-Not implemented: annotations, crop/rotation/page reordering, in-score navigation links, vertical/half-page display, metronome, VST2/CLAP/LV2 hosting, effects chains, ChordPro/text, image-sequence assembly, document printing/export, portable backup/restore, cloud integration, and multi-device sync. Experimental Linux OMR, MusicXML/MIDI export and selected-part SoundFont/VST3 playback are described in Music recognition and playback and Audio-host preview. Native VST3 requires an SDK-enabled helper; Windows wrappers require a separately compatible Wine/yabridge profile.
+Not implemented: typed/stamp annotations and annotated PDF/image export, crop/rotation/page reordering, in-score navigation links, vertical/half-page display, metronome, VST2/CLAP/LV2 hosting, effects chains, ChordPro/text, image-sequence assembly, document printing/export, portable backup/restore, cloud integration, and multi-device sync. Freehand source work is described in Handwritten page annotations. Experimental Linux OMR, MusicXML/MIDI export and selected-part SoundFont/VST3 playback are described in Music recognition and playback and Audio-host preview. Native VST3 requires an SDK-enabled helper; Windows wrappers require a separately compatible Wine/yabridge profile.
 
 No compatibility is claimed for MobileSheets proprietary formats or device protocols. PDF/PNG/JPEG documents remain unchanged; instrument metadata stays in the local SQLite library rather than being embedded in the documents.
 

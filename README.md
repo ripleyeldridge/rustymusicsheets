@@ -12,6 +12,7 @@ A native Linux sheet-music library and performance reader, written in Rust with 
 Published from commit `207ba1c750a6e6e39052ba5b5aa2e5fccbfbb356`, matching annotated tag `v0.4.0`. This is a **prerelease**, not a stable/latest promotion. The Linux package includes the SDK-enabled helper, not plugins, samples, SDK source or personal data.
 
 ## Latest published preview: v0.4.0
+**Development note:** the annotation system described below is new source-branch work, not part of the existing v0.4.0 tag/downloads. Published artifacts remain unchanged.
 - [Release notes](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.4.0)
 - [Linux amd64 `.deb` — 0.4.0-1](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.4.0/rustymusicsheets_0.4.0-1_amd64.deb)
 - [Experimental Android ARM64 debug APK](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.4.0/RustyMusicSheets-0.4.0-android-arm64-debug.apk)
@@ -43,6 +44,7 @@ This project was built with substantial AI assistance. It is a working, evolving
 - **Balance accompaniment live** with per-part selection/volume, a master volume slider, play/pause, seek and stop; settings are remembered per recognized movement.
 - **Use native VST3 instruments** with shared discovery, independent per-part state and X11 editors through the optional host backend. Play SFZ through a separately acquired sfizz VST3 sampler.
 - **Reunite split OMR parts** with explicit selection, retained instrument/settings, overlap previews and reversible combinations, without rewriting original notation.
+- **Annotate pages (unreleased source)** using constant-width pen/highlighter ink, whole-stroke erasing, colors, thickness, undo/redo and separate autosaved page overlays.
 - **Read ahead during playback** using optional original-score page following with an integer measure lead. Manual Previous/Next remains available in Performance without the synth.
 - **Choose paths instead of typing them** using Browse dialogs for music engines, SoundFonts, MusicXML input and export destinations.
 
@@ -140,7 +142,7 @@ Files imported from outside the selected folder are copied into it. Existing fil
 ## Where to find help
 Press **F1**, or choose **Help → Help contents**, for the built-in offline user guide.
 
-- **29 clickable topics** cover setup, imports, folder watching, metadata, instruments/OCR, MusicXML/MIDI playback, the audio-host preview, setlists, reading, pedals, settings, backups, CLI use, and troubleshooting.
+- **30 clickable topics in current source** (29 in the published v0.4.0 build) cover setup, imports, folder watching, metadata, instruments/OCR, annotations, MusicXML/MIDI playback, the audio-host preview, setlists, reading, pedals, settings, backups, CLI use, and troubleshooting.
 - **Search help** searches topic titles, keywords, and article text. Click a result to read it; **Clear** restores the full tree.
 - **Help → Keyboard shortcuts** opens the keyboard and pedal reference.
 - **Help → About RustyMusicSheets** shows the version, author, release year, license, and GitHub profile link.
@@ -159,6 +161,25 @@ Help is embedded in the executable and works without an internet connection. The
 Manual scans create proposals; they do not silently write assigned metadata. Existing protected choices require explicit replacement confirmation. For manual entry, use **Edit metadata → Instruments → + Add instrument**, then **Save metadata**.
 
 Automatic detection for new GUI imports is optional and off by default. It fills only clear, empty, unprotected instrument values. Ambiguous labels such as bare “Alto 1” are not blindly treated as saxophone.
+
+## Handwritten annotations (unreleased source)
+Open a PDF/PNG/JPEG score in Reader or Performance and choose **Annotate**. Original documents remain unchanged. Annotation mode provides **Pen**, translucent **Highlighter**, **Stroke eraser**, **Hand / Pan**, color/thickness, **Undo**, **Redo**, **Save now**, **Show ink**, and **Done**. A tap makes a dot. The eraser removes whole intersected strokes, not individual pixels; **Clear page…** requires confirmation and is undoable within the session history.
+
+Marks use page-relative vector coordinates, so they stay aligned through resizing, zoom, scrolling, fit-width and two-page view. Draw on either visible page; a gesture cannot spill onto the adjacent page or gutter. Choose Hand / Pan to drag-scroll, or Done to restore click-to-turn. Explicit page buttons and keyboard/pedal navigation work between gestures; finish a gesture before navigating. Escape leaves annotation mode before exiting Performance. Ctrl+Z, Ctrl+Shift+Z/Ctrl+Y and Ctrl+S apply to annotation undo/redo/save while the tools own input.
+
+Entering annotation mode disables synth page following to avoid turning the page under your pen; audio may continue. Re-enable following explicitly when finished. In Performance, expand **Accompaniment (audio controls)** for audio controls while annotating.
+
+### Saving and recovery
+The app verifies the original score identity before editing. Completed gestures are autosaved in the background; watch the saved/pending/error status and use Save now to flush. Ink is stored in app-data `annotations/<score-sha256>/<zero-based-page>.ink-v1.json`, not embedded in the PDF/image or library SQLite schema. Renaming/moving identical score content preserves annotations; changed content does not inherit old ink. Repeated setlist occurrences share the score's annotations.
+
+Atomic writes and content-token conflict checks protect the last saved page. Save errors retain unsaved ink in memory, with retry/reload controls; rejected sidecars are read-only until an explicit backed-up reset. Reload/discard actions require confirmation. Score switches and normal closing wait for pending saves; recovery dialogs offer retry, cancellation or explicit discard. A sudden crash/forced close can lose an in-progress or not-yet-acknowledged gesture: a visible stroke is not proof it reached disk.
+
+Limits are 8 MiB, 200,000 points and 10,000 strokes per page. The cache holds at most eight pages, with bounded session undo/redo history; unsaved pages are not evicted. At a limit, resolve/save/erase rather than expecting silent truncation. A write-lock error can mean another reader instance or a stale `.json.lock` after a crash. Close all writers and preserve the page/lock before manually resolving a stale lock; the app does not automatically delete an unknown owner's lock. Include the entire `annotations/` directory in app-data backups. Rescan/removal does not delete these sidecars.
+
+### Pen and platform boundaries
+A stylus/Surface Pen works as basic ink when the OS exposes it as pointer/touch input; a mouse works too. This version uses constant-width ink and one active contact. It does **not** guarantee pressure sensitivity, palm rejection, pen barrel/inverted-eraser buttons or particular hardware. Configure/test your device through its normal OS tools; the app does not install drivers or change global input settings.
+
+Shared drawing/storage is kept compatible with the Android foundation, but actual device behavior needs testing and Android PDF/OMR/audio limits remain. Typed text, musical stamps, moving/selecting objects, partial-stroke erasing and flattened annotated PDF/image export are not implemented. Annotations are initially visible inside the reader only; original score/MusicXML and MIDI exports do not contain the drawn overlay.
 
 ## Music recognition, MusicXML export, and MIDI playback (Linux)
 This is an **experimental, review-first OMR workflow**, separate from instrument-label detection. Audiveris recognizes printed notation into MusicXML; RustyMusicSheets interprets it using legacy external FluidSynth or the optional native SoundFont/VST3 host. No scores are uploaded, and source documents and library metadata remain unchanged.
@@ -403,10 +424,10 @@ By default:
 - `~/.config/rustymusicsheets/preferences.json` stores preferences.
 - Your selected music folder stores your score documents.
 
-The app honors `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, and `XDG_CACHE_HOME`. For a complete backup, **close the app**, then copy the selected music folder **and** the entire app data and config directories. Automatic pre-rescan/schema-migration snapshots contain metadata only, not copies of your scores.
+The app honors `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, and `XDG_CACHE_HOME`. For a complete backup, **close the app after ink saving completes**, then copy the selected music folder **and** the entire app data and config directories, including `annotations/` sidecars. Automatic pre-rescan/schema-migration snapshots contain metadata only, not copies of scores or drawn ink.
 
 ## Current limitations
-Not implemented yet: annotations, crop/rotation/page reordering, in-score navigation links, vertical/half-page display, metronome, VST2/CLAP/LV2 hosting, ChordPro/text, assembling image sequences, document printing/export, portable backup/restore, cloud integration, and multi-device sync. MusicXML/MIDI export, experimental Linux SoundFont/VST3 instrument playback and compatibility limits are described above.
+Not implemented yet: typed/stamp annotations or annotated PDF/image export, crop/rotation/page reordering, in-score navigation links, vertical/half-page display, metronome, VST2/CLAP/LV2 hosting, ChordPro/text, assembling image sequences, document printing/export, portable backup/restore, cloud integration, and multi-device sync. Freehand annotation source work, MusicXML/MIDI export, experimental Linux SoundFont/VST3 playback and compatibility limits are described above.
 
 Instrument OCR remains conservative label detection; musical transcription uses the separate optional Audiveris workflow. Faint scans, handwriting, uncommon abbreviations, and labels outside inspected regions may need manual entry. Audiveris targets printed notation, not handwriting. Physical pedals and touchscreens require device-specific testing. No compatibility is claimed for MobileSheets proprietary formats.
 

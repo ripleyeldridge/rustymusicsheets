@@ -33,6 +33,12 @@ Current changes still need their own checks before milestone review.
 
 Implemented
 -----------
+Unreleased annotation source work shares the page-vector/storage engine with
+desktop for supported PNG/JPEG scores. This is NOT in the published v0.4.0 APK
+and does not add Android PDF rendering/OMR/audio. Actual stylus/touch behavior
+needs device testing; constant-width ink does not guarantee palm rejection,
+pressure or pen buttons. Back up app-private annotations/ with complete library
+data; original documents are not rewritten. See the root annotation guide.
 - NativeActivity android_main entry point, Android logging, and eframe's
   Android event loop. Desktop main/CLI startup remains unchanged.
 - Dynamic safe-area bounds for status/navigation bars, camera cutouts and

@@ -288,6 +288,40 @@ Audible position is an estimate requiring loopback calibration. FluidSynth's
 internal 64-frame quantum may delay acoustic onset. Chorus/reverb are disabled
 for pause/seek flushing, so sound differs from legacy playback. Each part loads
 its own SoundFont instance; test memory, levels and timing before performance use.
+.SH ANNOTATIONS (UNRELEASED SOURCE)
+This source-branch feature is not in existing published v0.4.0 artifacts.
+Choose Annotate in Reader or Performance for Pen, translucent Highlighter,
+Stroke eraser, Hand / Pan, color/thickness, Undo/Redo, Save now and Show ink.
+Done restores click-to-turn. A tap makes a dot; erasing removes whole strokes.
+Clear page requires confirmation and is undoable within session history.
+.PP
+Page-relative vectors stay aligned through zoom/scroll/resize and two-page
+view. A gesture cannot cross to the adjacent page. Drawing does not also scroll
+or turn pages; Hand / Pan permits drag-scrolling. Navigation works between
+gestures. Escape leaves annotation mode first. Ctrl+Z, Ctrl+Shift+Z/Ctrl+Y and
+Ctrl+S apply to ink while tools own input.
+.PP
+Entering annotation mode disables synth page following; explicitly re-enable
+it afterward. Audio can continue. Score identity is verified before editing.
+Completed gestures autosave in the background; watch saved/error status.
+Closing/switching scores waits for saves and offers retry/cancel/discard
+recovery. Forced termination can lose a live or not-yet-acknowledged gesture.
+.PP
+Page sidecars are in app-data/annotations/, under the score hash, named
+<zero-based-page>.ink-v1.json. Back up annotations/ with all app data;
+SQLite-only backups omit ink. Original PDF/image files remain unchanged.
+Atomic content-token-checked writes reject conflicts. Corrupt/newer sidecars
+stay read-only until explicit backed-up recovery. Stale locks fail closed:
+close all writers and preserve sidecar/lock before manually resolving them.
+Limits: 8 MiB, 200,000 points and 10,000 strokes per page; eight cached pages
+and bounded session undo. Unsaved pages are not evicted or silently truncated.
+.PP
+Mouse and OS-recognized stylus/Surface Pen input use constant width and one
+active contact. Pressure, palm rejection, pen buttons and particular hardware
+are not guaranteed; no drivers/global input settings are changed.
+Android shares the engine for supported images, not native PDF/OMR/audio.
+Text/stamps, object moving, pixel erasing and annotated PDF/image export are
+deferred. Original score/MusicXML and MIDI exports do not contain drawn ink.
 .SH NOTES
 Folder watching runs while the application is open.
 Use the Library section to choose a music folder and configure readable titles.

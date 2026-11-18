@@ -83,7 +83,8 @@ machine. The UI uses OpenGL and supports X11 and Wayland.
 Help and About
 --------------
 Open Help > Help contents, or press F1, for the built-in offline user guide.
-The clickable topic tree contains 29 subjects grouped into getting started,
+The current source's clickable topic tree contains 30 subjects (published
+v0.4.0 has 29), grouped into getting started,
 library/files, browsing/metadata, instruments/OCR, setlists, reading/performance,
 settings/data, troubleshooting/reference, and About.
 Search help matches every entered word across titles, keywords, and article
@@ -271,6 +272,46 @@ Save or cancel dirty metadata drafts before detection or applying proposals.
 Changed files invalidate old proposals; rescan and detect them again.
 Manual metadata is retained if file contents are replaced, while automatic
 instrument assignments are cleared. Detection never modifies the score file.
+
+Annotations (unreleased source; not in existing v0.4.0 downloads)
+---------------------------------------------------------------
+In Reader or Performance, choose Annotate for Pen, translucent Highlighter,
+Stroke eraser, Hand / Pan, color/thickness, Undo/Redo, Save now, visibility
+and Done. A tap makes a dot; erasing removes whole strokes.
+Clear page requires confirmation and is undoable within session history.
+Original PDF/PNG/JPEG documents are not rewritten. Page-relative vectors stay
+aligned at different zoom/fit/scroll/resize settings and in two-page view.
+Each gesture belongs to its starting page; it cannot cross a spread gutter.
+Use Hand / Pan for drag scrolling and Done for normal page taps.
+Page buttons and keyboard/pedal turns work between gestures; Escape leaves
+annotation mode first. Ctrl+Z, Ctrl+Shift+Z/Ctrl+Y and Ctrl+S control ink
+undo/redo/save when annotation tools own input. Page following is disabled
+on entry; re-enable it explicitly after drawing. Audio may continue; expand
+Accompaniment (audio controls) in Performance when needed.
+
+Completed gestures autosave through a background worker after score identity
+verification. Watch Saving/Saved/error status; Save now flushes pending ink.
+Sidecars live in app-data/annotations/<score-sha256>/<zero-based-page>.ink-v1.json,
+not the score or SQLite schema. Identical content moved/renamed or repeated in
+a setlist shares ink; changed content never inherits annotations by filename.
+Writes are atomic and content-token conflicts fail rather than overwriting
+newer ink. Errors retain unsaved work; retry, confirm reload/discard or explicitly
+back up/reset a rejected sidecar. Score switches/closing wait for pending saves.
+Forced termination can lose a live or not-yet-acknowledged gesture.
+Limits: 8 MiB, 200,000 points and 10,000 strokes per page; eight cached pages
+and bounded session undo history. Unsaved pages are not evicted/truncated.
+A stale .json.lock after a crash fails closed. Close all readers and preserve
+the sidecar/lock before manually resolving it; unknown locks are not auto-removed.
+Back up annotations/ with complete app data; Rescan does not delete the files.
+
+Mouse and OS-recognized stylus/Surface Pen pointer/touch input use constant
+width and one active contact. Pressure, palm rejection, barrel/inverted eraser
+buttons and specific devices are not guaranteed. The app changes no drivers
+or global input settings. Android shares the engine for existing supported
+image workflows, not native PDF/OMR/audio parity; actual hardware needs testing.
+Text/stamps, moving objects, pixel erasing and annotated PDF/image export
+are deferred. Drawn overlays remain in-app and are not in original MusicXML,
+MIDI or source-document exports.
 
 Music recognition and MIDI playback (Linux)
 ------------------------------------------
@@ -727,6 +768,8 @@ with score locations in the SQLite database.
 Recognition data/logs, result references, private corrected MusicXML and saved
 mixes live in app-data/omr/, omr-index/, omr-corrected/ and omr-mix/.
 Include them in backups; SQLite-only snapshots do not contain recognized music.
+Current annotation source work stores page ink in app-data/annotations/.
+Wait for ink saves before closing for a backup; SQLite-only backups omit ink.
 
 Until portable backup/restore is implemented, close the application and copy
 the selected music folder AND the entire data and config directories.
@@ -853,7 +896,7 @@ before publishing.
 
 Current limitations
 --------------------
-Annotations, crop/rotation/page reordering, in-score navigation links,
+Typed/stamp annotations and annotated PDF/image export, crop/rotation/page reordering, in-score navigation links,
 vertical/half-page display, metronome, VST2/CLAP/LV2 hosting, microphone-based tracking,
 ChordPro/text, image-sequence assembly, document printing/export, portable
 backup/restore, cloud integration and multi-device sync are not implemented.
