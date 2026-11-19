@@ -30,8 +30,9 @@ impl Default for Settings {
 #[derive(Clone, Debug)]
 pub struct Report {
     pub summary: String,
-    /// No known-bad pair was found and both version probes succeeded.
+    /// Both version probes succeeded; permits attempts, not compatibility certification.
     pub compatible: bool,
+    pub notification: Option<String>,
     pub wine_version: Option<String>,
     pub bridge_version: Option<String>,
     pub warnings: Vec<String>,
@@ -162,14 +163,14 @@ pub fn is_wrapper(bundle: &Path, settings: &Settings) -> bool {
         .any(|window| window.eq_ignore_ascii_case(b"yabridge"))
 }
 
-pub fn check_bundle(bundle: &Path, settings: &Settings) -> Result<()> {
+pub fn check_bundle(bundle: &Path, settings: &Settings) -> Result<Option<String>> {
     validate_settings(settings)?;
     if !is_wrapper(bundle, settings) {
-        return Ok(());
+        return Ok(None);
     }
     let report = diagnostics(settings)?;
     ensure!(report.compatible, "{}", report.summary);
-    Ok(())
+    Ok(report.notification)
 }
 
 /// Called only for an owned helper, not to modify the application/global environment.
@@ -271,6 +272,7 @@ pub fn diagnostics(settings: &Settings) -> Result<Report> {
     let mut report = Report {
         summary: String::new(),
         compatible: false,
+        notification: None,
         wine_version: None,
         bridge_version: None,
         warnings: vec![],
@@ -298,21 +300,19 @@ pub fn diagnostics(settings: &Settings) -> Result<Report> {
     {
         report.warnings.push("A nested generated yabridge tree exists. Review source registrations and duplicate wrappers manually; generated output should not be registered as plugin source. Nothing was changed.".into());
     }
-    if incompatible_editor_versions(wine, bridge) {
-        report.summary = format!(
-            "Incompatible yabridge profile: Wine {} with yabridge {}. Wine 9.22 and newer (including 10.x and 11.x) have known embedded-editor mouse input/coordinate failures with yabridge 5.1.1 or earlier, even when audio plays. Upgrading only to 5.1.1 does not fix this. Select a separately verified compatible runtime/bridge profile; Wine and prefixes were not changed.",
-            wine.display(), bridge.display(),
-        );
-        report
-            .warnings
-            .push("Native Linux VST3 instruments do not need Wine or yabridge.".into());
-        return Ok(report);
-    }
     report.compatible = true;
     report.summary = format!(
         "Version preflight permits an explicit scan: Wine {}, yabridge {}. Individual plugin audio/editor/state compatibility remains unverified.",
         wine.display(), bridge.display(),
     );
+    if incompatible_editor_versions(wine, bridge) {
+        let notification = format!(
+            "yabridge editor warning: Wine {} with yabridge {}. Wine 9.22 and newer (including 10.x and 11.x) have known embedded-editor mouse input/coordinate failures with yabridge 5.1.1 or earlier, even when audio plays. Scans and playback are allowed. Workaround: move the editor to the far left of your desktop / leftmost screen; this may restore mouse interaction. Upgrading only to 5.1.1 does not fix this. Plugin audio/editor/state compatibility remains unverified; Wine and prefixes were not changed.",
+            wine.display(), bridge.display(),
+        );
+        report.summary = notification.clone();
+        report.notification = Some(notification);
+    }
     report.warnings.push("Tool version does not prove every generated wrapper is current. Register/sync changes, vendor installs and license activation remain user-directed.".into());
     report.warnings.push("A Wine prefix is configuration isolation, not a security sandbox. One Wine loader is selected for the complete helper session.".into());
     if wine != Version(9, 21, 0) || bridge != Version(5, 1, 1) {
@@ -334,8 +334,50 @@ pub fn diagnostics(settings: &Settings) -> Result<Report> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    #[cfg(target_os = "linux")]
+    pub(crate) fn advisory_profile(root: &Path) -> Settings {
+        use std::os::unix::fs::PermissionsExt;
+        let tool = root.join("yabridgectl");
+        let wine = root.join("wine");
+        for (path, output) in [
+            (&tool, "yabridgectl 5.1.1"),
+            (&wine, "wine-11.22 (Staging fixture)"),
+        ] {
+            std::fs::write(path, format!("#!/bin/sh\nprintf '{output}\\n'\n")).unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        Settings {
+            tool: tool.display().to_string(),
+            wine_loader: wine.display().to_string(),
+            wrapper_root: root.join("wrappers").display().to_string(),
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn invalid_profiles_remain_errors_not_advisories() {
+        let root = tempfile::tempdir().unwrap();
+        let settings = advisory_profile(root.path());
+        let bundle = root.path().join("wrappers/Synth.vst3");
+        for missing in ["tool", "wine"] {
+            let mut invalid = settings.clone();
+            if missing == "tool" {
+                invalid.tool = root.path().join("missing").display().to_string();
+            } else {
+                invalid.wine_loader = root.path().join("missing").display().to_string();
+            }
+            assert!(check_bundle(&bundle, &invalid).is_err());
+        }
+        for script in ["#!/bin/sh\nprintf unknown\n", "#!/bin/sh\nexit 7\n"] {
+            std::fs::write(&settings.wine_loader, script).unwrap();
+            assert!(check_bundle(&bundle, &settings).is_err());
+        }
+        let mut invalid = settings;
+        invalid.tool = "invalid\0path".into();
+        assert!(check_bundle(&bundle, &invalid).is_err());
+    }
     #[test]
     #[ignore = "Requires installed Wine/yabridgectl; only read-only version/list probes, never plugin loading"]
     #[cfg(target_os = "linux")]
@@ -349,7 +391,8 @@ mod tests {
             .zip(report.bridge_version.as_deref().and_then(Version::parse))
         {
             if incompatible_editor_versions(wine, bridge) {
-                assert!(!report.compatible);
+                assert!(report.compatible);
+                assert!(report.notification.as_deref().unwrap().contains("far left"));
             }
         }
         println!("{}", report.summary);
@@ -406,7 +449,10 @@ mod tests {
             wrapper_root: "/some/wrappers".into(),
             wine_loader: "/missing/wine".into(),
         };
-        assert!(check_bundle(Path::new("/native/Test.vst3"), &settings).is_ok());
+        assert_eq!(
+            check_bundle(Path::new("/native/Test.vst3"), &settings).unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -449,7 +495,7 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "linux")]
-    fn known_bad_profile_is_blocked_without_changing_any_prefix() {
+    fn editor_regression_is_advisory_without_changing_any_prefix() {
         use std::os::unix::fs::PermissionsExt;
         for (wine_version, bridge_version) in
             [("10.0", "5.1.0"), ("11.0", "5.1.1"), ("11.22", "5.1.1")]
@@ -477,14 +523,19 @@ mod tests {
                 wine_loader: wine.display().to_string(),
             };
             let report = diagnostics(&settings).unwrap();
-            assert!(!report.compatible);
+            assert!(report.compatible);
             assert!(report
                 .summary
                 .contains("Upgrading only to 5.1.1 does not fix"));
             assert!(report.summary.contains(&format!("Wine {wine_version}.")));
             assert!(report.summary.contains("including 10.x and 11.x"));
             assert!(report.summary.contains("even when audio plays"));
-            assert!(check_bundle(&wrappers.join("Amped.vst3"), &settings).is_err());
+            assert_eq!(
+                check_bundle(&wrappers.join("Amped.vst3"), &settings).unwrap(),
+                report.notification
+            );
+            assert!(report.summary.contains("Scans and playback are allowed"));
+            assert!(report.summary.contains("far left"));
             assert!(!root.path().join(".wine").exists());
         }
     }

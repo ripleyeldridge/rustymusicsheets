@@ -92,17 +92,21 @@ impl Catalogue {
         candidates: &[PathBuf],
         cancelled: &AtomicBool,
         retry: bool,
-    ) -> Result<()> {
+    ) -> Result<Vec<String>> {
         ensure!(
             candidates.len() <= MAX_CANDIDATES,
             "Too many plugin candidates"
         );
         let mut profile = profile(settings)?;
+        let mut notifications = Vec::new();
         if candidates
             .iter()
             .any(|p| super::yabridge::is_wrapper(p, &settings.yabridge))
         {
             let report = super::yabridge::diagnostics(&settings.yabridge)?;
+            if let Some(notification) = report.notification {
+                notifications.push(notification);
+            }
             profile = format!(
                 "{:x}",
                 Sha256::digest(
@@ -172,7 +176,7 @@ impl Catalogue {
                 failure,
             });
         }
-        Ok(())
+        Ok(notifications)
     }
 }
 

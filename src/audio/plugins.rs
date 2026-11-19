@@ -198,6 +198,7 @@ pub struct View {
     pub dirty_parts: Vec<String>,
     pub parameters: BTreeMap<String, (u32, u32, Vec<Parameter>)>,
     pub operation_error: Option<String>,
+    pub bridge_notification: Option<String>,
     pub checkpoint: Option<(u64, Vec<CheckpointPart>)>,
 }
 

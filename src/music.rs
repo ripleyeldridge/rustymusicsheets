@@ -947,6 +947,12 @@ impl Music {
         }
         let snapshot = self.playback.as_ref().map(Transport::snapshot);
         let state = snapshot.as_ref().map(|s| s.state);
+        if let Some(notification) = snapshot
+            .as_ref()
+            .and_then(|s| s.plugins.bridge_notification.as_deref())
+        {
+            ui.colored_label(Color32::YELLOW, notification);
+        }
         let ready = self.composition.is_some()
             && !self.mix_rejected
             && self.deferred_load.is_none()

@@ -577,10 +577,14 @@ registration/sync must already be complete. Never register generated output
 as plugin source or recursively nest wrappers.
 Wine 9.22 and newer (including 10.x and 11.x) with yabridge <=5.1.1
 have known embedded-editor mouse/coordinate failures even when audio plays.
-Diagnostics flag the pair as incompatible and preflight blocks new wrapper
-scans/loads, including Wine 11.22 Staging with yabridge 5.1.1.
-Moving the editor to another screen is only a workaround, not compatibility.
-Updating only to5.1.1 is not a fix. Choose a separately verified existing
+Diagnostics, scan results and playback controls show a non-blocking notification,
+including Wine 11.22 Staging with yabridge 5.1.1; scans and playback are allowed.
+Move the editor to the far left of your desktop / leftmost screen as a workaround;
+this may restore mouse interaction but does not establish compatibility.
+Missing tools, invalid settings and failed/unparseable probes remain errors.
+Previously quarantined bundles need Retry this bundle or an explicit rescan.
+This source policy does not retroactively alter the published v0.5.0 package.
+Updating only to 5.1.1 is not a fix. Optionally choose a separately verified existing
 runtime/profile; no Wine/prefix changes, automatic sync or installs occur.
 WINELOADER is helper-scoped, no global WINEPREFIX override is used.
 Passing version preflight for another combination permits an explicit attempt;
