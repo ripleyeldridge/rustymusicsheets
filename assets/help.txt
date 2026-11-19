@@ -25,7 +25,7 @@ Launch RustyMusicSheets from your application menu after installing a compatible
 
 PDF viewing needs pdfinfo and pdftoppm. PDF text extraction needs pdftotext. These are supplied by Ubuntu's poppler-utils package. OCR needs tesseract-ocr and language data such as tesseract-ocr-eng. Extra languages need their corresponding Tesseract packages. Zenity is optional for graphical file/folder pickers; pasted paths and drag-and-drop remain available.
 
-The published v0.4.0 Linux .deb includes the SDK-enabled rms-audio-host at /usr/libexec/rustymusicsheets/rms-audio-host. It needs no compiler or VST3 SDK to run; APT resolves its shared FluidSynth/JACK/OpenSSL and graphics dependencies. Recognition needs separately installed Audiveris. Legacy playback needs the external FluidSynth executable and a SoundFont; the native host needs a bank only for SoundFont parts, not a pure-VST3 graph. Plugins, SFZ/sample libraries and licenses remain external. --check checks Poppler/Tesseract, not these optional music dependencies.
+The published v0.5.0 Linux .deb includes the SDK-enabled rms-audio-host at /usr/libexec/rustymusicsheets/rms-audio-host. It needs no compiler or VST3 SDK to run; APT resolves its shared FluidSynth/JACK/OpenSSL and graphics dependencies. Recognition needs separately installed Audiveris. Legacy playback needs the external FluidSynth executable and a SoundFont; the native host needs a bank only for SoundFont parts, not a pure-VST3 graph. Plugins, SFZ/sample libraries and licenses remain external. --check checks Poppler/Tesseract, not these optional music dependencies.
 
 For the packaged host, select Audio host preview - PipeWire/JACK or native JACK in music settings, leave Audio-host executable empty and save preferences. Clear an old source-preview helper path if using the packaged helper. Supply an existing JACK/PipeWire-JACK stereo output; the app does not configure/start an audio server. See Audio-host preview for shared discovery, capability probing and plugin setup.
 
@@ -33,7 +33,7 @@ The native Ubuntu package declares its runtime dependencies. Install with APT af
 
 The current amd64 native build requires glibc 2.43 and targets the confirmed Ubuntu 26.10 reader, not Ubuntu 22.04/24.04. Do not replace system glibc or force dependencies. Rebuild on an older supported release if needed. Development builds require Rust 1.86+, Cargo, a C compiler, pkg-config, and eframe's graphics/input development libraries.
 
-The separate v0.4.0 ARM64 Android APK is experimental, debuggable and locally debug-signed. API 26 minimum, target API 36; this build passed static checks but was not executed on a device. It does not provide Linux PDF/OCR/OMR/audio parity. Preserve data and signer continuity; never uninstall a valuable library just to bypass a signature mismatch. Download checksums/build record/notices from the v0.4.0 release; checksums and unsigned provenance are not a release signature.
+The separate v0.5.0 ARM64 Android APK is experimental, debuggable and locally debug-signed. API 26 minimum, target API 36; this build passed static checks but was not executed on a device. It does not provide Linux PDF/OCR/OMR/audio parity. Preserve data and signer continuity; never uninstall a valuable library just to bypass a signature mismatch. Download checksums/build record/notices from the v0.5.0 release; checksums and unsigned provenance are not a release signature.
 
 @formats|Library and files|Supported formats and image scores|pdf png jpg jpeg transparent encrypted megapixel
 Import PDF, PNG, JPG, or JPEG files; extensions are case-insensitive. Each standalone image is one separate single-page score. A sequence of images is not automatically assembled into a multipage score. Use a PDF if you need one multipage document.
@@ -203,7 +203,7 @@ CLI --omr SOURCE OUTPUT_DIR [--audiveris EXE] prints generated MusicXML paths. -
 @audio-host|Music recognition and playback|Optional audio-host process preview|jack pipewire soundfont native helper build latency crash vst vst3 sfz sfizz
 Legacy FluidSynth remains the default. Settings and Music / OMR engine settings offer an explicit Audio host preview backend for PipeWire/JACK or native JACK. An SDK-enabled helper supports native Linux x86_64 VST3 instruments and existing compatible yabridge Linux wrappers, per-part state, generic parameters/presets and separate X11 editors where available. The ordinary non-SDK helper remains SoundFont-only. VST2, CLAP/LV2, effects chains, native Wayland editor embedding and Wine installation are not implemented.
 
-The published v0.4.0 package already includes the SDK-enabled helper; installed-package users do not need to compile it or acquire the SDK. Probe helper capabilities for vst3 and editor_keepalive. The following build instructions apply to source builds only.
+The published v0.5.0 package already includes the SDK-enabled helper; installed-package users do not need to compile it or acquire the SDK. Probe helper capabilities for vst3 and editor_keepalive. The following build instructions apply to source builds only.
 
 Build the separate helper from source with python3 scripts/build-audio-host.py --test. It requires CMake >=3.16, a C++17 compiler, pkg-config and JACK, FluidSynth >=2.2 and OpenSSL development packages. Normal Cargo/Android builds do not need or download them. Core-only tests use --core-only --test --build-dir target/audio-host-core.
 
@@ -269,7 +269,7 @@ Reading position is remembered automatically. Reader controls scroll in short wi
 Rendering runs in the background with nearby-page prefetch and bounded caches. UI render resolution is capped at 2560 pixels along the longest edge; zoom cannot restore detail absent from the source. Retry renders retries failed page loads.
 
 @annotations|Reader and performance|Handwritten page annotations|annotate ink stylus surface pen mouse highlighter stroke eraser undo redo save
-This is new source-branch work, not part of existing published v0.4.0 downloads. Rebuild the app to use it. Original PDF/PNG/JPEG score files remain unchanged.
+Available in v0.5.0. Original PDF/PNG/JPEG score files remain unchanged; marks are stored separately from the score.
 
 Choose Annotate in Reader or Performance. Use Pen, translucent Highlighter, Stroke eraser, Hand / Pan, color/thickness, Undo, Redo, Save now and Show ink. A tap makes a dot; the eraser removes whole strokes, not pixels. Clear page requires confirmation and is undoable within bounded session history. Done restores ordinary page clicks.
 
@@ -350,7 +350,7 @@ XDG_DATA_HOME, XDG_CONFIG_HOME, and XDG_CACHE_HOME override these bases. The sel
 
 GUI recognition artifacts, editable OMR projects and logs live in app-data/omr/, with omr-index/ result references, omr-corrected/ private MusicXML copies and omr-mix/ saved movement settings. Include these in a full backup. SQLite-only backups do not include original scores or recognized notation.
 
-Current annotation source work stores ink under app-data/annotations/, bound to score content hash and original page index. Include it in backups; wait for ink saves before closing for a snapshot. SQLite-only metadata backups omit drawn ink. Source files are not rewritten.
+Annotations are stored under app-data/annotations/, bound to score content hash and original page index. Include it in backups; wait for ink saves before closing for a snapshot. SQLite-only metadata backups omit drawn ink. Source files are not rewritten.
 
 For a complete backup, CLOSE the application and copy the selected music folder AND the entire app data and config directories. Do not copy only the SQLite main file while the app is open; WAL files may be needed. Do not manually rename managed files.
 
@@ -408,7 +408,7 @@ Follow score pages disabled? It needs consistent Audiveris original source-sheet
 @limits|Reference and troubleshooting|Current limitations|annotations midi audio sync printing export crop rotate mobilesheets
 This release is a functional native reader/library milestone, not full MobileSheets feature parity.
 
-Not implemented: typed/stamp annotations and annotated PDF/image export, crop/rotation/page reordering, in-score navigation links, vertical/half-page display, metronome, VST2/CLAP/LV2 hosting, effects chains, ChordPro/text, image-sequence assembly, document printing/export, portable backup/restore, cloud integration, and multi-device sync. Freehand source work is described in Handwritten page annotations. Experimental Linux OMR, MusicXML/MIDI export and selected-part SoundFont/VST3 playback are described in Music recognition and playback and Audio-host preview. Native VST3 requires an SDK-enabled helper; Windows wrappers require a separately compatible Wine/yabridge profile.
+Not implemented: typed/stamp annotations and annotated PDF/image export, crop/rotation/page reordering, in-score navigation links, vertical/half-page display, metronome, VST2/CLAP/LV2 hosting, effects chains, ChordPro/text, image-sequence assembly, document printing/export, portable backup/restore, cloud integration, and multi-device sync. Freehand annotations are described in Handwritten page annotations. Experimental Linux OMR, MusicXML/MIDI export and selected-part SoundFont/VST3 playback are described in Music recognition and playback and Audio-host preview. Native VST3 requires an SDK-enabled helper; Windows wrappers require a separately compatible Wine/yabridge profile.
 
 No compatibility is claimed for MobileSheets proprietary formats or device protocols. PDF/PNG/JPEG documents remain unchanged; instrument metadata stays in the local SQLite library rather than being embedded in the documents.
 

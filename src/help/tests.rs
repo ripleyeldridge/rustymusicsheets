@@ -60,7 +60,7 @@ fn annotation_docs_preserve_originals_and_state_storage_and_device_limits() {
             );
         }
     }
-    assert!(article.contains("not part of existing published v0.4.0"));
+    assert!(article.contains(&format!("Available in v{VERSION}")));
     assert!(article.contains("MIDI exports do not include drawn ink"));
 }
 

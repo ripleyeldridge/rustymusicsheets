@@ -3,12 +3,13 @@ RustyMusicSheets Android foundation
 
 This is the experimental Android foundation introduced with the 0.2.2
 preview, NOT a production Android release or desktop feature parity.
-The v0.4.0 prerelease includes RustyMusicSheets-0.4.0-android-arm64-debug.apk:
-    https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.4.0
+The v0.5.0 prerelease includes RustyMusicSheets-0.5.0-android-arm64-debug.apk:
+    https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.5.0
 Direct APK:
-    https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.4.0/RustyMusicSheets-0.4.0-android-arm64-debug.apk
-It matches commit 207ba1c750a6e6e39052ba5b5aa2e5fccbfbb356 and reports
-versionName 0.4.0/versionCode 16778240, arm64-v8a, minimum API 26/target API 36.
+    https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.5.0/RustyMusicSheets-0.5.0-android-arm64-debug.apk
+It is built from the tagged annotation branch and reports versionName 0.5.0,
+arm64-v8a, minimum API 26/target API 36. Exact source commit, versionCode and
+signer certificate fingerprint are recorded in build-record.json.
 It is debuggable and locally debug-signed, NOT production signed. Signature,
 manifest, ABI and ZIP/16 KiB ELF alignment checks passed; this APK was NOT
 executed on a device. Static verification does not establish device coverage
@@ -16,7 +17,7 @@ or Linux OMR/audio parity. The v0.2.3 APK is a historical foundation build.
 Do not assume Linux OMR, synth, page-follow or desktop Browse features work here.
 
 Download SHA256SUMS, build-record.json, LICENSE and
-rustymusicsheets-0.4.0-third-party-notices.tar.gz from the same release.
+rustymusicsheets-0.5.0-third-party-notices.tar.gz from the same release.
 All GitHub attachment names are flat. From their download directory:
     sha256sum --ignore-missing -c SHA256SUMS
 This verifies only downloaded files; omit --ignore-missing after downloading
@@ -33,9 +34,8 @@ Current changes still need their own checks before milestone review.
 
 Implemented
 -----------
-Unreleased annotation source work shares the page-vector/storage engine with
-desktop for supported PNG/JPEG scores. This is NOT in the published v0.4.0 APK
-and does not add Android PDF rendering/OMR/audio. Actual stylus/touch behavior
+The v0.5.0 APK shares the page-vector/storage annotation engine with desktop
+for supported PNG/JPEG scores. This does not add Android PDF rendering/OMR/audio. Actual stylus/touch behavior
 needs device testing; constant-width ink does not guarantee palm rejection,
 pressure or pen buttons. Back up app-private annotations/ with complete library
 data; original documents are not rewritten. See the root annotation guide.

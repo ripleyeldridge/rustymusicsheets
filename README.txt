@@ -1,4 +1,4 @@
-RustyMusicSheets 0.4.0 preview
+RustyMusicSheets 0.5.0 preview
 ===================
 
 A native Rust desktop sheet-music library and PDF/image performance reader for Linux,
@@ -7,31 +7,33 @@ This is an evolving preview, NOT full MobileSheets feature parity.
 
 Downloads and install
 ---------------------
-Release 0.4.0 adds native VST3/SoundFont hosting, shared plugin discovery and
-state, modal-editor liveness protection, reversible OMR part combinations,
-and shared-timing recovery of layout-only empty implicit measures.
-Published tag v0.4.0 matches commit 207ba1c750a6e6e39052ba5b5aa2e5fccbfbb356.
-The Linux package includes the SDK-enabled helper, not plugins, samples,
-SDK source or personal settings. It remains a prerelease, not stable/latest.
+Release 0.5.0 adds non-destructive pen/highlighter annotations, stroke erasing,
+undo/redo, asynchronous hash-bound page-ink autosave and recovery, safe reader
+navigation/closing, and Wine 11.x/legacy-yabridge incompatibility diagnostics.
+It retains native VST3/SoundFont hosting and reversible OMR part combination.
+This is an annotation-branch prerelease, not a stable/latest promotion.
+Exact source commit, build and signing details are in build-record.json.
+The package includes the SDK-enabled helper, not plugins/samples/SDK source.
 
 Latest published Linux preview and release notes:
-    https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.4.0
-Download rustymusicsheets_0.4.0-1_amd64.deb and SHA256SUMS from that page.
+    https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.5.0
+Download rustymusicsheets_0.5.0-1_amd64.deb and SHA256SUMS from that page.
 In their shared download directory, after confirming amd64/glibc compatibility:
     sha256sum --ignore-missing -c SHA256SUMS
-    sudo apt install ./rustymusicsheets_0.4.0-1_amd64.deb
+    sudo apt install ./rustymusicsheets_0.5.0-1_amd64.deb
 --ignore-missing verifies only downloaded files. To verify the complete set,
 download all six attachments and run sha256sum -c SHA256SUMS without it.
 Attachments also include build-record.json, LICENSE and
-rustymusicsheets-0.4.0-third-party-notices.tar.gz. GitHub filenames are flat.
+rustymusicsheets-0.5.0-third-party-notices.tar.gz. GitHub filenames are flat.
 The build record is unsigned provenance; checksums are not a release signature.
 
 This native Ubuntu 26.10 build requires glibc 2.43 or newer; it does not support
 Ubuntu 22.04/24.04. Build on the target distribution when needed. Do not force
 dependencies or replace system glibc. Stable v0.2.1 remains available separately.
-The separate RustyMusicSheets-0.4.0-android-arm64-debug.apk is experimental,
+The separate RustyMusicSheets-0.5.0-android-arm64-debug.apk is experimental,
 debuggable and locally debug-signed, NOT production signed or desktop parity.
-It reports versionName 0.4.0/versionCode 16778240, minimum API 26/target API 36.
+It reports versionName 0.5.0, minimum API 26/target API 36; versionCode and
+signing certificate fingerprint are recorded in build-record.json.
 Static checks passed; this APK was not executed on a device. See
 android/README.txt and its signer-continuity/data-preservation warnings.
 
@@ -83,8 +85,7 @@ machine. The UI uses OpenGL and supports X11 and Wayland.
 Help and About
 --------------
 Open Help > Help contents, or press F1, for the built-in offline user guide.
-The current source's clickable topic tree contains 30 subjects (published
-v0.4.0 has 29), grouped into getting started,
+The clickable topic tree contains 30 subjects grouped into getting started,
 library/files, browsing/metadata, instruments/OCR, setlists, reading/performance,
 settings/data, troubleshooting/reference, and About.
 Search help matches every entered word across titles, keywords, and article
@@ -273,7 +274,7 @@ Changed files invalidate old proposals; rescan and detect them again.
 Manual metadata is retained if file contents are replaced, while automatic
 instrument assignments are cleared. Detection never modifies the score file.
 
-Annotations (unreleased source; not in existing v0.4.0 downloads)
+Annotations (v0.5.0)
 ---------------------------------------------------------------
 In Reader or Performance, choose Annotate for Pen, translucent Highlighter,
 Stroke eraser, Hand / Pan, color/thickness, Undo/Redo, Save now, visibility
@@ -425,7 +426,7 @@ The initial native target is Linux x86_64 VST3 instruments, not VST2/effects.
 
 Ordinary Cargo and Android builds remain independent of native audio SDKs.
 Native Linux VST3 needs no Wine/yabridge. SoundFont-only builds need no SDK.
-Installed v0.4.0 package quick start (no SDK build required):
+Installed v0.5.0 package quick start (no SDK build required):
 1. Choose Audio host preview - PipeWire/JACK or native JACK in music settings.
 2. Leave Audio-host executable empty for the packaged helper. Clear an old
    source-preview path if you intend to use the installed helper; save settings.
@@ -488,7 +489,7 @@ can delay actual note onset. Test before relying on the preview in performance.
 
 python3 scripts/build-deb.py --with-audio-host explicitly packages the helper,
 native runtime dependencies and notices. The source builder without that flag
-omits the helper; the published v0.4.0 package includes the SDK-enabled helper.
+omits the helper; the published v0.5.0 package includes the SDK-enabled helper.
 No Wine/yabridge installation, system Wine changes or release changes occur.
 For VST3, additionally use CMake >=3.25 and X11 development headers
 (libx11-dev on Ubuntu), then from the repository root:
@@ -771,7 +772,7 @@ with score locations in the SQLite database.
 Recognition data/logs, result references, private corrected MusicXML and saved
 mixes live in app-data/omr/, omr-index/, omr-corrected/ and omr-mix/.
 Include them in backups; SQLite-only snapshots do not contain recognized music.
-Current annotation source work stores page ink in app-data/annotations/.
+Annotations store page ink in app-data/annotations/.
 Wait for ink saves before closing for a backup; SQLite-only backups omit ink.
 
 Until portable backup/restore is implemented, close the application and copy
@@ -788,7 +789,7 @@ missing managed copy if its database record still exists.
 
 Validation
 ----------
-The published v0.4.0 commit passed 277 standard + all 9 opt-in Rust tests,
+Release validation covers 334 standard and the opt-in Rust tests,
 46 Python tests, strict formatting/Clippy, 16 native CTests with sanitizers,
 sfizz checks, Android static checks and packaged-app startup/close.
 Final live audio regressions used a private dummy JACK server, not physical
@@ -834,7 +835,7 @@ Build a native package without installing it or requiring root:
 
 This requires Python 3.9+, Cargo/Rust, dpkg-deb, dpkg-shlibdeps (dpkg-dev),
 and binutils. The result is written to:
-    dist/rustymusicsheets_0.4.0-1_<architecture>.deb
+    dist/rustymusicsheets_0.5.0-1_<architecture>.deb
 --revision 2 selects Debian revision 2; the application version comes from
 Cargo.toml. Numeric application versions must match the root Cargo.lock entry.
 
@@ -859,7 +860,7 @@ Do not force-install it or replace the reader's glibc to bypass dependencies.
 
 After confirming compatibility, install the package with APT so dependencies
 are resolved:
-    sudo apt install ./dist/rustymusicsheets_0.4.0-1_amd64.deb
+    sudo apt install ./dist/rustymusicsheets_0.5.0-1_amd64.deb
 
 Replace the filename with the package matching your reader's architecture.
 Personal music-library data and preferences are not shipped in the package.
@@ -868,7 +869,7 @@ Uninstalling the application does not delete your library.
 Publishing releases (maintainers)
 ---------------------------------
 See README.md, "Publishing a release", for the complete checked command sequence.
-Do not replay it against already-published v0.4.0; choose an unused next version.
+Do not replay it against already-published v0.5.0; choose an unused next version.
 1. Update Cargo.toml, only the root Cargo.lock package version, current guide
    headings and the man-page header. Runtime version displays derive from Cargo.
 2. Run validation, review, merge as needed, and commit BEFORE building/tagging.
