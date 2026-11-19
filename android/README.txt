@@ -8,8 +8,9 @@ The v0.6.0 prerelease includes RustyMusicSheets-0.6.0-android-arm64-debug.apk:
 Direct APK:
     https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.6.0/RustyMusicSheets-0.6.0-android-arm64-debug.apk
 It is built from the immutable v0.6.0 tag on merged main and reports
-versionName 0.6.0, arm64-v8a, minimum API 26/target API 36. Exact source commit,
-versionCode and signer certificate fingerprint are recorded in build-record.json.
+versionName 0.6.0, versionCode 16778752, arm64-v8a, minimum API 26/target API 36.
+The release/build commit is bab87330fbcb47e44739f43b4e650d28519e60a8.
+Exact source/version and signer details are recorded in build-record.json.
 Use main for development or the v0.6.0 tag for the published source snapshot.
 Previous APKs, tags and release assets remain unchanged.
 It is debuggable and locally debug-signed, NOT production signed. Signature,
@@ -28,11 +29,21 @@ not an attestation; checksums are not a release signature.
 Check signer_certificate_sha256 in build-record.json against the installed
 app's signing identity before updating. Local/CI debug signers can differ.
 Preserve data and never uninstall a valuable library to bypass a mismatch.
+The published local v0.6.0 APK uses the same debug signer as the published
+local v0.5.0 APK; this does not guarantee a match with another installed or
+CI-signed build. After verifying the checksum, installed signer and independent
+backup, install/update the downloaded APK through Android's package installer
+and confirm 0.6.0 in Help > About. Do not enable a broad storage permission;
+the supported Open with PNG/JPEG workflow uses a one-time URI read grant.
 
 M0 includes generated fixtures, isolated provider/import/rendering tests and
-integrated CI. A historical hosted API 35 x86_64 baseline passed all ten
-cases; see TESTING.txt and CI.txt for exact source/run and matrix limits.
-Current changes still need their own checks before milestone review.
+integrated CI. For v0.6.0, hosted CI passed Linux regression, ARM64 debug/static
+and isolated API 35 x86_64 emulator smoke jobs on PR head c51d30a53c84:
+    https://github.com/ripleyeldridge/rustymusicsheets/actions/runs/44564733225
+Its source tree matches the merged release commit. The x86_64 harness/emulator
+result is separate from the locally built ARM64 APK and does not establish
+physical-device, ARM64 runtime or stylus coverage. See TESTING.txt and CI.txt
+for harness procedures and historical baselines.
 
 Implemented
 -----------

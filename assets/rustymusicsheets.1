@@ -112,6 +112,34 @@ The amd64 Linux package requires glibc >=2.43 and is not compatible with
 Ubuntu 22.04/24.04. Rebuild on the target distribution rather than replacing glibc.
 Stable/latest remains v0.2.1; v0.6.0 is a prerelease.
 .PP
+Published 19 November 2026 through PR #9, annotated tag v0.6.0 resolves to
+release/build commit bab87330fbcb47e44739f43b4e650d28519e60a8.
+Later main documentation changes do not replace published tags or assets.
+.SS INSTALLING AND UPGRADING
+Check the reader with dpkg --print-architecture and getconf GNU_LIBC_VERSION.
+The published package requires amd64 and glibc 2.43 or newer.
+Download rustymusicsheets_0.6.0-1_amd64.deb and SHA256SUMS from the release
+page into the same directory, then verify and install:
+.nf
+sha256sum --ignore-missing -c SHA256SUMS
+sudo apt install ./rustymusicsheets_0.6.0-1_amd64.deb
+rustymusicsheets --help
+rustymusicsheets --check
+.fi
+Require a successful package checksum before installation. The checksum file
+is not a release signature. APT resolves declared runtime libraries.
+The --check command checks PDF/OCR helpers, not JACK or plugin compatibility.
+.PP
+Before upgrading, save plugin assignments/state while paused/stopped, wait for
+annotation saves and close the app. Back up the music folder and complete
+app data/config directories, including annotations/ and OMR mixes.
+No uninstall or catalogue reset is needed. Relaunch the installed app and
+confirm 0.6.0 in Help > About. A source-preview launcher may still use an older
+binary. For the packaged helper, leave Audio-host executable empty and save
+preferences. Previously quarantined wrappers need Retry this bundle or
+Retry quarantined / rescan; the non-blocking notification does not clear
+quarantine or change assignments. No Wine downgrade or automatic sync is needed.
+.PP
 The published .deb includes the SDK-enabled helper at
 /usr/libexec/rustymusicsheets/rms-audio-host. APT resolves system runtime
 libraries; no compiler or VST3 SDK is needed to run it.

@@ -138,6 +138,41 @@ fn published_release_docs_link_current_assets_and_distinguish_android_limits() {
 }
 
 #[test]
+fn installation_guides_cover_verified_package_upgrades_and_quarantine_retry() {
+    let requirements = topics()
+        .iter()
+        .find(|topic| topic.id == "requirements")
+        .unwrap()
+        .body;
+    for documentation in [
+        include_str!("../../README.md"),
+        include_str!("../../README.txt"),
+        include_str!("../../assets/rustymusicsheets.1"),
+        requirements,
+    ] {
+        let normalized = documentation
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        for term in [
+            "dpkg --print-architecture".to_owned(),
+            "getconf GNU_LIBC_VERSION".to_owned(),
+            "sha256sum --ignore-missing -c SHA256SUMS".to_owned(),
+            format!("sudo apt install ./rustymusicsheets_{VERSION}-1_amd64.deb"),
+            "annotations/".to_owned(),
+            "Retry quarantined / rescan".to_owned(),
+            "non-blocking notification".to_owned(),
+        ] {
+            assert!(
+                normalized.contains(&term),
+                "Missing upgrade guidance: {term}"
+            );
+        }
+        assert!(!normalized.contains("preflight blocks new wrapper"));
+    }
+}
+
+#[test]
 fn music_guides_distinguish_packaged_host_source_builds_and_v3_layout() {
     let embedded = ["requirements", "music", "audio-host"]
         .iter()

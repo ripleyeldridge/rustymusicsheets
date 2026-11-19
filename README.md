@@ -10,7 +10,7 @@ A native Linux sheet-music library and performance reader, written in Rust with 
 - Keep missing tools, invalid settings, failed version probes and actual plugin/helper failures as errors. Native Linux VST3 instruments remain independent of Wine/yabridge.
 - Retain v0.5.0's non-destructive annotations and native VST3/SoundFont hosting with reversible OMR part combination.
 
-This minor preview is released from the merged `main` source. The exact immutable tag commit, asset hashes, signing identity and verification results are recorded in `build-record.json`. Previous tags and assets, including [v0.5.0](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.5.0), remain unchanged. This is not a stable/latest promotion. The Linux package includes the SDK-enabled helper, not plugins, samples, SDK source or personal data.
+Published on **19 November 2026**, this minor preview was merged into `main` through [PR #9](https://github.com/ripleyeldridge/rustymusicsheets/pull/9). Annotated tag **`v0.6.0`** points to release/build commit **`bab87330fbcb47e44739f43b4e650d28519e60a8`**. Later documentation or development commits on `main` do not change that snapshot. Asset hashes, signing identity and verification results are recorded in `build-record.json`. Previous tags and assets, including [v0.5.0](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.5.0), remain unchanged. This is not a stable/latest promotion. The Linux package includes the SDK-enabled helper, not plugins, samples, SDK source or personal data.
 
 ## Latest published preview: v0.6.0
 - [Release notes](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.6.0)
@@ -68,11 +68,20 @@ See [Scan, review, apply](#instrument-detection-scan-review-apply) for the workf
 
 ## Install
 ### Option 1: Ubuntu/Debian package
-Download the [v0.6.0 preview package](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.6.0/rustymusicsheets_0.6.0-1_amd64.deb) and [SHA256SUMS](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.6.0/SHA256SUMS) into the **same directory**. Verify the files you downloaded, then install with APT so dependencies are resolved:
+First check the reader's package architecture and glibc version:
+
+```bash
+dpkg --print-architecture
+getconf GNU_LIBC_VERSION
+```
+
+The published package needs **amd64** and **glibc 2.43 or newer**. If the architecture differs or glibc is older, build on your target distribution instead. Download the [v0.6.0 preview package](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.6.0/rustymusicsheets_0.6.0-1_amd64.deb) and [SHA256SUMS](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.6.0/SHA256SUMS) into the **same directory**. Verify the files you downloaded, then install with APT so dependencies are resolved:
 
 ```bash
 sha256sum --ignore-missing -c SHA256SUMS
 sudo apt install ./rustymusicsheets_0.6.0-1_amd64.deb
+rustymusicsheets --help
+rustymusicsheets --check
 ```
 
 These commands are for a compatible reader; check the architecture and runtime requirement below first. New downloads are published as GitHub Release assets. Development builds live in ignored `dist/`; [`packages/`](packages/) contains older selected packages, not the current preview. Build from source if the package does not match your system.
@@ -82,6 +91,20 @@ All six release attachments have flat filenames. `--ignore-missing` permits veri
 **Compatibility matters:** the current native amd64 build targets the confirmed **Ubuntu 26.10 x86_64** reader and requires **glibc 2.43 or newer**. It is **not compatible with Ubuntu 22.04/24.04**. A `.deb` is not a universal Linux binary: use a matching package or build on your target distribution. Do not force-install incompatible packages or replace system glibc.
 
 The published package includes `/usr/libexec/rustymusicsheets/rms-audio-host` with protocol-v2 SoundFont/VST3 and X11 editor support. APT resolves its system runtime libraries, including FluidSynth, JACK and OpenSSL, plus Poppler/Tesseract/graphics dependencies. **You do not need a compiler or the VST3 SDK to run this package.** Audiveris, the external FluidSynth executable for legacy playback, SoundFont banks, VST3 plugins and sample libraries are separate optional dependencies. Zenity is recommended for file/folder pickers. An existing JACK or PipeWire-JACK output is required for the host backend; installing the package does not configure an audio server.
+
+#### Upgrade from v0.5.0 or an older preview
+1. Save plugin assignments/state while paused or stopped, wait for annotation saves, and close the app. Back up the music folder and complete app data/config directories, including `annotations/` and OMR mixes; see [Data and backups](#data-and-backups).
+2. Install the verified v0.6.0 `.deb` with the same APT command above. You do not need to uninstall first or delete your catalogue, saved mixes or annotations.
+3. Relaunch the installed app and check **Help → About** for **0.6.0**. If you normally use a source-preview launcher, it may still point to a different binary; rebuild that checkout explicitly or launch the installed application.
+4. In **Settings → Music recognition and MIDI playback**, choose the intended backend. To use the packaged host, leave **Audio-host executable** empty and save preferences; an old absolute source-helper path otherwise remains selected.
+5. For wrappers quarantined by the old compatibility rejection, use **Retry this bundle** or **Retry quarantined / rescan** in shared VST3 discovery. The non-blocking notification does not automatically clear quarantine or change an assignment. The far-left workaround remains relevant if an editor ignores mouse input.
+
+`--help` reports the executable version; `--check` checks PDF/OCR helpers, **not** JACK, plugin audio, licensing or editor compatibility. No Wine downgrade, prefix migration or automatic yabridge `sync` is required by this policy change.
+
+#### Packaged VST3 quick start
+No source build is needed for the published `.deb`. Select **Audio host preview — PipeWire/JACK** for an existing PipeWire-JACK desktop, or **Audio host preview — native JACK** for an existing JACK server. Leave the helper path empty, save preferences, then open **VST3 bundle discovery (shared by all parts)** and **Probe helper capabilities**; expect `vst3` and `editor_keepalive`.
+
+Inspect an outer Linux `.vst3` bundle once, or add existing yabridge wrapper roots explicitly, then choose its exact class for each part. Use **Load instruments paused → Open editor**, start at a low master level, and **Save plugin assignments and state** while paused/stopped. Browsing or scanning does not assign an instrument. See [the complete instrument workflow](#5-browse-assign-and-configure-an-instrument) for SFZ/sfizz, presets and state limitations.
 
 ### Option 2: Build from source
 You need **Rust 1.86 or newer**, Cargo, Git, a C compiler, pkg-config, and the graphics/input development libraries required by eframe on your distribution. The app uses OpenGL and supports X11 and Wayland.
@@ -107,7 +130,7 @@ cargo build --locked --release
 
 The example checks out the immutable release tag to reproduce the published source version. For ongoing development, use `git switch main` and `git pull --ff-only`; annotations are already merged into `main`, so no feature-branch checkout is required.
 
-If you already have the repository, skip cloning and build from your chosen checkout. If compilation reports missing native development libraries, install the appropriate eframe/X11/Wayland/xkbcommon development packages for your distribution.
+If you already have the repository, preserve local edits before switching revisions, fetch the tag with `git fetch origin tag v0.6.0`, and build from your chosen checkout. A Cargo app build alone does **not** build the optional audio host; follow [the separate helper instructions](#2-build-both-binaries) for source VST3 playback. If compilation reports missing native development libraries, install the appropriate eframe/X11/Wayland/xkbcommon development packages for your distribution.
 
 To build a native Debian package without installing it or requiring root:
 
@@ -458,7 +481,7 @@ The source now includes a NativeActivity entry point and a document-access layer
 This is an **experimental Android prerelease**, not desktop feature parity. Native PDF/OCR, the in-app Android picker, document-tree watching, and Android keep-awake integration remain incomplete. The ARM64 debug APK builds using `scripts/build-android.sh`; signature/manifest/16 KiB alignment checks pass with `scripts/verify-android-apk.py`. The 0.6.0 APK reports versionName `0.6.0`, minimum API 26 and target API 36; its numeric versionCode and signing certificate fingerprint are recorded in `build-record.json`. Earlier foundation builds had Pixel 8 Pro (API 37) startup/safe-area checks; **the 0.6.0 APK has static verification only, not current device execution**. Broader rendering, import/provider, and device testing remains pending. See [Android setup and implementation boundaries](android/README.txt) before attempting a build or installation.
 
 ### Validation commands
-The v0.6.0 validation scope is 336 standard Rust tests, 46 Python tooling tests, formatting/strict Clippy, native CTests including sanitizers, package identity/content checks and Android static verification. The release build record lists the checks actually performed. Opt-in real-plugin/audio tests are not part of ordinary validation; historical private dummy JACK runs do not certify this build on physical output. Device-clock latency still needs loopback calibration. The Android APK was not run on a device; no universal plugin, pedal or stylus compatibility is claimed.
+The published v0.6.0 release passed **336 standard Rust tests, 46 Python tooling tests and 16 native CTests**, including sanitizers, plus formatting/strict Clippy, SDK integrity, package identity/content, extracted-app startup/close and Android static verification. All six uploaded assets were downloaded and byte-verified before publication. [Hosted CI on the matching PR source tree](https://github.com/ripleyeldridge/rustymusicsheets/actions/runs/44564733225) also passed Linux regression, ARM64 static and isolated API 35 **x86_64 emulator** jobs. That emulator result is separate from the locally built ARM64 APK, which was not run on a device. The release build record lists the exact source and checks performed. Nine opt-in Rust tests were not run; historical private dummy JACK runs do not certify this build on physical output. Device-clock latency still needs loopback calibration, and no universal plugin, pedal or stylus compatibility is claimed. The commands below validate the current checkout, which may include later documentation changes.
 ```bash
 cargo fmt --check
 cargo test --locked

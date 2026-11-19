@@ -29,7 +29,11 @@ The published v0.6.0 Linux .deb includes the SDK-enabled rms-audio-host at /usr/
 
 For the packaged host, select Audio host preview - PipeWire/JACK or native JACK in music settings, leave Audio-host executable empty and save preferences. Clear an old source-preview helper path if using the packaged helper. Supply an existing JACK/PipeWire-JACK stereo output; the app does not configure/start an audio server. See Audio-host preview for shared discovery, capability probing and plugin setup.
 
-The native Ubuntu package declares its runtime dependencies. Install with APT after checking architecture and runtime compatibility, for example: sudo apt install ./rustymusicsheets_VERSION-1_amd64.deb (replace VERSION with the release version).
+Download rustymusicsheets_0.6.0-1_amd64.deb and SHA256SUMS from https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.6.0 into the same directory. Check dpkg --print-architecture and getconf GNU_LIBC_VERSION first: the package requires amd64 and glibc 2.43 or newer. Run sha256sum --ignore-missing -c SHA256SUMS and require a successful checksum for the package before sudo apt install ./rustymusicsheets_0.6.0-1_amd64.deb. APT resolves declared runtime dependencies. Launch the installed app and confirm 0.6.0 in Help > About; rustymusicsheets --help also reports the executable version.
+
+Before upgrading, save plugin assignments/state while paused/stopped, wait for annotation saves and close the app. Back up the music folder and complete app data/config directories, including annotations/ and OMR mixes. No uninstall or catalogue reset is needed. An old source-preview launcher/helper path can still select an older binary: rebuild that checkout, or use the installed application with Audio-host executable empty. Wrappers quarantined by the earlier compatibility rejection need Retry this bundle or Retry quarantined / rescan explicitly; v0.6.0's non-blocking notification does not clear quarantine or change assignments.
+
+Published v0.6.0 is the immutable tag/build commit bab87330fbcb47e44739f43b4e650d28519e60a8, merged through PR #9. Later main documentation changes do not replace those assets; stable/latest remains v0.2.1.
 
 The current amd64 native build requires glibc 2.43 and targets the confirmed Ubuntu 26.10 reader, not Ubuntu 22.04/24.04. Do not replace system glibc or force dependencies. Rebuild on an older supported release if needed. Development builds require Rust 1.86+, Cargo, a C compiler, pkg-config, and eframe's graphics/input development libraries.
 

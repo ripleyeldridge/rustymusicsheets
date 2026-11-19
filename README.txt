@@ -18,13 +18,24 @@ OMR part combination. The exact merged main source commit and asset/signing
 provenance are recorded in build-record.json. Previous release tags/assets
 remain unchanged. This is a prerelease, not a stable/latest promotion.
 The package includes the SDK-enabled helper, not plugins/samples/SDK source.
+Published 19 November 2026 through PR #9, annotated tag v0.6.0 points to
+release/build commit bab87330fbcb47e44739f43b4e650d28519e60a8.
+Later main documentation/development commits do not change that release.
 
 Latest published Linux preview and release notes:
     https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.6.0
 Download rustymusicsheets_0.6.0-1_amd64.deb and SHA256SUMS from that page.
+Check the reader first:
+    dpkg --print-architecture
+    getconf GNU_LIBC_VERSION
+The downloaded package requires amd64 and glibc 2.43 or newer.
 In their shared download directory, after confirming amd64/glibc compatibility:
     sha256sum --ignore-missing -c SHA256SUMS
     sudo apt install ./rustymusicsheets_0.6.0-1_amd64.deb
+    rustymusicsheets --help
+    rustymusicsheets --check
+--help reports the executable version; --check checks PDF/OCR helpers, not
+JACK, plugin audio, licensing or editor compatibility.
 --ignore-missing verifies only downloaded files. To verify the complete set,
 download all six attachments and run sha256sum -c SHA256SUMS without it.
 Attachments also include build-record.json, LICENSE and
@@ -47,6 +58,33 @@ including FluidSynth/JACK/OpenSSL. Audiveris, the external FluidSynth executable
 for legacy playback, SoundFonts, plugins and sample libraries remain separate.
 For the host backend, supply an already-working JACK or PipeWire-JACK output;
 the app does not install plugins or configure an audio server.
+
+Upgrading from v0.5.0 or an older preview
+----------------------------------------
+Save plugin assignments/state while paused or stopped, wait for annotation
+saves and close the app. Back up the music folder and complete app data/config
+directories, including annotations/ and OMR mixes. Install the verified .deb
+with APT as above; do not uninstall first or delete saved mixes/catalogues.
+Relaunch and confirm 0.6.0 in Help > About. An old source-preview launcher may
+point to another binary; rebuild its checkout or launch the installed app.
+For the packaged helper, leave Audio-host executable empty and save preferences.
+Wrappers quarantined by the previous version gate need Retry this bundle or
+Retry quarantined / rescan; the notification does not clear quarantine or
+change assignments. Move an unresponsive editor to the far left / leftmost
+screen as a workaround, not a compatibility guarantee. This change requires
+no Wine downgrade, prefix migration or automatic yabridge sync.
+
+Packaged VST3 quick start
+-------------------------
+No compiler or SDK is needed for the published package. Select Audio host
+preview - PipeWire/JACK for an existing PipeWire-JACK desktop, or native JACK
+for an existing JACK server. Leave the helper path empty and save preferences.
+Expand VST3 bundle discovery (shared by all parts), then Probe helper
+capabilities; expect vst3 and editor_keepalive. Inspect an outer Linux .vst3
+bundle or explicitly scan existing yabridge wrappers. Choose each part's exact
+class, Load instruments paused, then Open editor. Start at a low master level
+and Save plugin assignments and state while paused/stopped. Scanning never
+assigns a part. Plugins, sample libraries and licenses remain external.
 
 Build and run
 -------------
@@ -801,13 +839,18 @@ missing managed copy if its database record still exists.
 
 Validation
 ----------
-The v0.6.0 validation scope is 336 standard Rust tests, 46 Python tests,
-strict formatting/Clippy, native CTests including sanitizers, package content
-checks and Android static verification. See build-record.json for checks
-actually performed. Opt-in real-plugin/audio tests remain separate; historical
-private dummy JACK runs do not certify this build on physical output.
-Loopback timing calibration remains pending. The Android APK was not executed
-on a device. Do not infer universal plugin, pedal or stylus compatibility.
+The published v0.6.0 passed 336 standard Rust tests, 46 Python tests and
+16 native CTests including sanitizers, strict formatting/Clippy, SDK integrity,
+package content/startup checks and Android static verification. All six
+uploaded assets were downloaded and byte-verified. Hosted CI also passed
+Linux, ARM64 static and isolated API 35 x86_64 emulator jobs:
+    https://github.com/ripleyeldridge/rustymusicsheets/actions/runs/44564733225
+That emulator evidence is separate from the locally built ARM64 APK, which
+was not executed on a device. See build-record.json for source/check details.
+Nine opt-in Rust tests were not run; historical private dummy JACK runs do
+not certify this build on physical output. Loopback timing calibration remains
+pending. Do not infer universal plugin, pedal or stylus compatibility.
+The following commands validate the current checkout, not immutable assets.
     cargo fmt --check
     cargo test --locked
     cargo clippy --locked --all-targets -- -D warnings
