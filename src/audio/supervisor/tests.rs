@@ -6,6 +6,59 @@ use crate::{
 };
 use std::os::unix::fs::PermissionsExt;
 #[test]
+fn bridge_editor_advisory_survives_successful_scan_load_and_playback() {
+    let root = tempfile::tempdir().unwrap();
+    let (settings, mut audio) = fake(root.path(), "normal");
+    audio.yabridge = audio::yabridge::tests::advisory_profile(root.path());
+    let wrappers = root.path().join("wrappers");
+    let bundle = audio::plugins::fixture(&wrappers, "Synth");
+    let mut catalogue = audio::discovery::Catalogue::default();
+    let cancel = AtomicBool::new(false);
+    for retry in [false, false, true] {
+        let notifications = catalogue
+            .scan(&audio, std::slice::from_ref(&bundle), &cancel, retry)
+            .unwrap();
+        assert_eq!(notifications.len(), 1);
+        assert!(notifications[0].contains("far left"));
+        assert!(catalogue.entries[0].failure.is_none());
+        assert_eq!(catalogue.entries[0].classes.len(), 2);
+    }
+    let sources = BTreeMap::from([(
+        "P1".into(),
+        audio::plugins::Source::Vst3 {
+            path: bundle.clone(),
+            class_id: "A".repeat(32),
+            module_sha256: audio::plugins::inspect_bundle(&bundle).unwrap(),
+            gain: 0.0,
+            component_state: None,
+            controller_state: None,
+        },
+    )]);
+    let transport = Transport::start_with_sources(
+        settings,
+        audio,
+        score(),
+        MidiOptions::default(),
+        false,
+        0,
+        sources,
+    )
+    .unwrap();
+    let stopped = wait(&transport, |s| s.state == State::Stopped);
+    let notification = stopped.plugins.bridge_notification.unwrap();
+    assert!(notification.contains("far left"));
+    assert!(stopped.error.is_none() && stopped.plugins.operation_error.is_none());
+    assert!(!stopped.plugins.busy);
+    transport.play().unwrap();
+    let playing = wait(&transport, |s| s.state == State::Playing);
+    assert_eq!(
+        playing.plugins.bridge_notification.as_ref(),
+        Some(&notification)
+    );
+    assert!(playing.error.is_none() && playing.plugins.operation_error.is_none());
+    assert!(!root.path().join(".wine").exists());
+}
+#[test]
 fn editor_wait_is_bounded_and_preserves_remaining_command_budget() {
     let now = Instant::now();
     let original = now.checked_sub(Duration::from_secs(1)).unwrap();

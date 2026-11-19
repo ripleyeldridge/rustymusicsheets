@@ -386,12 +386,13 @@ impl Music {
                     Some(path) => vec![path],
                     None => crate::audio::discovery::enumerate(&settings.plugin_roots, &stop)?,
                 };
+                let mut notifications = std::collections::BTreeSet::new();
                 for candidate in &candidates {
-                    catalogue.scan(&settings, std::slice::from_ref(candidate), &stop, retry)?;
+                    notifications.extend(catalogue.scan(&settings, std::slice::from_ref(candidate), &stop, retry)?);
                     if let Some(path) = &path { catalogue.save(path)?; }
                 }
                 let failures = catalogue.entries.iter().filter(|e| e.failure.is_some()).count();
-                Ok((catalogue, format!("Scanned {} candidate(s); {failures} quarantined. Instruments are available in every part's dropdown; assignments remain independent. Retry is explicit.", candidates.len()), Some(caps)))
+                Ok((catalogue, format!("Scanned {} candidate(s); {failures} quarantined. Instruments are available in every part's dropdown; assignments remain independent. Retry is explicit.\n{}", candidates.len(), notifications.into_iter().collect::<Vec<_>>().join("\n")), Some(caps)))
             })().map_err(|e| format!("Plugin operation: {e:#}"));
             let _ = tx.send(result);
             repaint.request_repaint();

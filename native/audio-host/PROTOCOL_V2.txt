@@ -112,8 +112,8 @@ Successful reply:
   ]}
 Return only VST3 instrument component classes; <=128 classes/module.
 Class labels <=256 UTF-8 bytes, versions <=128. Reject unsupported/no-instrument
-bundles explicitly. Do not launch a user's known-bad yabridge runtime merely
-to populate a catalogue. Native and Rust recheck module fingerprint on use.
+bundles explicitly. Known yabridge editor regressions produce an advisory,
+not a scan veto; scanning remains explicit. Native and Rust recheck module fingerprint on use.
 Do not recursively traverse bundle resources, source symlink loops or Wine
 prefixes while enumerating roots. Native scan errors remain process-isolated.
 
@@ -161,10 +161,13 @@ Yabridge integration boundary
 src/audio/yabridge.rs provides read-only preflight. Rust UI calls it before known
 wrapper scans or live loads and scope WINELOADER to children. Never set global
 WINEPREFIX or mutate registrations/prefixes. Wine >=9.22 (including 11.x and
-later majors) with yabridge <=5.1.1 is flagged incompatible and blocked before
-new wrapper scans/loads: embedded editor input/coordinates can fail even when
-audio plays. Wine 11.22 Staging + yabridge5.1.1 must not bypass the gate.
-Other version pairs only permit an explicit compatibility attempt; no plugin
+later majors) with yabridge <=5.1.1 produces a non-blocking notification in
+diagnostics, scan results and playback controls: editor input/coordinates can
+fail even when audio plays. Scans and playback are allowed, including Wine
+11.22 Staging + yabridge5.1.1. Move the editor to the far left of the desktop /
+leftmost screen as a possible workaround, not compatibility certification.
+Missing tools, invalid settings and failed/unparseable version probes remain errors.
+Version preflight only permits an explicit compatibility attempt; no plugin
 audio/editor/state certification is implied. Native feature verification uses
 our generated/SDK test instrument, not existing user plugins.
 The wrapper classifier preserves bundle locators and checks only bounded ELF

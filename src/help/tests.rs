@@ -202,6 +202,8 @@ fn audio_host_setup_documents_dependencies_activation_and_separate_builds() {
             "9.22 and newer",
             "11.x",
             "5.1.1",
+            "non-blocking notification",
+            "far left",
         ] {
             assert!(
                 documentation.contains(term),

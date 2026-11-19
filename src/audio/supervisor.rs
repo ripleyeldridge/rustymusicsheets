@@ -214,6 +214,7 @@ pub(crate) fn run(
         .map(|p| (p.id.clone(), p.source.clone()))
         .collect();
     let has_plugins = sources.values().any(|s| s.is_plugin());
+    let mut plugin_view = super::plugins::View::default();
     for source in sources.values() {
         if let super::plugins::Source::Vst3 {
             path,
@@ -221,7 +222,12 @@ pub(crate) fn run(
             ..
         } = source
         {
-            super::yabridge::check_bundle(path, &session.audio.yabridge)?;
+            if let Some(notification) =
+                super::yabridge::check_bundle(path, &session.audio.yabridge)?
+            {
+                plugin_view.bridge_notification = Some(notification);
+                view.lock().unwrap_or_else(|e| e.into_inner()).plugins = plugin_view.clone();
+            }
             ensure!(
                 super::plugins::inspect_bundle(path)? == *module_sha256,
                 "Plugin module changed; scan and select the exact class again"
@@ -323,7 +329,6 @@ pub(crate) fn run(
     let mut outstanding: VecDeque<(u64, u64, Instant)> = VecDeque::new();
     let mut pending: BTreeMap<u64, Value> = BTreeMap::new();
     let mut checkpoint: Option<(u64, tempfile::TempDir, PathBuf)> = None;
-    let mut plugin_view = super::plugins::View::default();
     let mut transport_state = State::Starting;
     let mut editor_wait = EditorWait::default();
     let expected_duration = session.plan.seconds_at(session.plan.duration_ticks);

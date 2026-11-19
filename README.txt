@@ -1,4 +1,4 @@
-RustyMusicSheets 0.5.0 preview
+RustyMusicSheets 0.6.0 preview
 ===================
 
 A native Rust desktop sheet-music library and PDF/image performance reader for Linux,
@@ -7,37 +7,36 @@ This is an evolving preview, NOT full MobileSheets feature parity.
 
 Downloads and install
 ---------------------
-Release 0.5.0 adds non-destructive pen/highlighter annotations, stroke erasing,
-undo/redo, asynchronous hash-bound page-ink autosave and recovery, safe reader
-navigation/closing, and Wine 11.x/legacy-yabridge incompatibility diagnostics.
-It retains native VST3/SoundFont hosting and reversible OMR part combination.
-Annotations and the Wine 11 diagnostic correction are now merged into main
-through PR #8 (merge commit 8e786738d86677b10f9eb2569ffe0a7c2b750d56).
-The merged annotation feature branch has been removed.
-The published v0.5.0 prerelease still comes from its unchanged tag commit
-88316bbb951e181f4ad61b89e0823b644fe0e7e6, not the later main merge commit.
-Binaries/checksums/build-record.json are unchanged; this is not stable/latest.
-Exact build and signing details remain in build-record.json.
+Release 0.6.0 makes the Wine 9.22+/legacy-yabridge editor-input warning
+non-blocking. Explicit scans, instrument loading and playback are allowed;
+diagnostics, scan results and playback controls retain the notification and
+far-left / leftmost-screen workaround. Missing tools, invalid settings and
+failed version probes remain errors. Original scores, plugin state, Wine
+prefixes and registrations are not changed by this policy.
+It retains v0.5.0 annotations, native VST3/SoundFont hosting and reversible
+OMR part combination. The exact merged main source commit and asset/signing
+provenance are recorded in build-record.json. Previous release tags/assets
+remain unchanged. This is a prerelease, not a stable/latest promotion.
 The package includes the SDK-enabled helper, not plugins/samples/SDK source.
 
 Latest published Linux preview and release notes:
-    https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.5.0
-Download rustymusicsheets_0.5.0-1_amd64.deb and SHA256SUMS from that page.
+    https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.6.0
+Download rustymusicsheets_0.6.0-1_amd64.deb and SHA256SUMS from that page.
 In their shared download directory, after confirming amd64/glibc compatibility:
     sha256sum --ignore-missing -c SHA256SUMS
-    sudo apt install ./rustymusicsheets_0.5.0-1_amd64.deb
+    sudo apt install ./rustymusicsheets_0.6.0-1_amd64.deb
 --ignore-missing verifies only downloaded files. To verify the complete set,
 download all six attachments and run sha256sum -c SHA256SUMS without it.
 Attachments also include build-record.json, LICENSE and
-rustymusicsheets-0.5.0-third-party-notices.tar.gz. GitHub filenames are flat.
+rustymusicsheets-0.6.0-third-party-notices.tar.gz. GitHub filenames are flat.
 The build record is unsigned provenance; checksums are not a release signature.
 
 This native Ubuntu 26.10 build requires glibc 2.43 or newer; it does not support
 Ubuntu 22.04/24.04. Build on the target distribution when needed. Do not force
 dependencies or replace system glibc. Stable v0.2.1 remains available separately.
-The separate RustyMusicSheets-0.5.0-android-arm64-debug.apk is experimental,
+The separate RustyMusicSheets-0.6.0-android-arm64-debug.apk is experimental,
 debuggable and locally debug-signed, NOT production signed or desktop parity.
-It reports versionName 0.5.0, minimum API 26/target API 36; versionCode and
+It reports versionName 0.6.0, minimum API 26/target API 36; versionCode and
 signing certificate fingerprint are recorded in build-record.json.
 Static checks passed; this APK was not executed on a device. See
 android/README.txt and its signer-continuity/data-preservation warnings.
@@ -52,8 +51,8 @@ the app does not install plugins or configure an audio server.
 Build and run
 -------------
 Use main for ongoing development; annotations no longer require a feature
-branch. To reproduce the published v0.5.0 source instead, use its immutable
-v0.5.0 tag. To return to current development: git switch main, then
+branch. To reproduce the published v0.6.0 source instead, use its immutable
+v0.6.0 tag. To return to current development: git switch main, then
 git pull --ff-only. Release tags/assets are not moved by branch cleanup.
 Rust 1.86 or newer and Cargo are required. Dependencies are locked for the
 currently installed compiler. No compiler upgrade is needed for this version.
@@ -283,7 +282,7 @@ Changed files invalidate old proposals; rescan and detect them again.
 Manual metadata is retained if file contents are replaced, while automatic
 instrument assignments are cleared. Detection never modifies the score file.
 
-Annotations (v0.5.0)
+Annotations (v0.6.0)
 ---------------------------------------------------------------
 In Reader or Performance, choose Annotate for Pen, translucent Highlighter,
 Stroke eraser, Hand / Pan, color/thickness, Undo/Redo, Save now, visibility
@@ -435,7 +434,7 @@ The initial native target is Linux x86_64 VST3 instruments, not VST2/effects.
 
 Ordinary Cargo and Android builds remain independent of native audio SDKs.
 Native Linux VST3 needs no Wine/yabridge. SoundFont-only builds need no SDK.
-Installed v0.5.0 package quick start (no SDK build required):
+Installed v0.6.0 package quick start (no SDK build required):
 1. Choose Audio host preview - PipeWire/JACK or native JACK in music settings.
 2. Leave Audio-host executable empty for the packaged helper. Clear an old
    source-preview path if you intend to use the installed helper; save settings.
@@ -498,7 +497,7 @@ can delay actual note onset. Test before relying on the preview in performance.
 
 python3 scripts/build-deb.py --with-audio-host explicitly packages the helper,
 native runtime dependencies and notices. The source builder without that flag
-omits the helper; the published v0.5.0 package includes the SDK-enabled helper.
+omits the helper; the published v0.6.0 package includes the SDK-enabled helper.
 No Wine/yabridge installation, system Wine changes or release changes occur.
 For VST3, additionally use CMake >=3.25 and X11 development headers
 (libx11-dev on Ubuntu), then from the repository root:
@@ -577,10 +576,14 @@ registration/sync must already be complete. Never register generated output
 as plugin source or recursively nest wrappers.
 Wine 9.22 and newer (including 10.x and 11.x) with yabridge <=5.1.1
 have known embedded-editor mouse/coordinate failures even when audio plays.
-Diagnostics flag the pair as incompatible and preflight blocks new wrapper
-scans/loads, including Wine 11.22 Staging with yabridge 5.1.1.
-Moving the editor to another screen is only a workaround, not compatibility.
-Updating only to5.1.1 is not a fix. Choose a separately verified existing
+Diagnostics, scan results and playback controls show a non-blocking notification,
+including Wine 11.22 Staging with yabridge 5.1.1; scans and playback are allowed.
+Move the editor to the far left of your desktop / leftmost screen as a workaround;
+this may restore mouse interaction but does not establish compatibility.
+Missing tools, invalid settings and failed/unparseable probes remain errors.
+Previously quarantined bundles need Retry this bundle or an explicit rescan.
+The v0.6.0 release makes this advisory; previously published packages are unchanged.
+Updating only to 5.1.1 is not a fix. Optionally choose a separately verified existing
 runtime/profile; no Wine/prefix changes, automatic sync or installs occur.
 WINELOADER is helper-scoped, no global WINEPREFIX override is used.
 Passing version preflight for another combination permits an explicit attempt;
@@ -798,13 +801,13 @@ missing managed copy if its database record still exists.
 
 Validation
 ----------
-Release validation covers 334 standard and the opt-in Rust tests,
-46 Python tests, strict formatting/Clippy, 16 native CTests with sanitizers,
-sfizz checks, Android static checks and packaged-app startup/close.
-Final live audio regressions used a private dummy JACK server, not physical
-output certification. Loopback timing calibration remains pending. The Android
-APK was not executed on a device. Environment/retry limits are in the release
-build record; do not infer universal plugin/device compatibility.
+The v0.6.0 validation scope is 336 standard Rust tests, 46 Python tests,
+strict formatting/Clippy, native CTests including sanitizers, package content
+checks and Android static verification. See build-record.json for checks
+actually performed. Opt-in real-plugin/audio tests remain separate; historical
+private dummy JACK runs do not certify this build on physical output.
+Loopback timing calibration remains pending. The Android APK was not executed
+on a device. Do not infer universal plugin, pedal or stylus compatibility.
     cargo fmt --check
     cargo test --locked
     cargo clippy --locked --all-targets -- -D warnings
@@ -844,7 +847,7 @@ Build a native package without installing it or requiring root:
 
 This requires Python 3.9+, Cargo/Rust, dpkg-deb, dpkg-shlibdeps (dpkg-dev),
 and binutils. The result is written to:
-    dist/rustymusicsheets_0.5.0-1_<architecture>.deb
+    dist/rustymusicsheets_0.6.0-1_<architecture>.deb
 --revision 2 selects Debian revision 2; the application version comes from
 Cargo.toml. Numeric application versions must match the root Cargo.lock entry.
 
@@ -869,7 +872,7 @@ Do not force-install it or replace the reader's glibc to bypass dependencies.
 
 After confirming compatibility, install the package with APT so dependencies
 are resolved:
-    sudo apt install ./dist/rustymusicsheets_0.5.0-1_amd64.deb
+    sudo apt install ./dist/rustymusicsheets_0.6.0-1_amd64.deb
 
 Replace the filename with the package matching your reader's architecture.
 Personal music-library data and preferences are not shipped in the package.
@@ -878,7 +881,7 @@ Uninstalling the application does not delete your library.
 Publishing releases (maintainers)
 ---------------------------------
 See README.md, "Publishing a release", for the complete checked command sequence.
-Do not replay it against already-published v0.5.0; choose an unused next version.
+Do not replay it against already-published v0.6.0; choose an unused next version.
 1. Update Cargo.toml, only the root Cargo.lock package version, current guide
    headings and the man-page header. Runtime version displays derive from Cargo.
 2. Run validation, review, merge as needed, and commit BEFORE building/tagging.
