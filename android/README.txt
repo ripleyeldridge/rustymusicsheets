@@ -7,9 +7,14 @@ The v0.5.0 prerelease includes RustyMusicSheets-0.5.0-android-arm64-debug.apk:
     https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.5.0
 Direct APK:
     https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.5.0/RustyMusicSheets-0.5.0-android-arm64-debug.apk
-It is built from the tagged annotation branch and reports versionName 0.5.0,
+It is built from immutable v0.5.0 tag commit
+88316bbb951e181f4ad61b89e0823b644fe0e7e6 and reports versionName 0.5.0,
 arm64-v8a, minimum API 26/target API 36. Exact source commit, versionCode and
 signer certificate fingerprint are recorded in build-record.json.
+The annotation implementation is now also in main through PR #8, merge commit
+8e786738d86677b10f9eb2569ffe0a7c2b750d56. Use main for development or the
+v0.5.0 tag for the published source snapshot; no annotation feature branch is
+required. Its removal did not rebuild or replace the published APK/assets.
 It is debuggable and locally debug-signed, NOT production signed. Signature,
 manifest, ABI and ZIP/16 KiB ELF alignment checks passed; this APK was NOT
 executed on a device. Static verification does not establish device coverage

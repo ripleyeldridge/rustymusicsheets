@@ -11,7 +11,9 @@ A native Linux sheet-music library and performance reader, written in Rust with 
 - Correct Wine 11.x/legacy-yabridge diagnostics: known editor-input incompatibility is flagged even when audio plays, and wrapper preflight rejects new scans/loads.
 - Retain v0.4.0's native SoundFont/VST3 host, shared discovery/state, modal X11 editor liveness and reversible OMR part combinations.
 
-This is a **prerelease built from the annotation branch**, not a stable/latest promotion. The exact source commit and build/signing details are in `build-record.json`. The [previous v0.4.0 release](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.4.0) remains unchanged. The Linux package includes the SDK-enabled helper, not plugins, samples, SDK source or personal data.
+Annotations and the Wine 11 diagnostic correction are now included in **`main`**, merged through [PR #8](https://github.com/ripleyeldridge/rustymusicsheets/pull/8) at merge commit `8e786738d86677b10f9eb2569ffe0a7c2b750d56`. The merged annotation feature branch has been removed; it is not needed to build or use these features.
+
+The published **v0.5.0 prerelease** remains pinned to tag commit `88316bbb951e181f4ad61b89e0823b644fe0e7e6`, not the later merge commit. Its binaries, checksums and `build-record.json` are unchanged. This is not a stable/latest promotion. The [previous v0.4.0 release](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.4.0) remains unchanged. The Linux package includes the SDK-enabled helper, not plugins, samples, SDK source or personal data.
 
 ## Latest published preview: v0.5.0
 - [Release notes](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.5.0)
@@ -106,7 +108,9 @@ cargo build --locked --release
 ./target/release/rustymusicsheets
 ```
 
-If you already have the repository, skip cloning and build from your existing checkout. If compilation reports missing native development libraries, install the appropriate eframe/X11/Wayland/xkbcommon development packages for your distribution.
+The example checks out the immutable release tag to reproduce the published source version. For ongoing development, use `git switch main` and `git pull --ff-only`; annotations are already merged into `main`, so no feature-branch checkout is required.
+
+If you already have the repository, skip cloning and build from your chosen checkout. If compilation reports missing native development libraries, install the appropriate eframe/X11/Wayland/xkbcommon development packages for your distribution.
 
 To build a native Debian package without installing it or requiring root:
 

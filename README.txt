@@ -11,8 +11,13 @@ Release 0.5.0 adds non-destructive pen/highlighter annotations, stroke erasing,
 undo/redo, asynchronous hash-bound page-ink autosave and recovery, safe reader
 navigation/closing, and Wine 11.x/legacy-yabridge incompatibility diagnostics.
 It retains native VST3/SoundFont hosting and reversible OMR part combination.
-This is an annotation-branch prerelease, not a stable/latest promotion.
-Exact source commit, build and signing details are in build-record.json.
+Annotations and the Wine 11 diagnostic correction are now merged into main
+through PR #8 (merge commit 8e786738d86677b10f9eb2569ffe0a7c2b750d56).
+The merged annotation feature branch has been removed.
+The published v0.5.0 prerelease still comes from its unchanged tag commit
+88316bbb951e181f4ad61b89e0823b644fe0e7e6, not the later main merge commit.
+Binaries/checksums/build-record.json are unchanged; this is not stable/latest.
+Exact build and signing details remain in build-record.json.
 The package includes the SDK-enabled helper, not plugins/samples/SDK source.
 
 Latest published Linux preview and release notes:
@@ -46,6 +51,10 @@ the app does not install plugins or configure an audio server.
 
 Build and run
 -------------
+Use main for ongoing development; annotations no longer require a feature
+branch. To reproduce the published v0.5.0 source instead, use its immutable
+v0.5.0 tag. To return to current development: git switch main, then
+git pull --ff-only. Release tags/assets are not moved by branch cleanup.
 Rust 1.86 or newer and Cargo are required. Dependencies are locked for the
 currently installed compiler. No compiler upgrade is needed for this version.
 The current source separates file selection and power management behind
