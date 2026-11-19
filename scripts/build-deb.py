@@ -173,8 +173,8 @@ def main():
             "    shared-timing recovery of empty implicit MusicXML measures.\n\n"
             "  * Non-destructive page annotations with pen/highlighter, stroke\n"
             "    erasing, undo/redo, atomic sidecar autosave and safe recovery.\n"
-            "  * Flag Wine 11.x and later with legacy yabridge as incompatible\n"
-            "    for embedded-editor input, even when audio still plays.\n\n"
+            "  * Make Wine 9.22+ / legacy-yabridge editor warnings non-blocking;\n"
+            "    allow scans/playback and show the far-left editor workaround.\n\n"
             f" -- Ripley Eldridge <noreply@rustymusicsheets.invalid>  {date}\n"
         )
         (docs / "changelog.Debian.gz").write_bytes(gzip.compress(changelog.encode(), mtime=0))

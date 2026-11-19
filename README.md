@@ -2,24 +2,21 @@
 A native Linux sheet-music library and performance reader, written in Rust with egui.
 **A headline feature: offline instrument detection that helps turn a folder of scores into an instrument-searchable library—even when the parts are scanned PDFs or standalone images.**
 
-**Version:** 0.5.0 preview · **Author:** [Ripley Eldridge](https://github.com/ripleyeldridge) · **Release year:** 2026 · **License:** [MIT](LICENSE)
+**Version:** 0.6.0 preview · **Author:** [Ripley Eldridge](https://github.com/ripleyeldridge) · **Release year:** 2026 · **License:** [MIT](LICENSE)
 
-## Release 0.5.0 — Annotations Preview
-- Draw non-destructive pen/highlighter ink on PDF/image pages with colors, thickness, whole-stroke erasing, undo/redo, confirmed clearing and Hand/Pan controls.
-- Keep marks aligned across zoom, scrolling, resize and two-page view; autosave hash-bound page sidecars asynchronously with conflict checks and recovery.
-- Protect drawing from accidental page turns, automatic following, unsafe score switches and same-frame close/cancellation races.
-- Correct Wine 11.x/legacy-yabridge diagnostics: known editor-input incompatibility is flagged even when audio plays, and wrapper preflight rejects new scans/loads.
-- Retain v0.4.0's native SoundFont/VST3 host, shared discovery/state, modal X11 editor liveness and reversible OMR part combinations.
+## Release 0.6.0 — Non-blocking yabridge Editor Warnings
+- Allow explicit scans, instrument loads and playback with Wine 9.22+ and yabridge 5.1.1 or earlier, retaining the known editor-input warning.
+- Show the advisory in diagnostics, scan results and playback controls, including the far-left / leftmost-screen workaround.
+- Keep missing tools, invalid settings, failed version probes and actual plugin/helper failures as errors. Native Linux VST3 instruments remain independent of Wine/yabridge.
+- Retain v0.5.0's non-destructive annotations and native VST3/SoundFont hosting with reversible OMR part combination.
 
-Annotations and the Wine 11 diagnostic correction are now included in **`main`**, merged through [PR #8](https://github.com/ripleyeldridge/rustymusicsheets/pull/8) at merge commit `8e786738d86677b10f9eb2569ffe0a7c2b750d56`. The merged annotation feature branch has been removed; it is not needed to build or use these features.
+This minor preview is released from the merged `main` source. The exact immutable tag commit, asset hashes, signing identity and verification results are recorded in `build-record.json`. Previous tags and assets, including [v0.5.0](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.5.0), remain unchanged. This is not a stable/latest promotion. The Linux package includes the SDK-enabled helper, not plugins, samples, SDK source or personal data.
 
-The published **v0.5.0 prerelease** remains pinned to tag commit `88316bbb951e181f4ad61b89e0823b644fe0e7e6`, not the later merge commit. Its binaries, checksums and `build-record.json` are unchanged. This is not a stable/latest promotion. The [previous v0.4.0 release](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.4.0) remains unchanged. The Linux package includes the SDK-enabled helper, not plugins, samples, SDK source or personal data.
-
-## Latest published preview: v0.5.0
-- [Release notes](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.5.0)
-- [Linux amd64 `.deb` — 0.5.0-1](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.5.0/rustymusicsheets_0.5.0-1_amd64.deb)
-- [Experimental Android ARM64 debug APK](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.5.0/RustyMusicSheets-0.5.0-android-arm64-debug.apk)
-- [SHA256SUMS](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.5.0/SHA256SUMS), [build record](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.5.0/build-record.json), [license](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.5.0/LICENSE) and [third-party notices](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.5.0/rustymusicsheets-0.5.0-third-party-notices.tar.gz)
+## Latest published preview: v0.6.0
+- [Release notes](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.6.0)
+- [Linux amd64 `.deb` — 0.6.0-1](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.6.0/rustymusicsheets_0.6.0-1_amd64.deb)
+- [Experimental Android ARM64 debug APK](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.6.0/RustyMusicSheets-0.6.0-android-arm64-debug.apk)
+- [SHA256SUMS](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.6.0/SHA256SUMS), [build record](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.6.0/build-record.json), [license](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.6.0/LICENSE) and [third-party notices](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.6.0/rustymusicsheets-0.6.0-third-party-notices.tar.gz)
 
 The **Linux amd64 preview requires glibc 2.43 or newer**; it is not compatible with Ubuntu 22.04/24.04. The [stable/latest v0.2.1 release](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.2.1) remains available.
 
@@ -71,11 +68,11 @@ See [Scan, review, apply](#instrument-detection-scan-review-apply) for the workf
 
 ## Install
 ### Option 1: Ubuntu/Debian package
-Download the [v0.5.0 preview package](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.5.0/rustymusicsheets_0.5.0-1_amd64.deb) and [SHA256SUMS](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.5.0/SHA256SUMS) into the **same directory**. Verify the files you downloaded, then install with APT so dependencies are resolved:
+Download the [v0.6.0 preview package](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.6.0/rustymusicsheets_0.6.0-1_amd64.deb) and [SHA256SUMS](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.6.0/SHA256SUMS) into the **same directory**. Verify the files you downloaded, then install with APT so dependencies are resolved:
 
 ```bash
 sha256sum --ignore-missing -c SHA256SUMS
-sudo apt install ./rustymusicsheets_0.5.0-1_amd64.deb
+sudo apt install ./rustymusicsheets_0.6.0-1_amd64.deb
 ```
 
 These commands are for a compatible reader; check the architecture and runtime requirement below first. New downloads are published as GitHub Release assets. Development builds live in ignored `dist/`; [`packages/`](packages/) contains older selected packages, not the current preview. Build from source if the package does not match your system.
@@ -103,7 +100,7 @@ For a fresh checkout:
 mkdir -p ~/Projects
 git clone https://github.com/ripleyeldridge/rustymusicsheets.git ~/Projects/LinuxSheets
 cd ~/Projects/LinuxSheets
-git switch --detach v0.5.0
+git switch --detach v0.6.0
 cargo build --locked --release
 ./target/release/rustymusicsheets
 ```
@@ -118,7 +115,7 @@ To build a native Debian package without installing it or requiring root:
 python3 scripts/build-deb.py
 ```
 
-Packaging also requires Python 3.9+, dpkg-dev, dpkg-deb, and binutils. The builder performs a locked release build and writes `dist/rustymusicsheets_0.5.0-1_<architecture>.deb`. `--revision 2` selects Debian revision 2; `--skip-build` is only for a separately verified, current release executable. See [Publishing a release](#publishing-a-release) for commit/tag/checksum requirements.
+Packaging also requires Python 3.9+, dpkg-dev, dpkg-deb, and binutils. The builder performs a locked release build and writes `dist/rustymusicsheets_0.6.0-1_<architecture>.deb`. `--revision 2` selects Debian revision 2; `--skip-build` is only for a separately verified, current release executable. See [Publishing a release](#publishing-a-release) for commit/tag/checksum requirements.
 
 ## Start the app
 **After installing the package:** launch **RustyMusicSheets** from your desktop application menu, or run:
@@ -168,7 +165,7 @@ Manual scans create proposals; they do not silently write assigned metadata. Exi
 
 Automatic detection for new GUI imports is optional and off by default. It fills only clear, empty, unprotected instrument values. Ambiguous labels such as bare “Alto 1” are not blindly treated as saxophone.
 
-## Handwritten annotations (v0.5.0)
+## Handwritten annotations (introduced in v0.5.0)
 Open a PDF/PNG/JPEG score in Reader or Performance and choose **Annotate**. Original documents remain unchanged. Annotation mode provides **Pen**, translucent **Highlighter**, **Stroke eraser**, **Hand / Pan**, color/thickness, **Undo**, **Redo**, **Save now**, **Show ink**, and **Done**. A tap makes a dot. The eraser removes whole intersected strokes, not individual pixels; **Clear page…** requires confirmation and is undoable within the session history.
 
 Marks use page-relative vector coordinates, so they stay aligned through resizing, zoom, scrolling, fit-width and two-page view. Draw on either visible page; a gesture cannot spill onto the adjacent page or gutter. Choose Hand / Pan to drag-scroll, or Done to restore click-to-turn. Explicit page buttons and keyboard/pedal navigation work between gestures; finish a gesture before navigating. Escape leaves annotation mode before exiting Performance. Ctrl+Z, Ctrl+Shift+Z/Ctrl+Y and Ctrl+S apply to annotation undo/redo/save while the tools own input.
@@ -195,7 +192,7 @@ This is an **experimental, review-first OMR workflow**, separate from instrument
 - Install [Audiveris](https://github.com/Audiveris/audiveris/releases) separately using its official Linux package. Recent releases include Java. Configure its executable in **Settings → Music recognition and MIDI playback**, or **Reader → Music / OMR → Engine settings**. An absolute path such as `/opt/audiveris/bin/Audiveris` works; a Flatpak command with arguments is not an executable path—use a launcher script if necessary.
 - For legacy playback, install FluidSynth and a SoundFont, for example `sudo apt install fluidsynth fluid-soundfont-gm`. Choose a `.sf2`/`.sf3` bank in settings; common system banks are detected automatically. Pure-VST3 host playback needs neither that executable nor a bank, but still uses the package's system runtime libraries.
 - Audiveris needs its own OCR language setup, even if the application's existing Tesseract label detector works. Install English through Audiveris's language management, or point `TESSDATA_PREFIX` at compatible full [Tesseract tessdata](https://github.com/tesseract-ocr/tessdata) models before launching the app. LSTM-only distro models may not provide the legacy data required by Audiveris.
-- Save preferences. Missing helpers, unsupported targets, malformed notation, and audio-device failures are reported. The published v0.5.0 package includes the audio-host helper; recognition engines, plugins and instrument data are not automatically installed.
+- Save preferences. Missing helpers, unsupported targets, malformed notation, and audio-device failures are reported. The published v0.6.0 package includes the audio-host helper; recognition engines, plugins and instrument data are not automatically installed.
 
 ### Reader workflow
 1. Open a library score, then **Music / OMR → Recognize with Audiveris**. Recognition runs in the background and can be cancelled.
@@ -252,7 +249,7 @@ Audiveris is **AGPLv3**, FluidSynth is **LGPL**, and SoundFonts have their own l
 The separately supervised C++ host provides bounded/versioned Unix-socket control, shared-clock SoundFont/VST3 mixing, isolated plugin scanning, per-part instrument assignments, generic parameters/presets and saved plugin state. Custom editors use separate X11 windows when supported. **VST3 requires an SDK-enabled helper**; the ordinary helper build below remains SoundFont-only.
 
 Legacy FluidSynth playback remains the default. The preview targets native Linux x86_64. Ordinary Cargo/Android builds do not build/download the helper or SDK. **Wine/yabridge are not needed for native Linux VST3**; they are only relevant to existing Windows-plugin wrappers. A SoundFont-only helper does not need the SDK.
-#### Using the published v0.5.0 package
+#### Using the published v0.6.0 package
 The published `.deb` already contains the SDK-enabled helper. Sections 1–4 below describe **source builds**, not prerequisites for installed-package users; section 5 covers instrument setup for either route.
 1. With an existing JACK/PipeWire-JACK output available, open **Settings → Music recognition and MIDI playback** or **Music / OMR → Engine settings**, and choose the matching **Audio host preview** backend.
 2. Leave **Audio-host executable** empty to use `/usr/libexec/rustymusicsheets/rms-audio-host`. Clear an old source-preview path if you intend to use the packaged helper. Save preferences, then use **Probe helper capabilities** in shared discovery; look for `vst3` and, for modal X11 editors, `editor_keepalive`.
@@ -359,10 +356,10 @@ Use **Read-only bridge diagnostics** before **Use existing yabridge wrappers →
 - With **yabridge ≤ 5.1.1**, **Wine ≥ 9.22** triggers an editor warning without an upper-major-version cutoff, including Wine 11.x and later majors. For example, Wine 11.22 Staging with yabridge 5.1.1 produces `yabridge editor warning: Wine 11.22.0 with yabridge 5.1.1.`
 - This non-blocking notification permits **scans, instrument loads and playback**. Missing tools, failed/unparseable version probes, invalid settings and actual plugin/helper failures remain errors. **Native Linux VST3 instruments are exempt** and do not require Wine/yabridge. No version pair certifies editor, audio or saved-state compatibility.
 - This changes policy, **not the editor embedding itself**. The notification includes the far-left workaround. Runtime/bridge selection, upgrades and wrapper synchronization remain separate, user-directed actions; existing plugin assignments/checkpoints are not rewritten. Previously quarantined bundles require **Retry this bundle** or **Retry quarantined / rescan**.
-- The published v0.5.0 includes the earlier blocking Wine 11 diagnostic correction. This source change makes it advisory; it does not retroactively alter published packages.
+- The published v0.5.0 includes the earlier blocking Wine 11 diagnostic correction. v0.6.0 makes it advisory; older packages are unchanged.
 
 #### Optional native package
-For source packaging, `python3 scripts/build-deb.py --with-audio-host` builds/packages a SoundFont-only helper. Add `--vst3-sdk "$PWD/target/vst3-sdk"` for the VST3-enabled variant shipped in v0.5.0, with pinned SDK provenance/license notices. Invoking the builder without `--with-audio-host` omits the helper; that is not the published v0.5.0 package configuration. Install the explicitly chosen output `.deb` using your normal package manager; leave **Audio-host executable** empty for its installed location. Building does not install/publish a package or change Wine/yabridge. `--skip-build` checks helper protocol/features and SDK provenance; it does not rebuild stale binaries. Native packages retain build-host architecture/glibc requirements and are not universal Ubuntu binaries.
+For source packaging, `python3 scripts/build-deb.py --with-audio-host` builds/packages a SoundFont-only helper. Add `--vst3-sdk "$PWD/target/vst3-sdk"` for the VST3-enabled variant shipped in v0.6.0, with pinned SDK provenance/license notices. Invoking the builder without `--with-audio-host` omits the helper; that is not the published v0.6.0 package configuration. Install the explicitly chosen output `.deb` using your normal package manager; leave **Audio-host executable** empty for its installed location. Building does not install/publish a package or change Wine/yabridge. `--skip-build` checks helper protocol/features and SDK provenance; it does not rebuild stale binaries. Native packages retain build-host architecture/glibc requirements and are not universal Ubuntu binaries.
 
 #### Verification and troubleshooting
 
@@ -458,10 +455,10 @@ Picker results use native paths, with cancellation separated from reported error
 ### Android foundation
 The source now includes a NativeActivity entry point and a document-access layer that distinguishes desktop paths from Android `content://` URIs. An initial Android **Open with** PNG/JPEG can be read through `ContentResolver`, staged privately, and passed to the existing importer without treating the URI as a filename.
 
-This is an **experimental Android prerelease**, not desktop feature parity. Native PDF/OCR, the in-app Android picker, document-tree watching, and Android keep-awake integration remain incomplete. The ARM64 debug APK builds using `scripts/build-android.sh`; signature/manifest/16 KiB alignment checks pass with `scripts/verify-android-apk.py`. The 0.5.0 APK reports versionName `0.5.0`, minimum API 26 and target API 36; its numeric versionCode and signing certificate fingerprint are recorded in `build-record.json`. Earlier foundation builds had Pixel 8 Pro (API 37) startup/safe-area checks; **the 0.5.0 APK has static verification only, not current device execution**. Broader rendering, import/provider, and device testing remains pending. See [Android setup and implementation boundaries](android/README.txt) before attempting a build or installation.
+This is an **experimental Android prerelease**, not desktop feature parity. Native PDF/OCR, the in-app Android picker, document-tree watching, and Android keep-awake integration remain incomplete. The ARM64 debug APK builds using `scripts/build-android.sh`; signature/manifest/16 KiB alignment checks pass with `scripts/verify-android-apk.py`. The 0.6.0 APK reports versionName `0.6.0`, minimum API 26 and target API 36; its numeric versionCode and signing certificate fingerprint are recorded in `build-record.json`. Earlier foundation builds had Pixel 8 Pro (API 37) startup/safe-area checks; **the 0.6.0 APK has static verification only, not current device execution**. Broader rendering, import/provider, and device testing remains pending. See [Android setup and implementation boundaries](android/README.txt) before attempting a build or installation.
 
 ### Validation commands
-Release validation covers 334 standard Rust tests, the opt-in Rust tests, 46 Python tests, formatting/strict Clippy, 16 native CTests including sanitizers, sfizz checks, Android static verification and packaged-app startup/close. Final live regressions used a private dummy JACK server, not physical audio-output certification; device-clock latency still needs real loopback calibration. The Android APK was not run on a device. See the release build record for retry/environment limits; these are not claims that every plugin, pedal or desktop has been tested.
+The v0.6.0 validation scope is 336 standard Rust tests, 46 Python tooling tests, formatting/strict Clippy, native CTests including sanitizers, package identity/content checks and Android static verification. The release build record lists the checks actually performed. Opt-in real-plugin/audio tests are not part of ordinary validation; historical private dummy JACK runs do not certify this build on physical output. Device-clock latency still needs loopback calibration. The Android APK was not run on a device; no universal plugin, pedal or stylus compatibility is claimed.
 ```bash
 cargo fmt --check
 cargo test --locked
@@ -486,14 +483,14 @@ RMS_TEST_MUSICXML="/absolute/path/to/score.mxl" cargo test --locked --lib playba
 This check plays a short passage and requires consistent original-page metadata with a multi-measure page before the next page. Do not commit personal scores or generated notation/audio as test fixtures.
 
 ## Publishing a release
-These are **maintainer instructions**, not actions performed automatically by the application or CI. Run them from the repository root after review/merge. The v0.5.0 release already exists: choose an unused next version before following this procedure. Publishing a tag alone neither builds assets nor creates a GitHub Release.
+These are **maintainer instructions**, not actions performed automatically by the application or CI. Run them from the repository root after review/merge. The v0.6.0 release already exists: choose an unused next version before following this procedure. Publishing a tag alone neither builds assets nor creates a GitHub Release.
 
 1. Update the root application version in `Cargo.toml` and its own `Cargo.lock` entry, current README headings and the man-page header. Do not replace dependency versions or regenerate the whole lockfile. CLI/About and cargo-apk derive application version metadata from Cargo; numeric Android updates need an increasing major/minor/patch, not just an alpha/beta suffix.
 2. Run the validation commands above, review changes, and commit them **before building/tagging**. Start from clean `main`; record the exact source commit. `--skip-build` cannot establish that an old binary matches a new version.
 3. Build and inspect a native package, without cross-target/output-directory overrides; the builder expects `target/release/rustymusicsheets`. `SOURCE_DATE_EPOCH` fixes package metadata timestamps, not all compiler/dependency inputs; this is not a bit-for-bit reproducibility claim.
 
 ```bash
-VERSION=0.5.1  # example next version; must match the committed Cargo version
+VERSION=0.6.1  # example next version; must match the committed Cargo version
 REVISION=1
 TAG="v$VERSION"
 REPO=ripleyeldridge/rustymusicsheets
@@ -557,7 +554,7 @@ Only after download verification and notes review, publish with `gh release edit
 
 Android assets are optional and **not part of the Linux `.deb` build**. Follow `android/README.txt`, `android/TESTING.txt` and `android/CI.txt`; verify APK version, exact source commit, signature, ABI, manifest and ZIP/ELF alignment, and include a clearly labelled build record. Static checks are not device execution or a production signer. A CI/local debug key may not update a previous APK in place; never uninstall a valuable library just to bypass signing. List every distributable asset in `SHA256SUMS` except that checksum file itself, and never upload signing material, SDKs or private smoke evidence.
 
-GitHub release assets use flat filenames. If local artifacts use subdirectories such as `experimental/`, prepare a separate flat upload directory, update its build-record asset paths and generate its checksum manifest there; do not alter the original build artifacts. Download that complete upload set to a fresh directory, verify checksums and compare bytes before publishing. For v0.5.0 this flat set contains the `.deb`, experimental APK, license, third-party notices archive, build record and `SHA256SUMS`.
+GitHub release assets use flat filenames. If local artifacts use subdirectories such as `experimental/`, prepare a separate flat upload directory, update its build-record asset paths and generate its checksum manifest there; do not alter the original build artifacts. Download that complete upload set to a fresh directory, verify checksums and compare bytes before publishing. For v0.6.0 this flat set contains the `.deb`, experimental APK, license, third-party notices archive, build record and `SHA256SUMS`.
 
 ## Author and license
 Created by **[Ripley Eldridge](https://github.com/ripleyeldridge)**, 2026.

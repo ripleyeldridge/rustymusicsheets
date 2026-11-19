@@ -1,4 +1,4 @@
-.TH RUSTYMUSICSHEETS 1 "November 2026" "RustyMusicSheets 0.5.0" "User Commands"
+.TH RUSTYMUSICSHEETS 1 "November 2026" "RustyMusicSheets 0.6.0" "User Commands"
 .SH NAME
 rustymusicsheets \- sheet music library and performance reader
 .SH SYNOPSIS
@@ -103,14 +103,14 @@ under the data directory in omr/, omr-index/ and omr-mix/.
 Back up the complete data/config directories and original music folder with
 the application closed; a SQLite metadata backup is not a score backup.
 .SH RELEASE AND REQUIREMENTS
-The v0.5.0 preview is published at:
-.UR https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.5.0
-v0.5.0 release notes and downloads
+The v0.6.0 preview is published at:
+.UR https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.6.0
+v0.6.0 release notes and downloads
 .UE
 .PP
 The amd64 Linux package requires glibc >=2.43 and is not compatible with
 Ubuntu 22.04/24.04. Rebuild on the target distribution rather than replacing glibc.
-Stable/latest remains v0.2.1; v0.5.0 is a prerelease.
+Stable/latest remains v0.2.1; v0.6.0 is a prerelease.
 .PP
 The published .deb includes the SDK-enabled helper at
 /usr/libexec/rustymusicsheets/rms-audio-host. APT resolves system runtime
@@ -121,7 +121,7 @@ JACK or PipeWire-JACK stereo output; the app does not configure an audio server.
 .PP
 The separate ARM64 Android APK is experimental, debuggable and locally
 debug-signed, not production signed or desktop feature parity. API 26 minimum,
-target API 36; the v0.5.0 APK passed static checks but was not executed on a device.
+target API 36; the v0.6.0 APK passed static checks but was not executed on a device.
 Preserve data and signer continuity; do not uninstall to bypass a mismatch.
 Release checksums, unsigned build provenance and third-party notices are
 attached on GitHub. Attachments use flat filenames; checksums are not signatures.
@@ -207,7 +207,7 @@ The runtime FluidSynth package alone does not provide development headers.
 These prerequisites are installed manually, never by the application.
 Wine, yabridge and the VST3 SDK are not needed for this stage.
 These are source-build requirements, not requirements for running the
-published v0.5.0 package. The base helper build needs CMake >=3.16;
+published v0.6.0 package. The base helper build needs CMake >=3.16;
 the VST3 build below additionally needs CMake >=3.25 and libx11-dev.
 Build the application with cargo build --locked --release and launch
 \&./target/release/rustymusicsheets from the source root. Build the separate
@@ -281,14 +281,14 @@ Move the editor to the far left of your desktop / leftmost screen as a workaroun
 this may restore mouse interaction but does not establish compatibility.
 Missing tools, invalid settings and failed/unparseable probes remain errors.
 Previously quarantined bundles need Retry this bundle or an explicit rescan.
-This source policy does not retroactively alter the published v0.5.0 package.
+The v0.6.0 release makes this advisory; previously published packages are unchanged.
 Updating only to 5.1.1 is not a fix. Optionally select a verified existing
 runtime/profile; no automatic installs, sync/prune or prefix changes occur.
 WINELOADER is helper-scoped; WINEPREFIX is not globally overridden.
 Version preflight is not individual plugin compatibility certification.
 Other runtime/bridge combinations still need plugin-specific validation.
 VST3 packages require --with-audio-host --vst3-sdk SDK_PATH so pinned
-SDK license/provenance is included. The published v0.5.0 .deb uses this
+SDK license/provenance is included. The published v0.6.0 .deb uses this
 SDK-enabled variant. Building does not install/publish a package.
 .PP
 Audible position is an estimate requiring loopback calibration. FluidSynth's
@@ -296,7 +296,7 @@ internal 64-frame quantum may delay acoustic onset. Chorus/reverb are disabled
 for pause/seek flushing, so sound differs from legacy playback. Each part loads
 its own SoundFont instance; test memory, levels and timing before performance use.
 .SH ANNOTATIONS
-Available in v0.5.0: non-destructive vector ink over original score pages.
+Introduced in v0.5.0. Available in v0.6.0: non-destructive vector ink over original score pages.
 Choose Annotate in Reader or Performance for Pen, translucent Highlighter,
 Stroke eraser, Hand / Pan, color/thickness, Undo/Redo, Save now and Show ink.
 Done restores click-to-turn. A tap makes a dot; erasing removes whole strokes.

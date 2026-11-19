@@ -1,6 +1,6 @@
 [package]
 name = "rustymusicsheets"
-version = "0.5.0"
+version = "0.6.0"
 authors = ["Ripley Eldridge"]
 homepage = "https://github.com/ripleyeldridge"
 edition = "2021"
