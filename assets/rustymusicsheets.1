@@ -273,14 +273,17 @@ For existing yabridge use generated Linux VST3 wrappers, normally
 ~/.vst3/yabridge, and run Read-only bridge diagnostics before scanning.
 Tool/wrapper-root/Wine-loader paths have Browse controls.
 Vendor installation/activation and user-reviewed registration/sync are external.
-Wine9.22/10.x with yabridge <=5.1.1 is incompatible upstream; the local
-Wine10.0/yabridge5.1.0 pair is blocked before known wrapper loads/scans.
+Wine 9.22 and newer (including 10.x and 11.x) with yabridge <=5.1.1 have
+known embedded-editor mouse/coordinate failures, even when audio plays.
+Diagnostics flag the pair as incompatible and preflight blocks new wrapper
+loads/scans, including Wine 11.22 Staging with yabridge 5.1.1.
+Moving the editor to another screen is a workaround, not compatibility.
 Updating only to5.1.1 is not a fix. Select a verified compatible existing
 runtime/profile; no automatic installs, sync/prune or prefix changes occur.
 WINELOADER is helper-scoped; WINEPREFIX is not globally overridden.
 Version preflight is not individual plugin compatibility certification.
-Real Windows audio/editor/state remain unverified here without a compatible
-runtime. VST3 packages require --with-audio-host --vst3-sdk SDK_PATH so pinned
+Other runtime/bridge combinations still need plugin-specific validation.
+VST3 packages require --with-audio-host --vst3-sdk SDK_PATH so pinned
 SDK license/provenance is included. The published v0.4.0 .deb uses this
 SDK-enabled variant. Building does not install/publish a package.
 .PP

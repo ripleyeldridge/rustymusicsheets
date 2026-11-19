@@ -160,10 +160,13 @@ Yabridge integration boundary
 ----------------------------------------
 src/audio/yabridge.rs provides read-only preflight. Rust UI calls it before known
 wrapper scans or live loads and scope WINELOADER to children. Never set global
-WINEPREFIX or mutate registrations/prefixes. Initial runtime is known-bad:
-Wine10.0 + yabridge5.1.0. Native feature verification uses our generated/SDK
-test instrument, not existing user plugins. Bridge playback remains unverified
-without a compatible user-selected profile.
+WINEPREFIX or mutate registrations/prefixes. Wine >=9.22 (including 11.x and
+later majors) with yabridge <=5.1.1 is flagged incompatible and blocked before
+new wrapper scans/loads: embedded editor input/coordinates can fail even when
+audio plays. Wine 11.22 Staging + yabridge5.1.1 must not bypass the gate.
+Other version pairs only permit an explicit compatibility attempt; no plugin
+audio/editor/state certification is implied. Native feature verification uses
+our generated/SDK test instrument, not existing user plugins.
 The wrapper classifier preserves bundle locators and checks only bounded ELF
 metadata. Executable discovery supports explicit paths/PATH/documented install
 locations, not interactive shell aliases. No registration/prune/install operation

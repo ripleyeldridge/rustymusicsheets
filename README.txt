@@ -565,13 +565,16 @@ generated Linux wrapper root (normally ~/.vst3/yabridge), and an existing Wine
 loader as needed. Vendor installation/activation and user-reviewed yabridge
 registration/sync must already be complete. Never register generated output
 as plugin source or recursively nest wrappers.
-Wine 9.22/10.x with yabridge <=5.1.1 is upstream-incompatible: the local
-Wine10.0/yabridge5.1.0 pair is blocked before wrapper scans/loads.
+Wine 9.22 and newer (including 10.x and 11.x) with yabridge <=5.1.1
+have known embedded-editor mouse/coordinate failures even when audio plays.
+Diagnostics flag the pair as incompatible and preflight blocks new wrapper
+scans/loads, including Wine 11.22 Staging with yabridge 5.1.1.
+Moving the editor to another screen is only a workaround, not compatibility.
 Updating only to5.1.1 is not a fix. Choose a separately verified existing
 runtime/profile; no Wine/prefix changes, automatic sync or installs occur.
 WINELOADER is helper-scoped, no global WINEPREFIX override is used.
-Version preflight is not proof of plugin compatibility; real Windows audio,
-editor and state remain unverified here until a compatible profile is supplied.
+Passing version preflight for another combination permits an explicit attempt;
+it is not proof of a specific plugin's audio/editor/state compatibility.
 Backend changes stop playback; explicitly press Play to start the selected engine.
 For a muted real-helper check from the repository root:
     RMS_TEST_AUDIO_HOST="$PWD/target/audio-host/rms-audio-host" cargo test --locked --lib real_audio_host_muted_smoke -- --ignored --nocapture

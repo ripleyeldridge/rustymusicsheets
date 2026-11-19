@@ -199,6 +199,9 @@ fn audio_host_setup_documents_dependencies_activation_and_separate_builds() {
             "target/audio-host/rms-audio-host",
             "--core-only",
             "FluidSynth (legacy",
+            "9.22 and newer",
+            "11.x",
+            "5.1.1",
         ] {
             assert!(
                 documentation.contains(term),
