@@ -1,4 +1,5 @@
 use crate::{
+    annotations::{Annotations, Surface},
     folder,
     help::Help,
     import::{self, Report},
@@ -22,6 +23,8 @@ use crate::{
     watch::FolderWatcher,
 };
 use anyhow::Result;
+#[cfg(test)]
+mod annotation_tests;
 use crossbeam_channel::{bounded, Receiver};
 use eframe::egui::{self, Align, Color32, Key, Layout, RichText, Vec2};
 use std::{
@@ -63,6 +66,12 @@ enum PickerTarget {
     Import,
     Library,
     Music(crate::music::PathRequest),
+}
+
+struct PendingAnnotatedScore {
+    id: i64,
+    page: Option<u32>,
+    sequence: Option<(Vec<i64>, usize)>,
 }
 
 pub struct MusicApp {
@@ -119,6 +128,12 @@ pub struct MusicApp {
     auto_detection_pending: std::collections::HashSet<i64>,
     help: Help,
     music: Music,
+    annotations: Annotations,
+    pending_annotated_score: Option<PendingAnnotatedScore>,
+    closing_annotations: bool,
+    closing_this_frame: bool,
+    cancel_close_this_frame: bool,
+    annotation_recovery_open: bool,
     #[cfg(target_os = "linux")]
     closing_plugins: bool,
     #[cfg(target_os = "linux")]
@@ -182,6 +197,12 @@ impl MusicApp {
             watch_error: None,
             changing_folder: false,
             renderer: PageRenderer::new(paths.clone(), ctx.clone()),
+            annotations: Annotations::new(paths.data.clone(), ctx.clone()),
+            pending_annotated_score: None,
+            closing_annotations: false,
+            closing_this_frame: false,
+            cancel_close_this_frame: false,
+            annotation_recovery_open: false,
             paths,
             db,
             prefs,
@@ -310,6 +331,7 @@ impl MusicApp {
             self.instrument_review.open(None);
         }
         if self.reader.retain_existing(&valid) {
+            self.annotations.unbind();
             self.save_page_at = None;
             self.bookmarks.clear();
             self.jump = 1;
@@ -334,6 +356,7 @@ impl MusicApp {
             .find(|s| Some(s.id) == self.reader.score_id)
         {
             if old_hash.as_ref() != Some(&score.hash) {
+                self.annotations.unbind();
                 self.reader.load(score.id, score.pages, self.reader.page);
                 self.jump = self.reader.page + 1;
                 self.renderer.invalidate_requests();
@@ -377,6 +400,16 @@ impl MusicApp {
     }
 
     fn load_score(&mut self, id: i64, page: Option<u32>) {
+        self.annotations.finish_gesture();
+        if self.reader.score_id != Some(id) && self.annotations.has_unsaved() {
+            self.annotations.read_mode();
+            self.pending_annotated_score = Some(PendingAnnotatedScore {
+                id,
+                page,
+                sequence: None,
+            });
+            return;
+        }
         self.music.invalidate_unless(
             self.scores
                 .iter()
@@ -395,7 +428,21 @@ impl MusicApp {
         }
     }
 
+    fn open_standalone_score(&mut self, id: i64) {
+        let previous = (self.reader.sequence.clone(), self.reader.sequence_index);
+        self.reader.sequence.clear();
+        self.reader.sequence_index = 0;
+        self.load_score(id, None);
+        if let Some(pending) = &mut self.pending_annotated_score {
+            pending.sequence = Some((Vec::new(), 0));
+            self.reader.sequence = previous.0;
+            self.reader.sequence_index = previous.1;
+        }
+    }
+
     fn changed_page(&mut self) {
+        self.annotations.finish_gesture();
+        self.annotations.save_now();
         self.jump = self.reader.page + 1;
         self.save_page_at = Some(Instant::now() + Duration::from_millis(300));
         self.renderer.invalidate_requests();
@@ -403,9 +450,14 @@ impl MusicApp {
     }
 
     fn turn(&mut self, forward: bool) {
+        if self.annotations.drawing() {
+            self.status = "Finish the annotation gesture before turning the page.".into();
+            return;
+        }
         self.music.manual_page_turn();
         // Save the old score's position before Reader changes sequence index.
         self.persist_page();
+        let previous_index = self.reader.sequence_index;
         match self.reader.turn(forward) {
             Turn::Page => self.changed_page(),
             Turn::Score(id) => {
@@ -418,6 +470,11 @@ impl MusicApp {
                         .map_or(0, |s| s.pages.saturating_sub(1))
                 };
                 self.load_score(id, Some(page));
+                if let Some(pending) = &mut self.pending_annotated_score {
+                    pending.sequence =
+                        Some((self.reader.sequence.clone(), self.reader.sequence_index));
+                    self.reader.sequence_index = previous_index;
+                }
             }
             Turn::Boundary => {
                 self.status = if forward {
@@ -791,6 +848,19 @@ impl MusicApp {
                 .map(|s| (s.id, s.hash.clone())),
         );
         self.music.poll(&self.paths, ctx);
+        self.annotations.poll(ctx);
+        if self.annotations.editing() {
+            self.music.manual_page_turn();
+        }
+        if !self.annotations.has_unsaved() {
+            if let Some(pending) = self.pending_annotated_score.take() {
+                if let Some((sequence, index)) = pending.sequence {
+                    self.reader.sequence = sequence;
+                    self.reader.sequence_index = index;
+                }
+                self.load_score(pending.id, pending.page);
+            }
+        }
         self.music.path_picker_active = self.picker.is_some();
         if !self.performance {
             self.music.controls_active = false;
@@ -807,7 +877,11 @@ impl MusicApp {
                 }
             }
         }
-        if !self.help.open && (self.performance || self.workspace == Workspace::Reader) {
+        if !self.help.open
+            && !self.annotations.editing()
+            && !self.annotations.drawing()
+            && (self.performance || self.workspace == Workspace::Reader)
+        {
             let target = self
                 .scores
                 .iter()
@@ -821,6 +895,7 @@ impl MusicApp {
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
         if ctx.input(|i| i.key_pressed(Key::F1)) {
+            self.annotations.finish_gesture();
             self.help.open_topic("welcome");
             return;
         }
@@ -831,8 +906,13 @@ impl MusicApp {
             return;
         }
         if ctx.input(|i| i.key_pressed(Key::Escape)) {
+            self.annotations.finish_gesture();
             if self.music.combine_open() {
                 self.music.close_combine();
+                return;
+            }
+            if self.annotations.editing() {
+                self.annotations.read_mode();
                 return;
             }
             if self.music.open || self.music.controls_active {
@@ -844,11 +924,43 @@ impl MusicApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
         }
         if ctx.input(|i| i.key_pressed(Key::F11)) {
+            self.annotations.finish_gesture();
             self.fullscreen = !self.fullscreen;
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
         }
+        if self.annotations.shortcuts(
+            ctx,
+            self.text_input_active
+                || self.annotations.text_input_active()
+                || self.music.open
+                || self.music.combine_open()
+                || self.picker.is_some()
+                || self.setlist_manager.is_some(),
+        ) {
+            return;
+        }
         if self.workspace != Workspace::Reader
+            || self.annotations.drawing()
+            || (self.annotations.captures_page_drag()
+                && ctx.input(|i| {
+                    i.pointer.primary_down()
+                        || i.any_touches()
+                        || i.events.iter().any(|event| {
+                            matches!(
+                                event,
+                                egui::Event::PointerButton {
+                                    button: egui::PointerButton::Primary,
+                                    pressed: true,
+                                    ..
+                                } | egui::Event::Touch {
+                                    phase: egui::TouchPhase::Start,
+                                    ..
+                                }
+                            )
+                        })
+                }))
             || self.text_input_active
+            || self.annotations.text_input_active()
             || (self.left_editor.is_some() && !self.performance)
             || self.setlist_manager.is_some()
             || self.music.open
@@ -1245,6 +1357,7 @@ impl MusicApp {
     }
 
     fn switch_workspace(&mut self, workspace: Workspace) {
+        self.annotations.read_mode();
         if workspace == Workspace::Reader && self.reader.score_id.is_none() {
             return;
         }
@@ -1451,9 +1564,7 @@ impl MusicApp {
                                         score.file_path.display()
                                     ));
                                 if response.clicked() {
-                                    self.reader.sequence.clear();
-                                    self.reader.sequence_index = 0;
-                                    self.load_score(score.id, None);
+                                    self.open_standalone_score(score.id);
                                 }
                                 if !score.detection_status.is_empty()
                                     && ui
@@ -1681,6 +1792,7 @@ impl MusicApp {
             .groups
             .iter()
             .any(|g| g.id == group && g.kind == "setlist");
+        let previous_sequence = (self.reader.sequence.clone(), self.reader.sequence_index);
         self.reader.sequence = if setlist {
             entries.iter().map(|e| e.score_id).collect()
         } else {
@@ -1688,6 +1800,11 @@ impl MusicApp {
         };
         self.reader.sequence_index = if setlist { index } else { 0 };
         self.load_score(entry.score_id, Some(0));
+        if let Some(pending) = &mut self.pending_annotated_score {
+            pending.sequence = Some((self.reader.sequence.clone(), self.reader.sequence_index));
+            self.reader.sequence = previous_sequence.0;
+            self.reader.sequence_index = previous_sequence.1;
+        }
     }
 
     fn manage_setlists(&mut self, ctx: &egui::Context) {
@@ -1734,56 +1851,90 @@ impl MusicApp {
         });
     }
 
+    fn prepare_annotation_pages(&mut self) {
+        self.annotations.begin_view();
+        let Some(score) = self
+            .scores
+            .iter()
+            .find(|s| Some(s.id) == self.reader.score_id)
+        else {
+            return;
+        };
+        let Ok(source) = self.db.pdf_path(&self.paths, &score.hash) else {
+            return;
+        };
+        self.annotations.bind(&score.hash, score.pages, &source);
+        if self
+            .annotations
+            .matches_score(&score.hash, score.pages, &source)
+        {
+            let count = if self.reader.two_pages && self.reader.page + 1 < score.pages {
+                2
+            } else {
+                1
+            };
+            for page in self.reader.page..self.reader.page + count {
+                self.annotations.request_page(page);
+            }
+        }
+    }
+
     fn reader_controls(&mut self, ui: &mut egui::Ui, score: &Score) {
-        ui.horizontal_wrapped(|ui| {
-            if ui.button("Music / OMR").clicked() {
-                if let Some(source) = self.result(self.db.pdf_path(&self.paths, &score.hash)) {
-                    self.music.open_for(score, &source, &self.paths, ui.ctx());
-                }
-            }
-            if ui.button("◀ Previous").clicked() {
-                self.turn(false);
-            }
-            if ui.button("Next ▶").clicked() {
-                self.turn(true);
-            }
-            ui.label(format!("Page {} / {}", self.reader.page + 1, score.pages));
-            let response = ui.add(egui::DragValue::new(&mut self.jump).range(1..=score.pages));
-            self.text_input_active |= response.text_edit_has_focus();
-            if response.changed() {
-                self.music.manual_page_turn();
-                self.reader.jump(self.jump.saturating_sub(1));
-                self.changed_page();
-            }
-            if ui
-                .checkbox(&mut self.reader.two_pages, "Two pages")
-                .changed()
-            {
-                self.renderer.invalidate_requests();
-            }
-            ui.checkbox(&mut self.fit_width, "Fit width");
-            ui.add(egui::Slider::new(&mut self.zoom, 0.5..=3.0).text("Zoom"));
-            if ui.button("Reset zoom").clicked() {
-                self.zoom = 1.0;
-            }
-            if ui.button("Bookmark").clicked() {
-                self.result(self.db.toggle_bookmark(score.id, self.reader.page));
-                self.bookmarks = self.result(self.db.bookmarks(score.id)).unwrap_or_default();
-            }
-            ui.menu_button("Bookmarks", |ui| {
-                if self.bookmarks.is_empty() {
-                    ui.label("No bookmarks yet");
-                }
-                for (page, label) in self.bookmarks.clone() {
-                    if ui.button(label).clicked() {
-                        self.music.manual_page_turn();
-                        self.reader.jump(page);
-                        self.changed_page();
-                        ui.close_menu();
+        ui.add_enabled_ui(!self.annotations.drawing(), |ui| {
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Music / OMR").clicked() {
+                    if let Some(source) = self.result(self.db.pdf_path(&self.paths, &score.hash)) {
+                        self.music.open_for(score, &source, &self.paths, ui.ctx());
                     }
                 }
+                if ui.button("◀ Previous").clicked() {
+                    self.turn(false);
+                }
+                if ui.button("Next ▶").clicked() {
+                    self.turn(true);
+                }
+                ui.label(format!("Page {} / {}", self.reader.page + 1, score.pages));
+                let response = ui.add(egui::DragValue::new(&mut self.jump).range(1..=score.pages));
+                self.text_input_active |= response.text_edit_has_focus();
+                if response.changed() {
+                    self.music.manual_page_turn();
+                    self.reader.jump(self.jump.saturating_sub(1));
+                    self.changed_page();
+                }
+                if ui
+                    .checkbox(&mut self.reader.two_pages, "Two pages")
+                    .changed()
+                {
+                    self.renderer.invalidate_requests();
+                }
+                ui.checkbox(&mut self.fit_width, "Fit width");
+                ui.add(egui::Slider::new(&mut self.zoom, 0.5..=3.0).text("Zoom"));
+                if ui.button("Reset zoom").clicked() {
+                    self.zoom = 1.0;
+                }
+                if ui.button("Bookmark").clicked() {
+                    self.result(self.db.toggle_bookmark(score.id, self.reader.page));
+                    self.bookmarks = self.result(self.db.bookmarks(score.id)).unwrap_or_default();
+                }
+                ui.menu_button("Bookmarks", |ui| {
+                    if self.bookmarks.is_empty() {
+                        ui.label("No bookmarks yet");
+                    }
+                    for (page, label) in self.bookmarks.clone() {
+                        if ui.button(label).clicked() {
+                            self.music.manual_page_turn();
+                            self.reader.jump(page);
+                            self.changed_page();
+                            ui.close_menu();
+                        }
+                    }
+                });
             });
         });
+        self.prepare_annotation_pages();
+        if self.annotations.toolbar(ui, self.reader.page) {
+            self.music.manual_page_turn();
+        }
         if !self.reader.sequence.is_empty() {
             ui.label(format!(
                 "Setlist item {} of {}",
@@ -1809,6 +1960,14 @@ impl MusicApp {
                 });
                 return;
             };
+            let annotation_bound = if let Ok(source) = self.db.pdf_path(&self.paths, &score.hash) {
+                self.annotations.bind(&score.hash, score.pages, &source);
+                self.annotations
+                    .matches_score(&score.hash, score.pages, &source)
+            } else {
+                self.annotations.unbind();
+                false
+            };
             if !self.performance {
                 let controls_height = (ui.available_height() * 0.3).clamp(28.0, 140.0);
                 egui::ScrollArea::vertical()
@@ -1820,6 +1979,15 @@ impl MusicApp {
                         self.reader_controls(ui, &score);
                     });
                 ui.separator();
+            }
+            if self.reader.score_id != Some(score.id)
+                || !self
+                    .scores
+                    .iter()
+                    .any(|s| s.id == score.id && s.hash == score.hash)
+            {
+                ctx.request_repaint();
+                return;
             }
             let available = ui.available_size();
             let count = if self.reader.two_pages && self.reader.page + 1 < score.pages {
@@ -1857,11 +2025,18 @@ impl MusicApp {
                     pixels,
                 });
             }
+            let mut annotation_surfaces = Vec::new();
+            let ink_tools = self.annotations.captures_page_drag();
             egui::ScrollArea::both()
                 .id_salt(("page_scroll", score.id, self.reader.page))
+                .drag_to_scroll(!ink_tools)
+                .enable_scrolling(!self.annotations.drawing())
                 .show(ui, |ui| {
                     ui.horizontal_top(|ui| {
                         for key in pages {
+                            if annotation_bound {
+                                self.annotations.request_page(key.page);
+                            }
                             if let Some(texture) = self.renderer.texture(&key) {
                                 let native = texture.size_vec2();
                                 let width = ((available.x - 20.0) / count as f32).max(64.0);
@@ -1874,9 +2049,21 @@ impl MusicApp {
                                 let response = ui.add(
                                     egui::Image::new(&texture)
                                         .fit_to_exact_size(native * scale)
-                                        .sense(egui::Sense::click()),
+                                        .sense(if ink_tools {
+                                            egui::Sense::click_and_drag()
+                                        } else {
+                                            egui::Sense::click()
+                                        }),
                                 );
-                                if response.clicked() {
+                                if annotation_bound {
+                                    annotation_surfaces.push(Surface {
+                                        page: key.page,
+                                        rect: response.rect,
+                                        clip: response.rect.intersect(ui.clip_rect()),
+                                        layer: ui.layer_id(),
+                                    });
+                                }
+                                if !self.annotations.editing() && response.clicked() {
                                     if let Some(pos) = response.interact_pointer_pos() {
                                         self.turn(pos.x >= response.rect.center().x);
                                     }
@@ -1897,6 +2084,18 @@ impl MusicApp {
                         }
                     });
                 });
+            self.annotations.canvas(
+                ctx,
+                &annotation_surfaces,
+                self.help.open
+                    || self.music.open
+                    || self.music.combine_open()
+                    || self.picker.is_some()
+                    || self.setlist_manager.is_some()
+                    || self.error.is_some()
+                    || self.closing_annotations
+                    || self.pending_annotated_score.is_some(),
+            );
         });
     }
 
@@ -2010,7 +2209,7 @@ impl MusicApp {
                 ui.label(format!("Music folder: {}", self.paths.score_dir().display()));
                 ui.label(format!("Metadata: {}", self.paths.data.display()));
                 ui.label(format!("Version {} — PDF library / reader milestone.", env!("CARGO_PKG_VERSION")));
-                ui.label("Annotations, sync and full feature parity are not implemented yet.");
+                ui.label("Freehand annotations are stored separately from original scores. Sync and full feature parity are not implemented.");
             });
     }
 
@@ -2128,13 +2327,109 @@ impl MusicApp {
         }
     }
 
+    fn request_app_close(&mut self, _ctx: &egui::Context) {
+        if !self.cancel_close_this_frame {
+            self.closing_this_frame = true;
+        }
+    }
+
+    fn cancel_app_close(&mut self, ctx: &egui::Context) {
+        self.cancel_close_this_frame = true;
+        self.closing_this_frame = false;
+        self.closing_annotations = false;
+        #[cfg(target_os = "linux")]
+        {
+            self.closing_plugins = false;
+            self.allow_close = false;
+        }
+        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+    }
+
+    fn final_annotation_close_checkpoint(&mut self, ctx: &egui::Context) {
+        if !self.cancel_close_this_frame
+            && (self.closing_this_frame || ctx.input(|i| i.viewport().close_requested()))
+            && self.annotations.has_unsaved()
+        {
+            self.annotations.read_mode();
+            self.annotations.save_now();
+            self.closing_annotations = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        } else if !self.cancel_close_this_frame && self.closing_this_frame {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+
+    fn annotation_lifecycle(&mut self, ctx: &egui::Context) {
+        if ctx.input(|i| i.viewport().close_requested())
+            && !self.closing_annotations
+            && self.annotations.has_unsaved()
+        {
+            self.annotations.read_mode();
+            self.annotations.save_now();
+            self.closing_annotations = true;
+        }
+        if self.closing_annotations {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            if !self.annotations.has_unsaved() {
+                self.closing_annotations = false;
+                self.request_app_close(ctx);
+            } else {
+                egui::Window::new("Saving annotations before closing")
+                    .collapsible(false).vscroll(true).show(ctx, |ui| {
+                        ui.label("Completed ink is saving in the background. Unsaved ink stays in memory if saving fails.");
+                        if self.annotations.has_save_error() {
+                            ui.colored_label(Color32::LIGHT_RED, "An annotation save failed. Retry, keep the reader open to recover, or explicitly discard unsaved ink.");
+                        } else { ui.spinner(); }
+                        if ui.button("Retry annotation saves").clicked() { self.annotations.save_now(); }
+                        if ui.button("Keep reader open").clicked() {
+                            self.cancel_app_close(ctx);
+                        }
+                        if ui.add_enabled(!self.annotations.writes_pending(),
+                            egui::Button::new("Close discarding unsaved ink")).clicked() {
+                            self.annotations.discard_unsaved();
+                            self.closing_annotations = false;
+                            self.request_app_close(ctx);
+                        }
+                    });
+            }
+        }
+        if self.pending_annotated_score.is_some() {
+            egui::Window::new("Saving annotations before switching scores")
+                .collapsible(false).vscroll(true).show(ctx, |ui| {
+                    ui.label("Waiting for completed ink to be saved before opening the other score.");
+                    if self.annotations.has_save_error() {
+                        ui.colored_label(Color32::LIGHT_RED, "Saving failed; the score has not been switched and unsaved ink is retained.");
+                    } else { ui.spinner(); }
+                    if ui.button("Retry ink saves").clicked() { self.annotations.save_now(); }
+                    if ui.button("Stay on this score").clicked() { self.pending_annotated_score = None; }
+                    if ui.add_enabled(!self.annotations.writes_pending(),
+                        egui::Button::new("Discard unsaved ink and switch")).clicked() {
+                        self.annotations.discard_unsaved();
+                    }
+                });
+        }
+    }
+    fn annotation_recovery_ui(&mut self, ctx: &egui::Context) {
+        if self.annotation_recovery_open {
+            let mut open = true;
+            egui::Window::new("Review annotation saves")
+                .open(&mut open).default_size([540.0, 320.0]).vscroll(true)
+                .show(ctx, |ui| {
+                    ui.label("Resolve pending ink before discarding data or closing. Saved annotations remain separate from source documents.");
+                    self.annotations.toolbar(ui, self.reader.page);
+                });
+            self.annotation_recovery_open = open;
+        }
+    }
+
     fn status_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             if self.performance && !self.help.open {
+                self.prepare_annotation_pages();
                 ui.horizontal_wrapped(|ui| {
                     if ui
                         .add_enabled(
-                            self.reader.can_turn(false),
+                            self.reader.can_turn(false) && !self.annotations.drawing(),
                             egui::Button::new("◀ Previous page"),
                         )
                         .clicked()
@@ -2142,7 +2437,10 @@ impl MusicApp {
                         self.turn(false);
                     }
                     if ui
-                        .add_enabled(self.reader.can_turn(true), egui::Button::new("Next page ▶"))
+                        .add_enabled(
+                            self.reader.can_turn(true) && !self.annotations.drawing(),
+                            egui::Button::new("Next page ▶"),
+                        )
                         .clicked()
                     {
                         self.turn(true);
@@ -2152,7 +2450,25 @@ impl MusicApp {
                         self.reader.page + 1,
                         self.reader.pages
                     ));
+                    if !self.annotations.editing() && self.annotations.compact_controls(ui) {
+                        self.music.manual_page_turn();
+                    }
                 });
+                self.prepare_annotation_pages();
+                if self.annotations.editing() {
+                    egui::ScrollArea::vertical()
+                        .id_salt("performance_annotations")
+                        .max_height(if self.annotations.editing() {
+                            120.0
+                        } else {
+                            48.0
+                        })
+                        .show(ui, |ui| {
+                            if self.annotations.toolbar(ui, self.reader.page) {
+                                self.music.manual_page_turn();
+                            }
+                        });
+                }
                 if let Some(score) = self
                     .scores
                     .iter()
@@ -2162,24 +2478,48 @@ impl MusicApp {
                     if let Ok(source) = self.db.pdf_path(&self.paths, &score.hash) {
                         let busy =
                             self.import_task.is_some() || self.rescanning || self.changing_folder;
-                        egui::ScrollArea::vertical()
-                            .id_salt("performance_music")
-                            .max_height(150.0)
-                            .show(ui, |ui| {
-                                self.music.performance_controls(
-                                    ui,
-                                    &score,
-                                    &source,
-                                    &self.paths,
-                                    &self.prefs.music,
-                                    busy,
-                                );
+                        let annotating = self.annotations.editing();
+                        let mut audio_controls = |ui: &mut egui::Ui| {
+                            egui::ScrollArea::vertical()
+                                .id_salt("performance_music")
+                                .max_height(150.0)
+                                .show(ui, |ui| {
+                                    self.music.performance_controls(
+                                        ui,
+                                        &score,
+                                        &source,
+                                        &self.paths,
+                                        &self.prefs.music,
+                                        busy,
+                                    );
+                                });
+                        };
+                        if annotating {
+                            ui.collapsing("Accompaniment (audio controls)", |ui| {
+                                audio_controls(ui)
                             });
+                        } else {
+                            audio_controls(ui);
+                        }
                         ui.separator();
                     }
                 }
             }
             ui.horizontal_wrapped(|ui| {
+                if self.annotations.editing() || self.annotations.has_unsaved() {
+                    let (color, label) = if self.annotations.has_unsaved() {
+                        (Color32::YELLOW, "Unsaved annotations")
+                    } else {
+                        (Color32::LIGHT_GREEN, "Annotations ready")
+                    };
+                    ui.add_sized(
+                        [150.0, ui.spacing().interact_size.y],
+                        egui::Label::new(RichText::new(label).color(color)).truncate(),
+                    );
+                    if ui.button("Review ink").clicked() {
+                        self.annotation_recovery_open = true;
+                    }
+                }
                 if let Some(summary) = &self.detection_summary {
                     ui.label(format!(
                         "Instruments: {}/{} · {} failed{}",
@@ -2294,13 +2634,20 @@ impl MusicApp {
 
 impl eframe::App for MusicApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.closing_this_frame = false;
+        self.cancel_close_this_frame = false;
         self.ime.prepare(ctx);
         self.poll(ctx);
+        self.annotation_lifecycle(ctx);
         #[cfg(target_os = "linux")]
         if !self.allow_close {
-            if ctx.input(|i| i.viewport().close_requested()) && self.music.has_plugin_session() {
+            if ctx.input(|i| i.viewport().close_requested())
+                && (self.music.has_plugin_session() || self.music.shutdown_pending())
+            {
                 self.closing_plugins = true;
-                self.music.begin_shutdown();
+                if self.music.has_plugin_session() {
+                    self.music.begin_shutdown();
+                }
             }
             if self.closing_plugins {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -2308,16 +2655,23 @@ impl eframe::App for MusicApp {
                     ui.label("Pausing and capturing plugin state asynchronously (up to 65 seconds). Last valid checkpoints remain safe if this fails.");
                     if let Some(error) = self.music.shutdown_error() {
                         ui.colored_label(Color32::LIGHT_RED, error);
-                        if ui.button("Keep the reader open").clicked() { self.closing_plugins = false; }
+                        if ui.button("Keep the reader open").clicked() {
+                            self.cancel_app_close(ctx);
+                        }
                     }
                     if ui.button("Close without waiting (unsaved changes may be lost)").clicked() {
                         self.allow_close = true;
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        if !self.closing_annotations {
+                            self.request_app_close(ctx);
+                        }
                     }
                 });
-                if !self.music.shutdown_pending() && self.music.shutdown_error().is_none() {
+                if !self.music.shutdown_pending()
+                    && self.music.shutdown_error().is_none()
+                    && !self.closing_annotations
+                {
                     self.allow_close = true;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    self.request_app_close(ctx);
                 }
             }
         }
@@ -2340,6 +2694,15 @@ impl eframe::App for MusicApp {
             }
         }
         self.status_bar(ctx);
+        self.annotation_recovery_ui(ctx);
+        if self.help.open
+            || self.workspace != Workspace::Reader
+            || self.picker.is_some()
+            || self.setlist_manager.is_some()
+            || self.error.is_some()
+        {
+            self.annotations.finish_gesture();
+        }
         self.workspace_view(ctx);
         if !self.help.open {
             self.manage_setlists(ctx);
@@ -2375,8 +2738,9 @@ impl eframe::App for MusicApp {
             }
         }
         if self.smoke_deadline.is_some_and(|at| Instant::now() >= at) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            self.request_app_close(ctx);
         }
+        self.final_annotation_close_checkpoint(ctx);
         // Ensures delayed saves, cancelled imports, and full worker queues make progress.
         ctx.request_repaint_after(Duration::from_millis(100));
     }
@@ -2711,7 +3075,7 @@ mod tests {
         assert!(!app.music.combine_open());
     }
 
-    fn test_app() -> (tempfile::TempDir, egui::Context, MusicApp) {
+    pub(super) fn test_app() -> (tempfile::TempDir, egui::Context, MusicApp) {
         let root = tempfile::tempdir().unwrap();
         let paths = Paths {
             data: root.path().join("data"),

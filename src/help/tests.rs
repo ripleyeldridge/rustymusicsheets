@@ -27,6 +27,44 @@ fn frame(
 }
 
 #[test]
+fn annotation_docs_preserve_originals_and_state_storage_and_device_limits() {
+    let article = topics()
+        .iter()
+        .find(|t| t.id == "annotations")
+        .unwrap()
+        .body;
+    for documentation in [
+        include_str!("../../README.md"),
+        include_str!("../../README.txt"),
+        include_str!("../../assets/rustymusicsheets.1"),
+        article,
+    ] {
+        let text = documentation
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        for term in [
+            "Stroke eraser",
+            "Hand / Pan",
+            "Save now",
+            "annotations/",
+            "ink-v1.json",
+            "200,000",
+            "10,000",
+            "palm rejection",
+            "Pressure",
+        ] {
+            assert!(
+                text.to_lowercase().contains(&term.to_lowercase()),
+                "Missing annotation guidance: {term}"
+            );
+        }
+    }
+    assert!(article.contains(&format!("Available in v{VERSION}")));
+    assert!(article.contains("MIDI exports do not include drawn ink"));
+}
+
+#[test]
 fn current_docs_and_embedded_music_reference_remain_consistent() {
     let article = |id| topics().iter().find(|topic| topic.id == id).unwrap().body;
     for term in [
@@ -34,6 +72,11 @@ fn current_docs_and_embedded_music_reference_remain_consistent() {
         "Turn pages early by",
         "Browse",
         "Previous page / Next page",
+        "Combine parts",
+        "Uncombine",
+        "Save and unload instruments",
+        ".audio-v3.json",
+        "Export original MusicXML",
     ] {
         assert!(
             article("music").contains(term),
@@ -64,6 +107,76 @@ fn current_docs_and_embedded_music_reference_remain_consistent() {
 }
 
 #[test]
+fn published_release_docs_link_current_assets_and_distinguish_android_limits() {
+    let release =
+        format!("https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v{VERSION}");
+    let apk = format!("RustyMusicSheets-{VERSION}-android-arm64-debug.apk");
+    for documentation in [
+        include_str!("../../README.md"),
+        include_str!("../../README.txt"),
+        include_str!("../../android/README.txt"),
+    ] {
+        assert!(documentation.contains(&release));
+        for term in [&apk, "SHA256SUMS", "build-record.json"] {
+            assert!(
+                documentation.contains(term),
+                "Missing release artifact: {term}"
+            );
+        }
+        let normalized = documentation
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase();
+        assert!(normalized.contains("not executed on a device"));
+        assert!(normalized.contains("debug-signed"));
+        assert!(normalized.contains("signer"));
+    }
+    assert!(include_str!("../../README.md")
+        .contains(&format!("## Latest published preview: v{VERSION}")));
+    assert!(include_str!("../../README.txt").contains("contains 30 subjects"));
+}
+
+#[test]
+fn music_guides_distinguish_packaged_host_source_builds_and_v3_layout() {
+    let embedded = ["requirements", "music", "audio-host"]
+        .iter()
+        .map(|id| topics().iter().find(|topic| topic.id == *id).unwrap().body)
+        .collect::<Vec<_>>()
+        .join(" ");
+    for documentation in [
+        include_str!("../../README.md"),
+        include_str!("../../README.txt"),
+        include_str!("../../assets/rustymusicsheets.1"),
+        &embedded,
+    ] {
+        let normalized = documentation
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        for term in [
+            "/usr/libexec/rustymusicsheets/rms-audio-host",
+            "SDK-enabled",
+            "2.43",
+            "--vst3-sdk",
+            "editor_keepalive",
+            "sfizz",
+            "Save and unload instruments",
+            "Uncombine",
+            ".audio-v3.json",
+            "Export original MusicXML",
+        ] {
+            assert!(
+                normalized.contains(term),
+                "Missing v0.4 music guidance: {term}"
+            );
+        }
+        assert!(!normalized.contains("New metadata uses .audio-v2.json"));
+        assert!(!normalized.contains("New mix metadata uses `.audio-v2.json`"));
+    }
+}
+
+#[test]
 fn audio_host_setup_documents_dependencies_activation_and_separate_builds() {
     let article = topics()
         .iter()
@@ -86,6 +199,9 @@ fn audio_host_setup_documents_dependencies_activation_and_separate_builds() {
             "target/audio-host/rms-audio-host",
             "--core-only",
             "FluidSynth (legacy",
+            "9.22 and newer",
+            "11.x",
+            "5.1.1",
         ] {
             assert!(
                 documentation.contains(term),
@@ -139,7 +255,7 @@ fn click(help: &mut Help, ctx: &egui::Context, size: [f32; 2], label: &str) {
 fn embedded_articles_are_unique_and_cover_all_workflows() {
     let ids: HashSet<_> = topics().iter().map(|t| t.id).collect();
     assert_eq!(ids.len(), topics().len());
-    assert_eq!(topics().len(), 29);
+    assert_eq!(topics().len(), 30);
     for id in [
         "welcome",
         "layout",
@@ -162,6 +278,7 @@ fn embedded_articles_are_unique_and_cover_all_workflows() {
         "list-order",
         "reading",
         "bookmarks",
+        "annotations",
         "performance",
         "shortcuts",
         "settings",
@@ -194,6 +311,8 @@ fn search_matches_body_keywords_and_all_terms_case_insensitively() {
     assert!(ids("large libraries").contains(&"instrument-detect"));
     assert!(ids("audio host latency").contains(&"audio-host"));
     assert!(ids("Alto Violoncello").contains(&"instrument-manual"));
+    assert!(ids("Surface Pen").contains(&"annotations"));
+    assert!(ids("ink-v1.json").contains(&"annotations"));
     assert_eq!(search("  \t ").len(), topics().len());
     assert!(search("no_such_help_word").is_empty());
     assert!(ids(VERSION).contains(&"about"));

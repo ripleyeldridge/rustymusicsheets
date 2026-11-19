@@ -1,4 +1,4 @@
-.TH RUSTYMUSICSHEETS 1 "November 2026" "RustyMusicSheets 0.4.0" "User Commands"
+.TH RUSTYMUSICSHEETS 1 "November 2026" "RustyMusicSheets 0.5.0" "User Commands"
 .SH NAME
 rustymusicsheets \- sheet music library and performance reader
 .SH SYNOPSIS
@@ -68,6 +68,8 @@ Override the CLI synth executable path/name.
 The three music commands above use explicit files/directories without opening
 the library database. CLI engines use defaults/arguments, not saved GUI preferences.
 CLI playback is one-shot; it does not expose the GUI transport or page following.
+CLI MIDI reads the supplied notation without GUI part combinations or saved
+mixes. Use Export selected MIDI in the GUI for a combined layout.
 .TP
 .B \-\-check
 Check availability of Poppler PDF helpers and Tesseract.
@@ -100,10 +102,34 @@ GUI recognition artifacts/logs, result indexes and saved movement mixes live
 under the data directory in omr/, omr-index/ and omr-mix/.
 Back up the complete data/config directories and original music folder with
 the application closed; a SQLite metadata backup is not a score backup.
+.SH RELEASE AND REQUIREMENTS
+The v0.5.0 preview is published at:
+.UR https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.5.0
+v0.5.0 release notes and downloads
+.UE
+.PP
+The amd64 Linux package requires glibc >=2.43 and is not compatible with
+Ubuntu 22.04/24.04. Rebuild on the target distribution rather than replacing glibc.
+Stable/latest remains v0.2.1; v0.5.0 is a prerelease.
+.PP
+The published .deb includes the SDK-enabled helper at
+/usr/libexec/rustymusicsheets/rms-audio-host. APT resolves system runtime
+libraries; no compiler or VST3 SDK is needed to run it.
+Audiveris, the external FluidSynth executable for legacy playback, banks,
+plugins and sample libraries remain separate. Host playback requires existing
+JACK or PipeWire-JACK stereo output; the app does not configure an audio server.
+.PP
+The separate ARM64 Android APK is experimental, debuggable and locally
+debug-signed, not production signed or desktop feature parity. API 26 minimum,
+target API 36; the v0.5.0 APK passed static checks but was not executed on a device.
+Preserve data and signer continuity; do not uninstall to bypass a mismatch.
+Release checksums, unsigned build provenance and third-party notices are
+attached on GitHub. Attachments use flat filenames; checksums are not signatures.
 .SH MUSIC AND PERFORMANCE
-Install Audiveris, FluidSynth and a SoundFont separately for optional Linux
-music recognition/playback. Default playback uses external FluidSynth; the
-optional audio-host helper links the system FluidSynth library.
+Install Audiveris separately for optional Linux recognition.
+Default legacy playback needs the external FluidSynth executable and a bank.
+The optional audio-host helper links the system FluidSynth library, but
+pure-VST3 host playback needs neither that executable nor a SoundFont bank.
 Instrument-label detection is text classification, not note transcription.
 Audiveris is AGPLv3, FluidSynth LGPL, and SoundFonts have separate licenses.
 .PP
@@ -117,8 +143,9 @@ Cancellation preserves fields; exports do not overwrite existing files.
 Play/Pause, Rewind 5s, Fast-forward 5s and Stop control the persistent GUI synth.
 Pause freezes position; resume/seek reconstruct held notes and restart envelopes.
 Stop resets musical position, not the displayed page.
-Parts / volume controls up to 15 pitched parts, with independent mute, instrument
-and 0\-100% level. Both staves of a piano part stay together.
+Parts / volume controls independent mute, instrument and levels. Legacy
+playback/MIDI support up to 15 pitched parts; the native host supports up to 32.
+Both staves of a piano part stay together.
 Master volume scales all instruments without changing their balance.
 Master gain affects playback output, not exported MIDI part levels.
 Mix settings are saved per recognized movement.
@@ -129,6 +156,9 @@ name and preview before applying. No automatic abbreviation merges occur.
 Uncombine restores original notes/names while retaining subsequent target
 instrument settings. Exact-score/MusicXML-bound .audio-v3.json mixes retain
 hidden member settings and leave older sidecars untouched.
+After failed/cancelled saving, use Reload movement (discard unsaved edits).
+Recover using current layout (back up rejected mix) preserves a rejected
+sidecar before replacing it. Settings changes require a new preview.
 Playback/MIDI use combinations; Export original MusicXML preserves source
 bytes and original parts. Finish plugin dialogs before saving/unloading.
 .PP
@@ -159,7 +189,7 @@ Both require existing stereo physical playback ports; the first two ports are
 connected automatically. Output-routing selection is not implemented yet.
 .PP
 The companion provides process supervision, bounded Unix-socket control and a
-shared device-clock SoundFont mixer for up to 32 parts.
+shared device-clock SoundFont/VST3 mixer for up to 32 parts.
 VST3 instruments, scanning, parameters/presets and state require an SDK-enabled
 helper. Custom editors use separate X11 windows when available.
 Wine installation, prefix management and automatic bridge setup are not provided.
@@ -176,6 +206,9 @@ desktop also needs pipewire-jack; fluid-soundfont-gm provides an example bank.
 The runtime FluidSynth package alone does not provide development headers.
 These prerequisites are installed manually, never by the application.
 Wine, yabridge and the VST3 SDK are not needed for this stage.
+These are source-build requirements, not requirements for running the
+published v0.5.0 package. The base helper build needs CMake >=3.16;
+the VST3 build below additionally needs CMake >=3.25 and libx11-dev.
 Build the application with cargo build --locked --release and launch
 \&./target/release/rustymusicsheets from the source root. Build the separate
 helper as above, Browse to its absolute output path, select a SoundFont
@@ -240,25 +273,64 @@ For existing yabridge use generated Linux VST3 wrappers, normally
 ~/.vst3/yabridge, and run Read-only bridge diagnostics before scanning.
 Tool/wrapper-root/Wine-loader paths have Browse controls.
 Vendor installation/activation and user-reviewed registration/sync are external.
-Wine9.22/10.x with yabridge <=5.1.1 is incompatible upstream; the local
-Wine10.0/yabridge5.1.0 pair is blocked before known wrapper loads/scans.
+Wine 9.22 and newer (including 10.x and 11.x) with yabridge <=5.1.1 have
+known embedded-editor mouse/coordinate failures, even when audio plays.
+Diagnostics flag the pair as incompatible and preflight blocks new wrapper
+loads/scans, including Wine 11.22 Staging with yabridge 5.1.1.
+Moving the editor to another screen is a workaround, not compatibility.
 Updating only to5.1.1 is not a fix. Select a verified compatible existing
 runtime/profile; no automatic installs, sync/prune or prefix changes occur.
 WINELOADER is helper-scoped; WINEPREFIX is not globally overridden.
 Version preflight is not individual plugin compatibility certification.
-Real Windows audio/editor/state remain unverified here without a compatible
-runtime. VST3 packages require --with-audio-host --vst3-sdk SDK_PATH so pinned
-SDK license/provenance is included. Building does not install/publish a package.
+Other runtime/bridge combinations still need plugin-specific validation.
+VST3 packages require --with-audio-host --vst3-sdk SDK_PATH so pinned
+SDK license/provenance is included. The published v0.5.0 .deb uses this
+SDK-enabled variant. Building does not install/publish a package.
 .PP
 Audible position is an estimate requiring loopback calibration. FluidSynth's
 internal 64-frame quantum may delay acoustic onset. Chorus/reverb are disabled
 for pause/seek flushing, so sound differs from legacy playback. Each part loads
 its own SoundFont instance; test memory, levels and timing before performance use.
+.SH ANNOTATIONS
+Available in v0.5.0: non-destructive vector ink over original score pages.
+Choose Annotate in Reader or Performance for Pen, translucent Highlighter,
+Stroke eraser, Hand / Pan, color/thickness, Undo/Redo, Save now and Show ink.
+Done restores click-to-turn. A tap makes a dot; erasing removes whole strokes.
+Clear page requires confirmation and is undoable within session history.
+.PP
+Page-relative vectors stay aligned through zoom/scroll/resize and two-page
+view. A gesture cannot cross to the adjacent page. Drawing does not also scroll
+or turn pages; Hand / Pan permits drag-scrolling. Navigation works between
+gestures. Escape leaves annotation mode first. Ctrl+Z, Ctrl+Shift+Z/Ctrl+Y and
+Ctrl+S apply to ink while tools own input.
+.PP
+Entering annotation mode disables synth page following; explicitly re-enable
+it afterward. Audio can continue. Score identity is verified before editing.
+Completed gestures autosave in the background; watch saved/error status.
+Closing/switching scores waits for saves and offers retry/cancel/discard
+recovery. Forced termination can lose a live or not-yet-acknowledged gesture.
+.PP
+Page sidecars are in app-data/annotations/, under the score hash, named
+<zero-based-page>.ink-v1.json. Back up annotations/ with all app data;
+SQLite-only backups omit ink. Original PDF/image files remain unchanged.
+Atomic content-token-checked writes reject conflicts. Corrupt/newer sidecars
+stay read-only until explicit backed-up recovery. Stale locks fail closed:
+close all writers and preserve sidecar/lock before manually resolving them.
+Limits: 8 MiB, 200,000 points and 10,000 strokes per page; eight cached pages
+and bounded session undo. Unsaved pages are not evicted or silently truncated.
+.PP
+Mouse and OS-recognized stylus/Surface Pen input use constant width and one
+active contact. Pressure, palm rejection, pen buttons and particular hardware
+are not guaranteed; no drivers/global input settings are changed.
+Android shares the engine for supported images, not native PDF/OMR/audio.
+Text/stamps, object moving, pixel erasing and annotated PDF/image export are
+deferred. Original score/MusicXML and MIDI exports do not contain drawn ink.
 .SH NOTES
 Folder watching runs while the application is open.
 Use the Library section to choose a music folder and configure readable titles.
-F11 toggles fullscreen; Escape closes an open music window/mixer before leaving
-performance mode.
+F11 toggles fullscreen; Escape closes Combine parts, then an open music
+window/mixer before leaving performance mode. Reader page-turn shortcuts
+are suspended while the combination editor is open.
 Arrow keys and PageUp/PageDown turn pages.
 .PP
 Settings contains an opt-in keep-awake control to inhibit screen dimming,

@@ -55,6 +55,11 @@ impl Version {
     }
 }
 
+fn incompatible_editor_versions(wine: Version, bridge: Version) -> bool {
+    // Wine 9.22 introduced the embedding regression. A new major version
+    // does not supply the missing fix in an older yabridge build.
+    wine >= Version(9, 22, 0) && bridge <= Version(5, 1, 1)
+}
 fn validate_settings(settings: &Settings) -> Result<()> {
     for text in [
         &settings.tool,
@@ -293,10 +298,9 @@ pub fn diagnostics(settings: &Settings) -> Result<Report> {
     {
         report.warnings.push("A nested generated yabridge tree exists. Review source registrations and duplicate wrappers manually; generated output should not be registered as plugin source. Nothing was changed.".into());
     }
-    let known_bad_wine = wine.0 == 10 || (wine.0 == 9 && wine.1 >= 22);
-    if known_bad_wine && bridge <= Version(5, 1, 1) {
+    if incompatible_editor_versions(wine, bridge) {
         report.summary = format!(
-            "Incompatible yabridge profile: Wine {} with yabridge {}. Upstream reports Wine 9.22/10.x do not work with yabridge 5.1.1 or earlier. Upgrading only to 5.1.1 does not fix this. Select a separately verified compatible runtime/profile; Wine and prefixes were not changed.",
+            "Incompatible yabridge profile: Wine {} with yabridge {}. Wine 9.22 and newer (including 10.x and 11.x) have known embedded-editor mouse input/coordinate failures with yabridge 5.1.1 or earlier, even when audio plays. Upgrading only to 5.1.1 does not fix this. Select a separately verified compatible runtime/bridge profile; Wine and prefixes were not changed.",
             wine.display(), bridge.display(),
         );
         report
@@ -338,10 +342,15 @@ mod tests {
     fn installed_profile_diagnostics_without_loading_a_plugin() {
         let report = diagnostics(&Settings::default()).unwrap();
         assert!(report.wine_version.is_some() && report.bridge_version.is_some());
-        if report.wine_version.as_deref() == Some("10.0.0")
-            && report.bridge_version.as_deref() == Some("5.1.0")
+        if let Some((wine, bridge)) = report
+            .wine_version
+            .as_deref()
+            .and_then(Version::parse)
+            .zip(report.bridge_version.as_deref().and_then(Version::parse))
         {
-            assert!(!report.compatible);
+            if incompatible_editor_versions(wine, bridge) {
+                assert!(!report.compatible);
+            }
         }
         println!("{}", report.summary);
         for warning in report.warnings {
@@ -356,7 +365,38 @@ mod tests {
             Some(Version(10, 0, 0))
         );
         assert_eq!(Version::parse("yabridgectl 5.1.1"), Some(Version(5, 1, 1)));
+        assert_eq!(
+            Version::parse("wine-11.22 (Staging)"),
+            Some(Version(11, 22, 0))
+        );
         assert_eq!(Version::parse("unknown"), None);
+    }
+    #[test]
+    fn editor_regression_has_no_wine_major_version_upper_bound() {
+        for wine in [
+            Version(9, 22, 0),
+            Version(9, 23, 0),
+            Version(10, 0, 0),
+            Version(10, 22, 1),
+            Version(11, 0, 0),
+            Version(11, 22, 0),
+            Version(12, 0, 0),
+        ] {
+            for bridge in [Version(5, 0, 5), Version(5, 1, 0), Version(5, 1, 1)] {
+                assert!(
+                    incompatible_editor_versions(wine, bridge),
+                    "{wine:?}/{bridge:?}"
+                );
+            }
+        }
+        for wine in [Version(8, 0, 0), Version(9, 21, 0), Version(9, 21, 99)] {
+            assert!(!incompatible_editor_versions(wine, Version(5, 1, 1)));
+        }
+        // Unknown newer bridge versions retain the existing explicit-attempt
+        // policy, not a claim that their plugins or editors have been verified.
+        for bridge in [Version(5, 1, 2), Version(5, 2, 0), Version(6, 0, 0)] {
+            assert!(!incompatible_editor_versions(Version(11, 22, 0), bridge));
+        }
     }
 
     #[test]
@@ -411,26 +451,41 @@ mod tests {
     #[cfg(target_os = "linux")]
     fn known_bad_profile_is_blocked_without_changing_any_prefix() {
         use std::os::unix::fs::PermissionsExt;
-        let root = tempfile::tempdir().unwrap();
-        let tool = root.path().join("yabridgectl");
-        let wine = root.path().join("wine");
-        std::fs::write(&tool, "#!/bin/sh\nprintf 'yabridgectl 5.1.0\\n'\n").unwrap();
-        std::fs::write(&wine, "#!/bin/sh\nprintf 'wine-10.0 (fixture)\\n'\n").unwrap();
-        for path in [&tool, &wine] {
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        for (wine_version, bridge_version) in
+            [("10.0", "5.1.0"), ("11.0", "5.1.1"), ("11.22", "5.1.1")]
+        {
+            let root = tempfile::tempdir().unwrap();
+            let tool = root.path().join("yabridgectl");
+            let wine = root.path().join("wine");
+            std::fs::write(
+                &tool,
+                format!("#!/bin/sh\nprintf 'yabridgectl {bridge_version}\\n'\n"),
+            )
+            .unwrap();
+            std::fs::write(
+                &wine,
+                format!("#!/bin/sh\nprintf 'wine-{wine_version} (Staging fixture)\\n'\n"),
+            )
+            .unwrap();
+            for path in [&tool, &wine] {
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            let wrappers = root.path().join("wrappers");
+            let settings = Settings {
+                tool: tool.display().to_string(),
+                wrapper_root: wrappers.display().to_string(),
+                wine_loader: wine.display().to_string(),
+            };
+            let report = diagnostics(&settings).unwrap();
+            assert!(!report.compatible);
+            assert!(report
+                .summary
+                .contains("Upgrading only to 5.1.1 does not fix"));
+            assert!(report.summary.contains(&format!("Wine {wine_version}.")));
+            assert!(report.summary.contains("including 10.x and 11.x"));
+            assert!(report.summary.contains("even when audio plays"));
+            assert!(check_bundle(&wrappers.join("Amped.vst3"), &settings).is_err());
+            assert!(!root.path().join(".wine").exists());
         }
-        let wrappers = root.path().join("wrappers");
-        let settings = Settings {
-            tool: tool.display().to_string(),
-            wrapper_root: wrappers.display().to_string(),
-            wine_loader: wine.display().to_string(),
-        };
-        let report = diagnostics(&settings).unwrap();
-        assert!(!report.compatible);
-        assert!(report
-            .summary
-            .contains("Upgrading only to 5.1.1 does not fix"));
-        assert!(check_bundle(&wrappers.join("Amped.vst3"), &settings).is_err());
-        assert!(!root.path().join(".wine").exists());
     }
 }
