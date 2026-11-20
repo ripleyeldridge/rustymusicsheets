@@ -102,8 +102,9 @@ fn current_docs_and_embedded_music_reference_remain_consistent() {
     }
     assert!(manual.contains(&format!("RustyMusicSheets {VERSION}")));
     assert!(include_str!("../../README.md").contains(&format!("**Version:** {VERSION}")));
-    assert!(include_str!("../../README.txt")
-        .starts_with(&format!("RustyMusicSheets {VERSION} preview")));
+    assert!(
+        include_str!("../../README.txt").starts_with(&format!("RustyMusicSheets {VERSION} stable"))
+    );
 }
 
 #[test]
@@ -132,8 +133,9 @@ fn published_release_docs_link_current_assets_and_distinguish_android_limits() {
         assert!(normalized.contains("debug-signed"));
         assert!(normalized.contains("signer"));
     }
-    assert!(include_str!("../../README.md")
-        .contains(&format!("## Latest published preview: v{VERSION}")));
+    assert!(
+        include_str!("../../README.md").contains(&format!("## Latest stable release: v{VERSION}"))
+    );
     assert!(include_str!("../../README.txt").contains("contains 30 subjects"));
 }
 

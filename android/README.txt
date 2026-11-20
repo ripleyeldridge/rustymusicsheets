@@ -3,15 +3,16 @@ RustyMusicSheets Android foundation
 
 This is the experimental Android foundation introduced with the 0.2.2
 preview, NOT a production Android release or desktop feature parity.
-The v0.6.0 prerelease includes RustyMusicSheets-0.6.0-android-arm64-debug.apk:
-    https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.6.0
+The v0.7.0 Linux stable release also carries the experimental RustyMusicSheets-0.7.0-android-arm64-debug.apk:
+    https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.7.0
 Direct APK:
-    https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.6.0/RustyMusicSheets-0.6.0-android-arm64-debug.apk
-It is built from the immutable v0.6.0 tag on merged main and reports
-versionName 0.6.0, versionCode 16778752, arm64-v8a, minimum API 26/target API 36.
-The release/build commit is bab87330fbcb47e44739f43b4e650d28519e60a8.
+    https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.7.0/RustyMusicSheets-0.7.0-android-arm64-debug.apk
+It is built from the immutable v0.7.0 tag on merged main and reports
+versionName 0.7.0, arm64-v8a, minimum API 26/target API 36.
+Its increasing versionCode is recorded in build-record.json.
+The exact immutable release/build commit is recorded in build-record.json.
 Exact source/version and signer details are recorded in build-record.json.
-Use main for development or the v0.6.0 tag for the published source snapshot.
+Use main for development or the v0.7.0 tag for the published source snapshot.
 Previous APKs, tags and release assets remain unchanged.
 It is debuggable and locally debug-signed, NOT production signed. Signature,
 manifest, ABI and ZIP/16 KiB ELF alignment checks passed; this APK was NOT
@@ -20,7 +21,7 @@ or Linux OMR/audio parity. The v0.2.3 APK is a historical foundation build.
 Do not assume Linux OMR, synth, page-follow or desktop Browse features work here.
 
 Download SHA256SUMS, build-record.json, LICENSE and
-rustymusicsheets-0.6.0-third-party-notices.tar.gz from the same release.
+rustymusicsheets-0.7.0-third-party-notices.tar.gz from the same release.
 All GitHub attachment names are flat. From their download directory:
     sha256sum --ignore-missing -c SHA256SUMS
 This verifies only downloaded files; omit --ignore-missing after downloading
@@ -29,25 +30,22 @@ not an attestation; checksums are not a release signature.
 Check signer_certificate_sha256 in build-record.json against the installed
 app's signing identity before updating. Local/CI debug signers can differ.
 Preserve data and never uninstall a valuable library to bypass a mismatch.
-The published local v0.6.0 APK uses the same debug signer as the published
-local v0.5.0 APK; this does not guarantee a match with another installed or
+Signer continuity with the published local v0.6.0 APK is checked during
+release preparation and recorded in build-record.json; this does not guarantee a match with another installed or
 CI-signed build. After verifying the checksum, installed signer and independent
 backup, install/update the downloaded APK through Android's package installer
-and confirm 0.6.0 in Help > About. Do not enable a broad storage permission;
+and confirm 0.7.0 in Help > About. Do not enable a broad storage permission;
 the supported Open with PNG/JPEG workflow uses a one-time URI read grant.
 
-M0 includes generated fixtures, isolated provider/import/rendering tests and
-integrated CI. For v0.6.0, hosted CI passed Linux regression, ARM64 debug/static
-and isolated API 35 x86_64 emulator smoke jobs on PR head c51d30a53c84:
-    https://github.com/ripleyeldridge/rustymusicsheets/actions/runs/44564733225
-Its source tree matches the merged release commit. The x86_64 harness/emulator
-result is separate from the locally built ARM64 APK and does not establish
-physical-device, ARM64 runtime or stylus coverage. See TESTING.txt and CI.txt
-for harness procedures and historical baselines.
+The Linux stable promotion does not make this a stable mobile release or add
+the Linux Wayland/X11 pen backend to Android. It remains a debug foundation.
+Hosted workflow and isolated emulator procedures are described in CI.txt and
+TESTING.txt. Any current CI evidence is linked in the release build record;
+historical runs are not new ARM64 device or physical stylus verification.
 
 Implemented
 -----------
-The v0.6.0 APK shares the page-vector/storage annotation engine with desktop
+The v0.7.0 APK shares the page-vector/storage annotation engine with desktop
 for supported PNG/JPEG scores. This does not add Android PDF rendering/OMR/audio. Actual stylus/touch behavior
 needs device testing; constant-width ink does not guarantee palm rejection,
 pressure or pen buttons. Back up app-private annotations/ with complete library
