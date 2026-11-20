@@ -11,7 +11,22 @@ fn main() {
 
 fn run() -> Result<()> {
     let mut args = std::env::args_os().skip(1);
-    let command = args.next();
+    let first = args.next();
+    let pen_x11 = first.as_deref() == Some(std::ffi::OsStr::new("--pen-x11"));
+    let pen_wayland = first.as_deref() == Some(std::ffi::OsStr::new("--pen-wayland"));
+    let explicit_pen = pen_x11 || pen_wayland;
+    let pen_flag = if pen_wayland {
+        "--pen-wayland"
+    } else {
+        "--pen-x11"
+    };
+    let command = if explicit_pen { args.next() } else { first };
+    if explicit_pen && command.as_deref().is_some_and(|arg| arg != "--smoke-test") {
+        bail!("Use {pen_flag} alone, or {pen_flag} --smoke-test");
+    }
+    if explicit_pen && args.next().is_some() {
+        bail!("Use {pen_flag} alone, or {pen_flag} --smoke-test");
+    }
     if command.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
             "RustyMusicSheets {}\n\n\
@@ -25,6 +40,8 @@ fn run() -> Result<()> {
                     [--tempo-scale 0.8] [--play] [--play-seconds 5] [--soundfont FILE] [--fluidsynth EXE]\n\
                   rustymusicsheets --check         Check PDF and OCR helper programs\n\
                   rustymusicsheets --smoke-test    Open the UI for three seconds\n\n\
+                  rustymusicsheets --pen-x11       Open with Linux X11/XWayland pen compatibility\n\
+                  rustymusicsheets --pen-wayland   Open with native Wayland tablet-v2 pen input\n\
                   Library/config/cache respect XDG directory variables.",
             env!("CARGO_PKG_VERSION")
         );
@@ -124,6 +141,28 @@ fn run() -> Result<()> {
                     .with_min_inner_size([640.0, 360.0]),
                 ..Default::default()
             };
+            #[cfg(target_os = "linux")]
+            let options = if pen_x11 {
+                use winit::platform::x11::EventLoopBuilderExtX11;
+                let mut options = options;
+                options.event_loop_builder = Some(Box::new(|builder| {
+                    builder.with_x11();
+                }));
+                options
+            } else if pen_wayland {
+                use winit::platform::wayland::EventLoopBuilderExtWayland;
+                let mut options = options;
+                options.event_loop_builder = Some(Box::new(|builder| {
+                    builder.with_wayland();
+                }));
+                options
+            } else {
+                options
+            };
+            #[cfg(not(target_os = "linux"))]
+            if explicit_pen {
+                bail!("{pen_flag} is available only on Linux");
+            }
             eframe::run_native(
                 "RustyMusicSheets",
                 options,

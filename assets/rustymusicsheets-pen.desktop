@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=RustyMusicSheets — X11 Pen Fallback
+Comment=Sheet music reader with explicit X11/XWayland pen contact compatibility
+Exec=rustymusicsheets --pen-x11
+Icon=rustymusicsheets
+Terminal=false
+Categories=AudioVideo;Music;
+Keywords=Sheet;Music;Pen;Stylus;Surface;Scores;
+StartupNotify=true
+StartupWMClass=rustymusicsheets

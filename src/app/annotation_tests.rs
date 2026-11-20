@@ -127,6 +127,7 @@ fn frame(
     ctx.run(
         egui::RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size.into())),
+            max_texture_side: Some(4096),
             events,
             ..Default::default()
         },
@@ -276,6 +277,68 @@ fn flush(app: &mut MusicApp, ctx: &egui::Context, size: [f32; 2]) {
         assert!(Instant::now() < deadline, "Annotation save hung");
         std::thread::sleep(Duration::from_millis(5));
     }
+}
+
+#[test]
+fn native_pen_hover_contact_save_and_page_ownership_preserve_source() {
+    let (_root, ctx, mut app, source, hash) = fixture();
+    let original = std::fs::read(&source).unwrap();
+    let size = [1200.0, 800.0];
+    app.reader.two_pages = true;
+    ready(&mut app, &ctx, size);
+    click(&mut app, &ctx, size, "Annotate");
+    let rects = ready(&mut app, &ctx, size);
+    let a = rects[1].lerp_inside(egui::vec2(0.2, 0.3));
+    let b = rects[1].lerp_inside(egui::vec2(0.5, 0.4));
+    let c = rects[1].lerp_inside(egui::vec2(0.7, 0.6));
+    let mut pen = crate::pen_input::TestPen::default();
+    let events = pen.events(&ctx, &[(a, None), (b, None)]);
+    frame(&mut app, &ctx, size, events);
+    assert!(!app.annotations.has_unsaved(), "Hover must not make ink");
+    for samples in [
+        &[(a, Some(true))][..],
+        &[(b, None)][..],
+        &[(c, Some(false))][..],
+    ] {
+        let events = pen.events(&ctx, samples);
+        frame(&mut app, &ctx, size, events);
+    }
+    assert_eq!(app.reader.page, 0, "Pen input must not turn pages");
+    flush(&mut app, &ctx, size);
+    let ink = store::load(&app.paths.data, &hash, 1, 3).unwrap().ink;
+    assert_eq!(ink.strokes.len(), 1);
+    assert_eq!(ink.strokes[0].points.len(), 3);
+    assert!((ink.strokes[0].points[0].x - 0.2).abs() < 0.01);
+    assert!(store::load(&app.paths.data, &hash, 0, 3)
+        .unwrap()
+        .ink
+        .strokes
+        .is_empty());
+    assert_eq!(std::fs::read(source).unwrap(), original);
+}
+
+#[test]
+fn wayland_frame_tap_at_zoom_saves_one_stroke_and_preserves_the_page() {
+    let (_root, ctx, mut app, source, hash) = fixture();
+    let original = std::fs::read(&source).unwrap();
+    ctx.set_zoom_factor(1.5);
+    let size = [1200.0, 800.0];
+    ready(&mut app, &ctx, size);
+    click(&mut app, &ctx, size, "Annotate");
+    let rect = ready(&mut app, &ctx, size)[0];
+    let start = rect.lerp_inside(egui::vec2(0.2, 0.3));
+    let end = rect.lerp_inside(egui::vec2(0.7, 0.6));
+    let mut pen = crate::pen_input::TestPen::default();
+    let events = pen.wayland_tap(&ctx, start * ctx.zoom_factor(), end * ctx.zoom_factor());
+    frame(&mut app, &ctx, size, events);
+    flush(&mut app, &ctx, size);
+    let ink = store::load(&app.paths.data, &hash, 0, 3).unwrap().ink;
+    assert_eq!(ink.strokes.len(), 1);
+    assert_eq!(ink.strokes[0].points.len(), 2);
+    assert!((ink.strokes[0].points[0].x - 0.2).abs() < 0.01);
+    assert!((ink.strokes[0].points[1].x - 0.7).abs() < 0.01);
+    assert_eq!(app.reader.page, 0);
+    assert_eq!(std::fs::read(source).unwrap(), original);
 }
 
 #[test]

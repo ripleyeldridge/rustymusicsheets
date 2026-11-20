@@ -77,6 +77,17 @@ This does not check Audiveris, FluidSynth, SoundFonts or all OCR language data.
 .TP
 .B \-\-smoke\-test
 Open the desktop interface and close it after three seconds.
+.TP
+.B \-\-pen\-x11
+Source builds after v0.6.0 only: explicitly select Linux X11/XWayland for
+pen compatibility. May be followed by --smoke-test for an isolated startup
+check. Default backend selection is unchanged; an X11/XWayland display is
+required. No desktop, driver or device mapping is changed.
+.TP
+.B \-\-pen\-wayland
+Newer local builds only: explicitly select native Linux Wayland with tablet-v2
+pen contact. May be followed by --smoke-test for startup/close validation.
+Requires a Wayland display; does not modify the desktop session.
 .SH ENVIRONMENT
 .TP
 .B XDG_DATA_HOME
@@ -357,6 +368,29 @@ are not guaranteed; no drivers/global input settings are changed.
 Android shares the engine for supported images, not native PDF/OMR/audio.
 Text/stamps, object moving, pixel erasing and annotated PDF/image export are
 deferred. Original score/MusicXML and MIDI exports do not contain drawn ink.
+.SS NATIVE WAYLAND PEN (LOCAL BUILDS AFTER v0.6.0)
+Newer local previews implement tablet-v2 proximity/motion/down/up/frame on the
+app's own Wayland surface. This is not in published v0.6.0 or older X11-only
+previews. Finger wl_touch and pen tablet-v2 are separate input protocols.
+On Plasma/Wayland select RustyMusicSheets — Wayland Pen, or --pen-wayland.
+The old Pen Compatibility entry is now X11 Pen Fallback (--pen-x11), using
+read-only STYLUS/PEN samples. Normal launches retain automatic selection.
+A Wayland desktop does not identify the actual app window backend.
+.PP
+The native guest queue shares the existing display; winit alone reads the
+socket. No grabs, driver changes or global mappings. Tip down/up, not hover
+or pressure, starts/stops ink. Frames preserve fast taps; surface-local logical
+coordinates use zoom without applying native DPI twice. Cursor shape or an
+app-local crosshair shows pen position. Foreign surfaces, focus loss and
+removal are guarded. The X11 fallback can still miss short sampled taps.
+.PP
+In Settings or annotation controls expand Pen / touch input diagnostic.
+Backend/registry/tablet-v2 support, tool counts, own-surface proximity and tip
+state are always shown. Enable Count input events (session only) for
+pointer/touch and Wayland frame/down/up/cancel counters. Counters are resettable
+and never saved/logged; no typed text, hardware serials, score contents or
+global input is recorded. Physical Plasma/Surface testing remains required;
+pressure, tilt, eraser end and palm rejection are not certified.
 .SH NOTES
 Folder watching runs while the application is open.
 Use the Library section to choose a music folder and configure readable titles.

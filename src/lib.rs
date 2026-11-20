@@ -14,6 +14,7 @@ pub mod music_cli;
 pub mod notation;
 pub mod omr;
 pub mod pdf;
+pub mod pen_input;
 pub mod picker;
 pub mod playback;
 pub mod power;

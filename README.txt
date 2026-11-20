@@ -632,6 +632,38 @@ For a muted real-helper check from the repository root:
 Optional overrides: RMS_TEST_SOUNDFONT and RMS_TEST_AUDIO_BACKEND=jack.
 This checks lifecycle/controls, not acoustic or loopback calibration.
 
+Native Wayland pen input (local builds after v0.6.0)
+---------------------------------------------------
+Updated local previews receive Wayland tablet-v2 proximity, motion and actual
+pen-tip down/up/frame events on this application's own surface. Finger input
+uses wl_touch, a separate protocol. This is not in published v0.6.0 binaries
+or the earlier X11-only pen previews. No driver or global mapping is changed.
+The guest queue shares the existing display; winit alone reads the socket.
+
+On Plasma/Wayland, open RustyMusicSheets — Wayland Pen after installing the
+newer local .deb. That entry runs --pen-wayland. The old Pen Compatibility
+entry forced X11; it is now labeled RustyMusicSheets — X11 Pen Fallback.
+The normal launcher retains automatic backend selection. X11 STYLUS/PEN
+fallback is read-only and sampled, not native Wayland; very short taps can
+be missed there. Source users can build and launch explicitly:
+    cargo build --locked --release
+    ./target/release/rustymusicsheets --pen-wayland
+--pen-wayland --smoke-test tests native startup/close only. --pen-x11 retains
+the X11 option. A Wayland session does not identify the actual app backend.
+
+Open Settings or annotation controls and expand Pen / touch input diagnostic.
+Support state is always visible: backend, registry initialization, tablet-v2
+bound/unavailable, seat/tablet/tool counts, own-surface proximity and tip state.
+Enable Count input events (session only) for pointer/touch and Wayland
+frame/down/up/cancel counters. Counters are resettable, never saved/logged,
+and exclude typed text, hardware serials, score contents and global input.
+Hover must not draw; actual tip down/up events make ink. Native frame handling
+preserves fast taps, and logical coordinates apply zoom without double DPI.
+Cursor shape or an app-local crosshair shows the pen. Removal, focus loss and
+foreign surfaces are guarded. Pressure/tilt, eraser end and palm rejection
+are not certified. Physical Plasma/Surface pen verification remains required.
+If it fails, report actual backend/support, tools, proximity/tip and counters.
+
 Troubleshooting:
 - Missing fluidsynth.pc/headers: install libfluidsynth-dev and check pkg-config.
 - Missing helper/protocol mismatch: build app/helper from the same checkout;

@@ -207,6 +207,26 @@ A stylus/Surface Pen works as basic ink when the OS exposes it as pointer/touch 
 
 Shared drawing/storage is kept compatible with the Android foundation, but actual device behavior needs testing and Android PDF/OMR/audio limits remain. Typed text, musical stamps, moving/selecting objects, partial-stroke erasing and flattened annotated PDF/image export are not implemented. Annotations are initially visible inside the reader only; original score/MusicXML and MIDI exports do not contain the drawn overlay.
 
+### Native Wayland pen input (local builds after v0.6.0)
+The updated local preview receives **Wayland tablet-v2** proximity, motion, tip `down`/`up` and frame events on the application's own surface. Finger input (`wl_touch`) is a different protocol; a working touchscreen alone does not establish pen support. The pinned eframe/winit toolkit does not handle tablet-v2 itself, so the preview binds a guest queue on its existing display. **winit remains the only socket reader**; no device grab, driver change or global mapping is used. This handler is **not in published v0.6.0 binaries or the earlier X11-only pen previews**.
+
+On KDE Plasma/Wayland, install the newer local pen-preview `.deb` and open **RustyMusicSheets — Wayland Pen** from the application menu. It explicitly selects native Wayland, unlike the previous Pen Compatibility entry, which forced X11. The regular RustyMusicSheets entry keeps automatic backend selection. The separately labeled **RustyMusicSheets — X11 Pen Fallback** uses read-only STYLUS/PEN state sampling; it is not native Wayland and can miss very short taps.
+
+For source builds:
+
+```bash
+cargo build --locked --release
+./target/release/rustymusicsheets --pen-wayland
+```
+
+`--pen-wayland --smoke-test` checks native startup/close; it is not a physical pen test. `--pen-x11` still explicitly selects the X11 fallback. A Wayland desktop session does not prove that a particular window is native Wayland: check the diagnostic's actual backend.
+
+In **Settings** or annotation controls, expand **Pen / touch input diagnostic**. It always shows initialization/support state: waiting for registry, tablet-v2 bound/unavailable, seat/tablet/tool counts, own-surface proximity and tip state. Enable **Count input events (session only)** for pointer/touch counts, native input and Wayland frame/down/up/cancel counters; reset or turn them off when finished. These counters are not saved/logged and exclude typed text, hardware serial numbers, score contents and global input.
+
+Hover, draw a short stroke and lift. Hover/pressure alone never makes ink; the native path uses actual tip events, retaining fast down/up transitions even in one frame. Coordinates are surface-local logical units, with zoom applied once rather than DPI applied twice. Cursor-shape support or an app-local crosshair keeps pen position visible. Foreign surfaces, focus loss and tool removal are guarded; finger/mouse input and annotation save/undo/page ownership remain separate. Pressure/tilt, inverted eraser and palm rejection are not certified.
+
+Native protocol dispatch is covered with an isolated generated compositor, including shared-display cleanup and unchanged host surface/display lifetime. This is not certification on the user's Plasma/Surface hardware. If the pen still fails, share the actual backend/support state, tool count, proximity/tip state and frame/down/up counts. Do not change the Surface kernel, Qt or global tablet settings merely to diagnose this app.
+
 ## Music recognition, MusicXML export, and MIDI playback (Linux)
 This is an **experimental, review-first OMR workflow**, separate from instrument-label detection. Audiveris recognizes printed notation into MusicXML; RustyMusicSheets interprets it using legacy external FluidSynth or the optional native SoundFont/VST3 host. No scores are uploaded, and source documents and library metadata remain unchanged.
 

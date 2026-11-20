@@ -289,6 +289,12 @@ Limits: 8 MiB, 200,000 points and 10,000 strokes per page; eight cached pages wi
 
 Mouse and OS-recognized stylus/Surface Pen pointer/touch input use constant-width ink and one active contact. Pressure, palm rejection, pen buttons/inverted eraser and particular hardware are NOT guaranteed. Test your device; the app changes no drivers or global input settings. Android shares drawing/storage for supported images, not native PDF/OMR/audio parity; hardware behavior needs testing.
 
+Newer local builds (not the published v0.6.0 or earlier X11-only previews) implement native Wayland tablet-v2 pen contact. On Plasma/Wayland, use RustyMusicSheets — Wayland Pen, or --pen-wayland. The old Pen Compatibility launcher forced X11; it is now X11 Pen Fallback and uses --pen-x11 with read-only STYLUS/PEN sampling. The normal launcher retains automatic selection. The native guest queue uses the app's existing display, leaving winit as sole socket reader; no driver, grab or global mapping changes.
+
+In Settings or annotation controls, expand Pen / touch input diagnostic. Backend/support state always shows registry initialization, tablet-v2 availability, seats/tablets/tools, own-surface proximity and tip state. Enable Count input events (session only) for pointer/touch counts and Wayland frame/down/up/cancel counters. Counters are resettable and never saved/logged; no typed text, hardware serials, score contents or global input is recorded. A Wayland desktop does not prove the app window is native Wayland.
+
+Hover, draw and lift: native ink follows actual tablet down/up, not pressure/hover. Frame ordering preserves fast taps; logical coordinates apply zoom, not DPI twice. Cursor-shape support or an app-local crosshair keeps the pen visible. Foreign surfaces, focus loss and removal cancel safely. X11 fallback remains sampled and can miss short taps. Pressure, tilt, eraser end and palm rejection remain unverified. If input fails, share actual backend/support, tool count, own-surface proximity/tip and protocol counters. Physical Plasma/Surface testing remains required.
+
 Text/stamps, object moving, partial-stroke erasing and flattened annotated PDF/image export are deferred. Overlays appear in the reader only. Original score/MusicXML and MIDI exports do not include drawn ink.
 
 @bookmarks|Reader and performance|Bookmarks and remembered positions|mark page toggle resume jump saved

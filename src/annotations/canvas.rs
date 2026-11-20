@@ -282,6 +282,26 @@ impl Canvas {
             }
             let touch_frame = events.iter().any(|e| matches!(e, Event::Touch { .. }))
                 || !self.contacts.is_empty();
+            // Only explicit native stylus provenance can override touch
+            // deduplication. Ordinary pointer/touch streams retain their policy.
+            let pen_frame = self
+                .primary_touch
+                .is_some_and(|(device, id)| crate::pen_input::is_pen_touch(ctx, device, id))
+                || events.iter().any(|event| match event {
+                    Event::Touch {
+                        device_id,
+                        id,
+                        phase: TouchPhase::Start,
+                        ..
+                    } => crate::pen_input::is_pen_touch(ctx, *device_id, *id),
+                    Event::PointerButton {
+                        pos,
+                        pressed: true,
+                        button: egui::PointerButton::Primary,
+                        ..
+                    } => crate::pen_input::is_pen_press(ctx, *pos),
+                    _ => false,
+                });
             for event in events {
                 match event {
                     Event::Touch {
@@ -306,11 +326,14 @@ impl Canvas {
                                 if !self.contacts.contains(&contact) && self.contacts.len() < 32 {
                                     self.contacts.push(contact);
                                 }
-                                if first
-                                    && !self
-                                        .gesture
-                                        .as_ref()
-                                        .is_some_and(|g| g.owner == Owner::Pointer)
+                                let native_pen = crate::pen_input::is_pen_touch(ctx, device_id, id);
+                                if native_pen
+                                    || (!pen_frame
+                                        && first
+                                        && !self
+                                            .gesture
+                                            .as_ref()
+                                            .is_some_and(|g| g.owner == Owner::Pointer))
                                 {
                                     self.primary_touch = Some(contact);
                                     self.begin(
@@ -344,12 +367,14 @@ impl Canvas {
                         pressed,
                         ..
                     } if !touch_frame
+                        || (pressed && crate::pen_input::is_pen_press(ctx, pos))
                         || self
                             .gesture
                             .as_ref()
                             .is_some_and(|g| g.owner == Owner::Pointer) =>
                     {
                         if pressed {
+                            self.primary_touch = None;
                             self.begin(annotations, ctx, surfaces, Owner::Pointer, pos);
                         } else {
                             self.moved(annotations, Owner::Pointer, pos);

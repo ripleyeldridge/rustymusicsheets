@@ -138,6 +138,40 @@ fn published_release_docs_link_current_assets_and_distinguish_android_limits() {
 }
 
 #[test]
+fn pen_contact_diagnostic_guides_keep_backend_and_privacy_limits_explicit() {
+    let article = topics()
+        .iter()
+        .find(|topic| topic.id == "annotations")
+        .unwrap()
+        .body;
+    for documentation in [
+        include_str!("../../README.md"),
+        include_str!("../../README.txt"),
+        include_str!("../../assets/rustymusicsheets.1"),
+        article,
+    ] {
+        let normalized = documentation
+            .replace(r"\-", "-")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        for term in [
+            "--pen-x11",
+            "--pen-wayland",
+            "Pen / touch input diagnostic",
+            "Count input events (session only)",
+            "STYLUS/PEN",
+            "global input",
+        ] {
+            assert!(
+                normalized.contains(term),
+                "Missing pen input guidance: {term}"
+            );
+        }
+    }
+}
+
+#[test]
 fn installation_guides_cover_verified_package_upgrades_and_quarantine_retry() {
     let requirements = topics()
         .iter()

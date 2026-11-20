@@ -118,6 +118,10 @@ def main():
             run("strip", "--strip-unneeded", str(native_binary))
         install(ROOT / "assets/rustymusicsheets.desktop",
                 stage / "usr/share/applications/rustymusicsheets.desktop")
+        install(ROOT / "assets/rustymusicsheets-pen.desktop",
+                stage / "usr/share/applications/rustymusicsheets-pen.desktop")
+        install(ROOT / "assets/rustymusicsheets-wayland.desktop",
+                stage / "usr/share/applications/rustymusicsheets-wayland.desktop")
         install(ROOT / "assets/rustymusicsheets.svg",
                 stage / "usr/share/icons/hicolor/scalable/apps/rustymusicsheets.svg")
         for size in (16, 24, 32, 48, 64, 128, 256, 512):
@@ -173,6 +177,10 @@ def main():
             "    shared-timing recovery of empty implicit MusicXML measures.\n\n"
             "  * Non-destructive page annotations with pen/highlighter, stroke\n"
             "    erasing, undo/redo, atomic sidecar autosave and safe recovery.\n"
+            "  * Read-only X11 pen fallback without competing input subscriptions,\n"
+            "    native Wayland tablet-v2 contact with a Wayland Pen launcher,\n"
+            "    opt-in input diagnostic\n"
+            "    and a separate Pen Compatibility application-menu launcher.\n"
             "  * Make Wine 9.22+ / legacy-yabridge editor warnings non-blocking;\n"
             "    allow scans/playback and show the far-left editor workaround.\n\n"
             f" -- Ripley Eldridge <noreply@rustymusicsheets.invalid>  {date}\n"
@@ -225,6 +233,8 @@ def main():
             directory.chmod(0o755)
         if shutil.which("desktop-file-validate"):
             run("desktop-file-validate", str(stage / "usr/share/applications/rustymusicsheets.desktop"))
+            run("desktop-file-validate", str(stage / "usr/share/applications/rustymusicsheets-pen.desktop"))
+            run("desktop-file-validate", str(stage / "usr/share/applications/rustymusicsheets-wayland.desktop"))
         run("dpkg-deb", "--root-owner-group", "--uniform-compression", "-Zxz", "-z6",
             "--build", str(stage), str(destination), env=env)
     print(f"\nPackage: {destination}\nArchitecture: {arch}\nRuntime dependencies: {', '.join(runtime)}")
