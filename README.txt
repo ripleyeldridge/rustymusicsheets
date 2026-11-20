@@ -1,37 +1,35 @@
-RustyMusicSheets 0.6.0 preview
+RustyMusicSheets 0.7.0 stable
 ===================
 
 A native Rust desktop sheet-music library and PDF/image performance reader for Linux,
 with optional offline OMR, accompaniment and measure-based page read-ahead.
-This is an evolving preview, NOT full MobileSheets feature parity.
+Stable Linux release; NOT full MobileSheets feature parity. Android remains experimental.
 
 Downloads and install
 ---------------------
-Release 0.6.0 makes the Wine 9.22+/legacy-yabridge editor-input warning
-non-blocking. Explicit scans, instrument loading and playback are allowed;
-diagnostics, scan results and playback controls retain the notification and
-far-left / leftmost-screen workaround. Missing tools, invalid settings and
-failed version probes remain errors. Original scores, plugin state, Wine
-prefixes and registrations are not changed by this policy.
-It retains v0.5.0 annotations, native VST3/SoundFont hosting and reversible
-OMR part combination. The exact merged main source commit and asset/signing
-provenance are recorded in build-record.json. Previous release tags/assets
-remain unchanged. This is a prerelease, not a stable/latest promotion.
-The package includes the SDK-enabled helper, not plugins/samples/SDK source.
-Published 19 November 2026 through PR #9, annotated tag v0.6.0 points to
-release/build commit bab87330fbcb47e44739f43b4e650d28519e60a8.
-Later main documentation/development commits do not change that release.
+Release 0.7.0 promotes the Linux application to stable with native Wayland
+tablet-v2 pen contact, correct logical-coordinate handling, session-only input
+diagnostics and explicit Wayland Pen / X11 Pen Fallback launchers. Finger/mouse
+input, original documents and sidecar formats are preserved. It retains
+v0.6.0 non-blocking Wine/yabridge warnings and existing annotations/OMR/VST3.
+The user confirmed basic pen operation on the native Wayland preview with
+Plasma 6.7.5, Qt 6.11.2 and kernel 6.18.5-surface-1. The stable build retains
+that pen code; pressure, tilt, palm rejection and all devices are not certified.
+Source/tag identity and actual validation are in build-record.json. Previous
+release tags/assets are unchanged. The Linux package includes the SDK-enabled
+helper, not plugins/samples/SDK source. Android remains debug-signed and
+experimental despite the stable Linux promotion.
 
-Latest published Linux preview and release notes:
-    https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.6.0
-Download rustymusicsheets_0.6.0-1_amd64.deb and SHA256SUMS from that page.
+Latest stable Linux release and notes:
+    https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.7.0
+Download rustymusicsheets_0.7.0-1_amd64.deb and SHA256SUMS from that page.
 Check the reader first:
     dpkg --print-architecture
     getconf GNU_LIBC_VERSION
 The downloaded package requires amd64 and glibc 2.43 or newer.
 In their shared download directory, after confirming amd64/glibc compatibility:
     sha256sum --ignore-missing -c SHA256SUMS
-    sudo apt install ./rustymusicsheets_0.6.0-1_amd64.deb
+    sudo apt install ./rustymusicsheets_0.7.0-1_amd64.deb
     rustymusicsheets --help
     rustymusicsheets --check
 --help reports the executable version; --check checks PDF/OCR helpers, not
@@ -39,15 +37,15 @@ JACK, plugin audio, licensing or editor compatibility.
 --ignore-missing verifies only downloaded files. To verify the complete set,
 download all six attachments and run sha256sum -c SHA256SUMS without it.
 Attachments also include build-record.json, LICENSE and
-rustymusicsheets-0.6.0-third-party-notices.tar.gz. GitHub filenames are flat.
+rustymusicsheets-0.7.0-third-party-notices.tar.gz. GitHub filenames are flat.
 The build record is unsigned provenance; checksums are not a release signature.
 
 This native Ubuntu 26.10 build requires glibc 2.43 or newer; it does not support
 Ubuntu 22.04/24.04. Build on the target distribution when needed. Do not force
-dependencies or replace system glibc. Stable v0.2.1 remains available separately.
-The separate RustyMusicSheets-0.6.0-android-arm64-debug.apk is experimental,
+dependencies or replace system glibc. v0.7.0 is stable/latest; older v0.2.1 remains available separately.
+The separate RustyMusicSheets-0.7.0-android-arm64-debug.apk is experimental,
 debuggable and locally debug-signed, NOT production signed or desktop parity.
-It reports versionName 0.6.0, minimum API 26/target API 36; versionCode and
+It reports versionName 0.7.0, minimum API 26/target API 36; versionCode and
 signing certificate fingerprint are recorded in build-record.json.
 Static checks passed; this APK was not executed on a device. See
 android/README.txt and its signer-continuity/data-preservation warnings.
@@ -59,13 +57,13 @@ for legacy playback, SoundFonts, plugins and sample libraries remain separate.
 For the host backend, supply an already-working JACK or PipeWire-JACK output;
 the app does not install plugins or configure an audio server.
 
-Upgrading from v0.5.0 or an older preview
+Upgrading from v0.6.0 or a local pen preview
 ----------------------------------------
 Save plugin assignments/state while paused or stopped, wait for annotation
 saves and close the app. Back up the music folder and complete app data/config
 directories, including annotations/ and OMR mixes. Install the verified .deb
 with APT as above; do not uninstall first or delete saved mixes/catalogues.
-Relaunch and confirm 0.6.0 in Help > About. An old source-preview launcher may
+Relaunch and confirm 0.7.0 in Help > About. An old source-preview launcher may
 point to another binary; rebuild its checkout or launch the installed app.
 For the packaged helper, leave Audio-host executable empty and save preferences.
 Wrappers quarantined by the previous version gate need Retry this bundle or
@@ -89,8 +87,8 @@ assigns a part. Plugins, sample libraries and licenses remain external.
 Build and run
 -------------
 Use main for ongoing development; annotations no longer require a feature
-branch. To reproduce the published v0.6.0 source instead, use its immutable
-v0.6.0 tag. To return to current development: git switch main, then
+branch. To reproduce the published v0.7.0 source instead, use its immutable
+v0.7.0 tag. To return to current development: git switch main, then
 git pull --ff-only. Release tags/assets are not moved by branch cleanup.
 Rust 1.86 or newer and Cargo are required. Dependencies are locked for the
 currently installed compiler. No compiler upgrade is needed for this version.
@@ -105,8 +103,8 @@ These changes do not constitute a Windows release: the published .deb is
 Linux-only, and Windows PDF/OCR dependencies and runtime testing remain needed.
 Android NativeActivity and content-URI import groundwork is also available
 in the source; see android/README.txt for build setup and explicit limits.
-The initial Open with path supports PNG/JPEG private copies, not an Android
-release or native PDF/OCR parity.
+The initial Open with path supports PNG/JPEG private copies, not a production
+Android release or native PDF/OCR parity.
 
     cargo build --locked --release
     ./target/release/rustymusicsheets
@@ -320,7 +318,7 @@ Changed files invalidate old proposals; rescan and detect them again.
 Manual metadata is retained if file contents are replaced, while automatic
 instrument assignments are cleared. Detection never modifies the score file.
 
-Annotations (v0.6.0)
+Annotations (v0.7.0)
 ---------------------------------------------------------------
 In Reader or Performance, choose Annotate for Pen, translucent Highlighter,
 Stroke eraser, Hand / Pan, color/thickness, Undo/Redo, Save now, visibility
@@ -472,7 +470,7 @@ The initial native target is Linux x86_64 VST3 instruments, not VST2/effects.
 
 Ordinary Cargo and Android builds remain independent of native audio SDKs.
 Native Linux VST3 needs no Wine/yabridge. SoundFont-only builds need no SDK.
-Installed v0.6.0 package quick start (no SDK build required):
+Installed v0.7.0 package quick start (no SDK build required):
 1. Choose Audio host preview - PipeWire/JACK or native JACK in music settings.
 2. Leave Audio-host executable empty for the packaged helper. Clear an old
    source-preview path if you intend to use the installed helper; save settings.
@@ -535,7 +533,7 @@ can delay actual note onset. Test before relying on the preview in performance.
 
 python3 scripts/build-deb.py --with-audio-host explicitly packages the helper,
 native runtime dependencies and notices. The source builder without that flag
-omits the helper; the published v0.6.0 package includes the SDK-enabled helper.
+omits the helper; the published v0.7.0 package includes the SDK-enabled helper.
 No Wine/yabridge installation, system Wine changes or release changes occur.
 For VST3, additionally use CMake >=3.25 and X11 development headers
 (libx11-dev on Ubuntu), then from the repository root:
@@ -620,7 +618,7 @@ Move the editor to the far left of your desktop / leftmost screen as a workaroun
 this may restore mouse interaction but does not establish compatibility.
 Missing tools, invalid settings and failed/unparseable probes remain errors.
 Previously quarantined bundles need Retry this bundle or an explicit rescan.
-The v0.6.0 release makes this advisory; previously published packages are unchanged.
+v0.6.0 made this advisory; v0.7.0 retains that policy. Older packages are unchanged.
 Updating only to 5.1.1 is not a fix. Optionally choose a separately verified existing
 runtime/profile; no Wine/prefix changes, automatic sync or installs occur.
 WINELOADER is helper-scoped, no global WINEPREFIX override is used.
@@ -631,6 +629,39 @@ For a muted real-helper check from the repository root:
     RMS_TEST_AUDIO_HOST="$PWD/target/audio-host/rms-audio-host" cargo test --locked --lib real_audio_host_muted_smoke -- --ignored --nocapture
 Optional overrides: RMS_TEST_SOUNDFONT and RMS_TEST_AUDIO_BACKEND=jack.
 This checks lifecycle/controls, not acoustic or loopback calibration.
+
+Native Wayland pen input (v0.7.0)
+---------------------------------------------------
+v0.7.0 receives Wayland tablet-v2 proximity, motion and actual
+pen-tip down/up/frame events on this application's own surface. Finger input
+uses wl_touch, a separate protocol. This was absent from v0.6.0
+and the earlier X11-only pen previews. No driver or global mapping is changed.
+The guest queue shares the existing display; winit alone reads the socket.
+
+On Plasma/Wayland, open RustyMusicSheets — Wayland Pen after installing the
+v0.7.0 .deb. That entry runs --pen-wayland. The old Pen Compatibility
+entry forced X11; it is now labeled RustyMusicSheets — X11 Pen Fallback.
+The normal launcher retains automatic backend selection. X11 STYLUS/PEN
+fallback is read-only and sampled, not native Wayland; very short taps can
+be missed there. Source users can build and launch explicitly:
+    cargo build --locked --release
+    ./target/release/rustymusicsheets --pen-wayland
+--pen-wayland --smoke-test tests native startup/close only. --pen-x11 retains
+the X11 option. A Wayland session does not identify the actual app backend.
+
+Open Settings or annotation controls and expand Pen / touch input diagnostic.
+Support state is always visible: backend, registry initialization, tablet-v2
+bound/unavailable, seat/tablet/tool counts, own-surface proximity and tip state.
+Enable Count input events (session only) for pointer/touch and Wayland
+frame/down/up/cancel counters. Counters are resettable, never saved/logged,
+and exclude typed text, hardware serials, score contents and global input.
+Hover must not draw; actual tip down/up events make ink. Native frame handling
+preserves fast taps, and logical coordinates apply zoom without double DPI.
+Cursor shape or an app-local crosshair shows the pen. Removal, focus loss and
+foreign surfaces are guarded. Pressure/tilt, eraser end and palm rejection
+are not certified. Basic Plasma/Surface input was user-confirmed on the preceding native preview;
+other hardware and pressure/palm behavior need their own testing.
+If it fails, report actual backend/support, tools, proximity/tip and counters.
 
 Troubleshooting:
 - Missing fluidsynth.pc/headers: install libfluidsynth-dev and check pkg-config.
@@ -839,18 +870,16 @@ missing managed copy if its database record still exists.
 
 Validation
 ----------
-The published v0.6.0 passed 336 standard Rust tests, 46 Python tests and
-16 native CTests including sanitizers, strict formatting/Clippy, SDK integrity,
-package content/startup checks and Android static verification. All six
-uploaded assets were downloaded and byte-verified. Hosted CI also passed
-Linux, ARM64 static and isolated API 35 x86_64 emulator jobs:
-    https://github.com/ripleyeldridge/rustymusicsheets/actions/runs/44564733225
-That emulator evidence is separate from the locally built ARM64 APK, which
-was not executed on a device. See build-record.json for source/check details.
-Nine opt-in Rust tests were not run; historical private dummy JACK runs do
-not certify this build on physical output. Loopback timing calibration remains
-pending. Do not infer universal plugin, pedal or stylus compatibility.
-The following commands validate the current checkout, not immutable assets.
+The v0.7.0 validation scope includes 365 standard Rust tests, 47 Python tests,
+strict formatting/Clippy, SDK integrity, native CTests with sanitizers,
+packaged-app Wayland tablet-v2 binding and X11 startup/close, launcher/content
+checks and Android static verification. Exact checks and hosted CI evidence
+are recorded in build-record.json. Isolated compositor tests cover frame
+ordering, shared-display ownership, logical coordinates and teardown. The
+user confirmed the prior preview's same pen runtime code on one Plasma/Surface
+setup; no universal pen, pressure/palm, physical audio or ARM64 device coverage
+is implied. The ARM64 APK was not executed on a device. Opt-in audio/plugin
+tests remain separate. Commands below validate the current source checkout.
     cargo fmt --check
     cargo test --locked
     cargo clippy --locked --all-targets -- -D warnings
@@ -890,7 +919,7 @@ Build a native package without installing it or requiring root:
 
 This requires Python 3.9+, Cargo/Rust, dpkg-deb, dpkg-shlibdeps (dpkg-dev),
 and binutils. The result is written to:
-    dist/rustymusicsheets_0.6.0-1_<architecture>.deb
+    dist/rustymusicsheets_0.7.0-1_<architecture>.deb
 --revision 2 selects Debian revision 2; the application version comes from
 Cargo.toml. Numeric application versions must match the root Cargo.lock entry.
 
@@ -915,7 +944,7 @@ Do not force-install it or replace the reader's glibc to bypass dependencies.
 
 After confirming compatibility, install the package with APT so dependencies
 are resolved:
-    sudo apt install ./dist/rustymusicsheets_0.6.0-1_amd64.deb
+    sudo apt install ./dist/rustymusicsheets_0.7.0-1_amd64.deb
 
 Replace the filename with the package matching your reader's architecture.
 Personal music-library data and preferences are not shipped in the package.
@@ -924,7 +953,7 @@ Uninstalling the application does not delete your library.
 Publishing releases (maintainers)
 ---------------------------------
 See README.md, "Publishing a release", for the complete checked command sequence.
-Do not replay it against already-published v0.6.0; choose an unused next version.
+Do not replay it against already-published v0.7.0; choose an unused next version.
 1. Update Cargo.toml, only the root Cargo.lock package version, current guide
    headings and the man-page header. Runtime version displays derive from Cargo.
 2. Run validation, review, merge as needed, and commit BEFORE building/tagging.
@@ -938,11 +967,11 @@ Do not replay it against already-published v0.6.0; choose an unused next version
 6. Tag the built commit with an annotated tag; confirm it matches, then push
    main and the tag atomically without force. Do not move old published tags
    or relabel old-version binaries as a new application version.
-7. Create a GitHub draft with --verify-tag --prerelease --latest=false and
+7. Create a GitHub stable draft with --verify-tag --latest=false and
    attach the package/checksum. Add feature, compatibility and verification notes.
 8. Download all draft assets to a fresh directory, verify SHA256SUMS there and
-   compare with local originals before publishing. Stable/latest promotion is
-   separate. A tag push by itself builds/publishes no release assets.
+   compare with local originals before approved stable publication using
+   --prerelease=false --latest. Use --prerelease --latest=false for previews. A tag push by itself builds/publishes no release assets.
 Android is a separate optional build with its own source/signature/static/device
 checks; follow android/README.txt, TESTING.txt and CI.txt. Development signatures
 are not production trust and may prevent lossless updates. Never uninstall a

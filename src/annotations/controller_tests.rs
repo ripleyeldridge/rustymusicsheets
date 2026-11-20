@@ -405,6 +405,87 @@ fn touch_mouse_duplicates_and_secondary_contacts_are_not_extra_strokes() {
 }
 
 #[test]
+fn native_pen_contact_is_not_suppressed_by_resting_finger_or_duplicated_pointer() {
+    let mut h = Harness::new(1);
+    let s = surface(0);
+    let mut pen = crate::pen_input::TestPen::default();
+    // An existing contact outside the page must not veto the pen's tip.
+    h.frame(vec![touch(1, TouchPhase::Start, pos2(500.0, 500.0))], &[s]);
+    let events = pen.events(&h.ctx, &[(pos2(40.0, 50.0), Some(true))]);
+    h.frame(events, &[s]);
+    assert!(h.ann.drawing());
+    let mut events = vec![
+        touch(1, TouchPhase::End, pos2(500.0, 500.0)),
+        touch(2, TouchPhase::Start, pos2(190.0, 300.0)),
+    ];
+    events.extend(pen.events(&h.ctx, &[(pos2(80.0, 90.0), None)]));
+    h.frame(events, &[s]);
+    assert!(
+        h.ann.drawing(),
+        "An unrelated finger ending must not end pen ink"
+    );
+    let events = pen.events(&h.ctx, &[(pos2(120.0, 150.0), Some(false))]);
+    h.frame(events, &[s]);
+    assert_eq!(h.strokes(0).len(), 1);
+    assert_eq!(h.strokes(0)[0].points.len(), 3);
+    assert!(!h.ann.drawing());
+    h.frame(vec![touch(2, TouchPhase::End, pos2(190.0, 300.0))], &[s]);
+    assert_eq!(h.strokes(0).len(), 1);
+    h.source_unchanged();
+}
+
+#[test]
+fn same_frame_finger_then_native_pen_has_one_pen_stroke() {
+    let mut h = Harness::new(1);
+    let s = surface(0);
+    let mut pen = crate::pen_input::TestPen::default();
+    let mut events = vec![
+        touch(1, TouchPhase::Start, pos2(180.0, 250.0)),
+        pointer(pos2(180.0, 250.0), true),
+    ];
+    events.extend(pen.events(
+        &h.ctx,
+        &[
+            (pos2(40.0, 50.0), Some(true)),
+            (pos2(80.0, 90.0), None),
+            (pos2(120.0, 150.0), Some(false)),
+        ],
+    ));
+    h.frame(events, &[s]);
+    assert_eq!(h.strokes(0).len(), 1);
+    assert_eq!(h.strokes(0)[0].points.len(), 3);
+    assert_eq!(h.strokes(0)[0].points[0], Point { x: 0.1, y: 0.075 });
+    h.source_unchanged();
+}
+
+#[test]
+fn normally_delivered_pen_button_can_begin_during_unrelated_touch() {
+    let mut h = Harness::new(1);
+    let s = surface(0);
+    let pos = pos2(40.0, 50.0);
+    let mut pen = crate::pen_input::TestPen::default();
+    pen.normal_press(&h.ctx, pos);
+    h.frame(
+        vec![
+            touch(1, TouchPhase::Start, pos2(180.0, 250.0)),
+            pointer(pos, true),
+            Event::PointerMoved(pos2(80.0, 90.0)),
+        ],
+        &[s],
+    );
+    assert!(h.ann.drawing());
+    h.frame(
+        vec![
+            touch(1, TouchPhase::End, pos2(180.0, 250.0)),
+            pointer(pos2(120.0, 150.0), false),
+        ],
+        &[s],
+    );
+    assert_eq!(h.strokes(0).len(), 1);
+    assert_eq!(h.strokes(0)[0].points.len(), 3);
+}
+
+#[test]
 fn primary_pointer_survives_secondary_buttons_and_extra_touch() {
     let mut h = Harness::new(1);
     let s = surface(0);

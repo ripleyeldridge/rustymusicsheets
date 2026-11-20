@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=RustyMusicSheets — Wayland Pen
+Comment=Sheet music reader with native Wayland tablet-v2 pen contact
+Exec=rustymusicsheets --pen-wayland
+Icon=rustymusicsheets
+Terminal=false
+Categories=AudioVideo;Music;
+Keywords=Sheet;Music;Pen;Stylus;Surface;Wayland;Scores;
+StartupNotify=true
+StartupWMClass=rustymusicsheets

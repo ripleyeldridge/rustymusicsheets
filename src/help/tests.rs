@@ -102,8 +102,9 @@ fn current_docs_and_embedded_music_reference_remain_consistent() {
     }
     assert!(manual.contains(&format!("RustyMusicSheets {VERSION}")));
     assert!(include_str!("../../README.md").contains(&format!("**Version:** {VERSION}")));
-    assert!(include_str!("../../README.txt")
-        .starts_with(&format!("RustyMusicSheets {VERSION} preview")));
+    assert!(
+        include_str!("../../README.txt").starts_with(&format!("RustyMusicSheets {VERSION} stable"))
+    );
 }
 
 #[test]
@@ -132,9 +133,44 @@ fn published_release_docs_link_current_assets_and_distinguish_android_limits() {
         assert!(normalized.contains("debug-signed"));
         assert!(normalized.contains("signer"));
     }
-    assert!(include_str!("../../README.md")
-        .contains(&format!("## Latest published preview: v{VERSION}")));
+    assert!(
+        include_str!("../../README.md").contains(&format!("## Latest stable release: v{VERSION}"))
+    );
     assert!(include_str!("../../README.txt").contains("contains 30 subjects"));
+}
+
+#[test]
+fn pen_contact_diagnostic_guides_keep_backend_and_privacy_limits_explicit() {
+    let article = topics()
+        .iter()
+        .find(|topic| topic.id == "annotations")
+        .unwrap()
+        .body;
+    for documentation in [
+        include_str!("../../README.md"),
+        include_str!("../../README.txt"),
+        include_str!("../../assets/rustymusicsheets.1"),
+        article,
+    ] {
+        let normalized = documentation
+            .replace(r"\-", "-")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        for term in [
+            "--pen-x11",
+            "--pen-wayland",
+            "Pen / touch input diagnostic",
+            "Count input events (session only)",
+            "STYLUS/PEN",
+            "global input",
+        ] {
+            assert!(
+                normalized.contains(term),
+                "Missing pen input guidance: {term}"
+            );
+        }
+    }
 }
 
 #[test]

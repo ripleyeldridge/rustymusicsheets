@@ -1,4 +1,4 @@
-.TH RUSTYMUSICSHEETS 1 "November 2026" "RustyMusicSheets 0.6.0" "User Commands"
+.TH RUSTYMUSICSHEETS 1 "November 2026" "RustyMusicSheets 0.7.0" "User Commands"
 .SH NAME
 rustymusicsheets \- sheet music library and performance reader
 .SH SYNOPSIS
@@ -77,6 +77,17 @@ This does not check Audiveris, FluidSynth, SoundFonts or all OCR language data.
 .TP
 .B \-\-smoke\-test
 Open the desktop interface and close it after three seconds.
+.TP
+.B \-\-pen\-x11
+Available in v0.7.0: explicitly select Linux X11/XWayland for
+pen compatibility. May be followed by --smoke-test for an isolated startup
+check. Default backend selection is unchanged; an X11/XWayland display is
+required. No desktop, driver or device mapping is changed.
+.TP
+.B \-\-pen\-wayland
+Available in v0.7.0: explicitly select native Linux Wayland with tablet-v2
+pen contact. May be followed by --smoke-test for startup/close validation.
+Requires a Wayland display; does not modify the desktop session.
 .SH ENVIRONMENT
 .TP
 .B XDG_DATA_HOME
@@ -103,26 +114,26 @@ under the data directory in omr/, omr-index/ and omr-mix/.
 Back up the complete data/config directories and original music folder with
 the application closed; a SQLite metadata backup is not a score backup.
 .SH RELEASE AND REQUIREMENTS
-The v0.6.0 preview is published at:
-.UR https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.6.0
-v0.6.0 release notes and downloads
+The v0.7.0 stable Linux release is published at:
+.UR https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.7.0
+v0.7.0 release notes and downloads
 .UE
 .PP
 The amd64 Linux package requires glibc >=2.43 and is not compatible with
 Ubuntu 22.04/24.04. Rebuild on the target distribution rather than replacing glibc.
-Stable/latest remains v0.2.1; v0.6.0 is a prerelease.
+v0.7.0 is stable/latest for Linux; Android remains experimental.
 .PP
-Published 19 November 2026 through PR #9, annotated tag v0.6.0 resolves to
-release/build commit bab87330fbcb47e44739f43b4e650d28519e60a8.
+Annotated tag v0.7.0 and build-record.json identify the immutable stable
+release/build commit.
 Later main documentation changes do not replace published tags or assets.
 .SS INSTALLING AND UPGRADING
 Check the reader with dpkg --print-architecture and getconf GNU_LIBC_VERSION.
 The published package requires amd64 and glibc 2.43 or newer.
-Download rustymusicsheets_0.6.0-1_amd64.deb and SHA256SUMS from the release
+Download rustymusicsheets_0.7.0-1_amd64.deb and SHA256SUMS from the release
 page into the same directory, then verify and install:
 .nf
 sha256sum --ignore-missing -c SHA256SUMS
-sudo apt install ./rustymusicsheets_0.6.0-1_amd64.deb
+sudo apt install ./rustymusicsheets_0.7.0-1_amd64.deb
 rustymusicsheets --help
 rustymusicsheets --check
 .fi
@@ -134,7 +145,7 @@ Before upgrading, save plugin assignments/state while paused/stopped, wait for
 annotation saves and close the app. Back up the music folder and complete
 app data/config directories, including annotations/ and OMR mixes.
 No uninstall or catalogue reset is needed. Relaunch the installed app and
-confirm 0.6.0 in Help > About. A source-preview launcher may still use an older
+confirm 0.7.0 in Help > About. A source-preview launcher may still use an older
 binary. For the packaged helper, leave Audio-host executable empty and save
 preferences. Previously quarantined wrappers need Retry this bundle or
 Retry quarantined / rescan; the non-blocking notification does not clear
@@ -149,7 +160,7 @@ JACK or PipeWire-JACK stereo output; the app does not configure an audio server.
 .PP
 The separate ARM64 Android APK is experimental, debuggable and locally
 debug-signed, not production signed or desktop feature parity. API 26 minimum,
-target API 36; the v0.6.0 APK passed static checks but was not executed on a device.
+target API 36; the v0.7.0 APK passed static checks but was not executed on a device.
 Preserve data and signer continuity; do not uninstall to bypass a mismatch.
 Release checksums, unsigned build provenance and third-party notices are
 attached on GitHub. Attachments use flat filenames; checksums are not signatures.
@@ -235,7 +246,7 @@ The runtime FluidSynth package alone does not provide development headers.
 These prerequisites are installed manually, never by the application.
 Wine, yabridge and the VST3 SDK are not needed for this stage.
 These are source-build requirements, not requirements for running the
-published v0.6.0 package. The base helper build needs CMake >=3.16;
+published v0.7.0 package. The base helper build needs CMake >=3.16;
 the VST3 build below additionally needs CMake >=3.25 and libx11-dev.
 Build the application with cargo build --locked --release and launch
 \&./target/release/rustymusicsheets from the source root. Build the separate
@@ -309,14 +320,14 @@ Move the editor to the far left of your desktop / leftmost screen as a workaroun
 this may restore mouse interaction but does not establish compatibility.
 Missing tools, invalid settings and failed/unparseable probes remain errors.
 Previously quarantined bundles need Retry this bundle or an explicit rescan.
-The v0.6.0 release makes this advisory; previously published packages are unchanged.
+The v0.7.0 release makes this advisory; previously published packages are unchanged.
 Updating only to 5.1.1 is not a fix. Optionally select a verified existing
 runtime/profile; no automatic installs, sync/prune or prefix changes occur.
 WINELOADER is helper-scoped; WINEPREFIX is not globally overridden.
 Version preflight is not individual plugin compatibility certification.
 Other runtime/bridge combinations still need plugin-specific validation.
 VST3 packages require --with-audio-host --vst3-sdk SDK_PATH so pinned
-SDK license/provenance is included. The published v0.6.0 .deb uses this
+SDK license/provenance is included. The published v0.7.0 .deb uses this
 SDK-enabled variant. Building does not install/publish a package.
 .PP
 Audible position is an estimate requiring loopback calibration. FluidSynth's
@@ -324,7 +335,7 @@ internal 64-frame quantum may delay acoustic onset. Chorus/reverb are disabled
 for pause/seek flushing, so sound differs from legacy playback. Each part loads
 its own SoundFont instance; test memory, levels and timing before performance use.
 .SH ANNOTATIONS
-Introduced in v0.5.0. Available in v0.6.0: non-destructive vector ink over original score pages.
+Introduced in v0.5.0. Available in v0.7.0: non-destructive vector ink over original score pages.
 Choose Annotate in Reader or Performance for Pen, translucent Highlighter,
 Stroke eraser, Hand / Pan, color/thickness, Undo/Redo, Save now and Show ink.
 Done restores click-to-turn. A tap makes a dot; erasing removes whole strokes.
@@ -357,6 +368,30 @@ are not guaranteed; no drivers/global input settings are changed.
 Android shares the engine for supported images, not native PDF/OMR/audio.
 Text/stamps, object moving, pixel erasing and annotated PDF/image export are
 deferred. Original score/MusicXML and MIDI exports do not contain drawn ink.
+.SS NATIVE WAYLAND PEN (v0.7.0)
+v0.7.0 implements tablet-v2 proximity/motion/down/up/frame on the
+app's own Wayland surface. This was absent from v0.6.0 and older X11-only
+previews. Finger wl_touch and pen tablet-v2 are separate input protocols.
+On Plasma/Wayland select RustyMusicSheets — Wayland Pen, or --pen-wayland.
+The old Pen Compatibility entry is now X11 Pen Fallback (--pen-x11), using
+read-only STYLUS/PEN samples. Normal launches retain automatic selection.
+A Wayland desktop does not identify the actual app window backend.
+.PP
+The native guest queue shares the existing display; winit alone reads the
+socket. No grabs, driver changes or global mappings. Tip down/up, not hover
+or pressure, starts/stops ink. Frames preserve fast taps; surface-local logical
+coordinates use zoom without applying native DPI twice. Cursor shape or an
+app-local crosshair shows pen position. Foreign surfaces, focus loss and
+removal are guarded. The X11 fallback can still miss short sampled taps.
+.PP
+In Settings or annotation controls expand Pen / touch input diagnostic.
+Backend/registry/tablet-v2 support, tool counts, own-surface proximity and tip
+state are always shown. Enable Count input events (session only) for
+pointer/touch and Wayland frame/down/up/cancel counters. Counters are resettable
+and never saved/logged; no typed text, hardware serials, score contents or
+global input is recorded. Basic pen input was user-confirmed on the preceding preview with Plasma
+6.7.5/Wayland and kernel 6.18.5-surface-1. Other hardware still needs testing;
+pressure, tilt, eraser end and palm rejection are not certified.
 .SH NOTES
 Folder watching runs while the application is open.
 Use the Library section to choose a music folder and configure readable titles.

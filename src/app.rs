@@ -117,6 +117,7 @@ pub struct MusicApp {
     keep_awake: Option<KeepAwake>,
     power_status: PowerStatus,
     ime: ImeCompatibility,
+    pen_input: crate::pen_input::PenInput,
     setlist_manager: Option<SetlistManager>,
     workspace: Workspace,
     show_options: bool,
@@ -146,7 +147,9 @@ impl MusicApp {
         paths: Paths,
         smoke_seconds: Option<u64>,
     ) -> Result<Self> {
-        Self::from_context(&cc.egui_ctx, paths, smoke_seconds)
+        let mut app = Self::from_context(&cc.egui_ctx, paths, smoke_seconds)?;
+        app.pen_input = crate::pen_input::PenInput::new(cc);
+        Ok(app)
     }
 
     fn from_context(ctx: &egui::Context, paths: Paths, smoke_seconds: Option<u64>) -> Result<Self> {
@@ -236,6 +239,7 @@ impl MusicApp {
             smoke_deadline: smoke_seconds.map(|n| Instant::now() + Duration::from_secs(n)),
             text_input_active: false,
             ime: ImeCompatibility::default(),
+            pen_input: crate::pen_input::PenInput::default(),
             setlist_manager: None,
             workspace: Workspace::Library,
             show_options: true,
@@ -1935,6 +1939,9 @@ impl MusicApp {
         if self.annotations.toolbar(ui, self.reader.page) {
             self.music.manual_page_turn();
         }
+        if self.annotations.editing() {
+            self.pen_input.diagnostic_ui(ui);
+        }
         if !self.reader.sequence.is_empty() {
             ui.label(format!(
                 "Setlist item {} of {}",
@@ -2184,6 +2191,8 @@ impl MusicApp {
                     });
                 }
                 ui.checkbox(&mut self.prefs.recursive, "Import subfolders by default");
+                ui.separator();
+                self.pen_input.diagnostic_ui(ui);
                 ui.separator();
                 ui.heading("Instrument detection");
                 ui.horizontal(|ui| {
@@ -2467,6 +2476,7 @@ impl MusicApp {
                             if self.annotations.toolbar(ui, self.reader.page) {
                                 self.music.manual_page_turn();
                             }
+                            self.pen_input.diagnostic_ui(ui);
                         });
                 }
                 if let Some(score) = self
@@ -2633,6 +2643,12 @@ impl MusicApp {
 }
 
 impl eframe::App for MusicApp {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.pen_input.shutdown();
+    }
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.pen_input.raw_input(ctx, raw_input);
+    }
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.closing_this_frame = false;
         self.cancel_close_this_frame = false;
@@ -2738,9 +2754,12 @@ impl eframe::App for MusicApp {
             }
         }
         if self.smoke_deadline.is_some_and(|at| Instant::now() >= at) {
+            self.smoke_deadline = None;
+            eprintln!("Pen input support: {}", self.pen_input.support_summary());
             self.request_app_close(ctx);
         }
         self.final_annotation_close_checkpoint(ctx);
+        self.pen_input.paint_cursor(ctx);
         // Ensures delayed saves, cancelled imports, and full worker queues make progress.
         ctx.request_repaint_after(Duration::from_millis(100));
     }
@@ -2748,6 +2767,7 @@ impl eframe::App for MusicApp {
 
 impl Drop for MusicApp {
     fn drop(&mut self) {
+        self.pen_input.shutdown();
         self.music.invalidate_unless(None);
         self.detection_job.take();
         self.keep_awake.take();

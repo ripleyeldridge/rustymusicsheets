@@ -1,5 +1,6 @@
 """Native audio builds are explicit, offline with respect to source dependencies, and optional."""
 import contextlib
+import configparser
 import hashlib
 import importlib.util
 import io
@@ -84,6 +85,19 @@ class AudioBuildTests(unittest.TestCase):
 
 
 class AudioPackageTests(unittest.TestCase):
+    def test_pen_launcher_is_explicit_and_normal_launcher_is_unchanged(self):
+        for filename, command in [
+            ("rustymusicsheets.desktop", "rustymusicsheets"),
+            ("rustymusicsheets-pen.desktop", "rustymusicsheets --pen-x11"),
+            ("rustymusicsheets-wayland.desktop", "rustymusicsheets --pen-wayland"),
+        ]:
+            launcher = configparser.ConfigParser(interpolation=None)
+            launcher.read(ROOT / "assets" / filename)
+            entry = launcher["Desktop Entry"]
+            self.assertEqual(entry["Exec"], command)
+            self.assertEqual(entry["Type"], "Application")
+            self.assertEqual(entry["StartupWMClass"], "rustymusicsheets")
+            self.assertEqual(entry["Terminal"], "false")
     def test_helper_metadata_requires_protocol_and_never_opens_audio(self):
         info = {"protocol": 2, "capabilities": ["soundfont", "jack", "vst3"],
                 "sdk_revision": "3cdf9ca5d1f5b1b21e0a86832aa4abe55607bd96"}

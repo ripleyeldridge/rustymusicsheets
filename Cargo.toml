@@ -1,6 +1,6 @@
 [package]
 name = "rustymusicsheets"
-version = "0.6.0"
+version = "0.7.0"
 authors = ["Ripley Eldridge"]
 homepage = "https://github.com/ripleyeldridge"
 edition = "2021"
@@ -35,7 +35,16 @@ eframe = { version = "=0.31.1", default-features = false, features = ["x11", "wa
 async-io = "2"
 futures-lite = "2"
 libc = "0.2"
+raw-window-handle = "=0.6.2"
+winit = { version = "=0.30.13", default-features = false, features = ["x11", "wayland"] }
+x11rb = { version = "=0.13.2", features = ["xinput"] }
+wayland-client = { version = "=0.31.15", features = ["system", "dlopen"] }
+wayland-backend = { version = "=0.3.17", features = ["client_system", "dlopen"] }
+wayland-protocols = { version = "=0.32.13", features = ["client", "unstable", "staging"] }
 zbus = "=4.4.0"
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+wayland-server = "=0.31.14"
+wayland-protocols = { version = "=0.32.13", features = ["server"] }
 
 [target.'cfg(windows)'.dependencies]
 rfd = { version = "=0.15.4", default-features = false }
