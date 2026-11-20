@@ -1,4 +1,4 @@
-.TH RUSTYMUSICSHEETS 1 "November 2026" "RustyMusicSheets 0.3.1" "User Commands"
+.TH RUSTYMUSICSHEETS 1 "November 2026" "RustyMusicSheets 0.4.0" "User Commands"
 .SH NAME
 rustymusicsheets \- sheet music library and performance reader
 .SH SYNOPSIS
@@ -68,6 +68,8 @@ Override the CLI synth executable path/name.
 The three music commands above use explicit files/directories without opening
 the library database. CLI engines use defaults/arguments, not saved GUI preferences.
 CLI playback is one-shot; it does not expose the GUI transport or page following.
+CLI MIDI reads the supplied notation without GUI part combinations or saved
+mixes. Use Export selected MIDI in the GUI for a combined layout.
 .TP
 .B \-\-check
 Check availability of Poppler PDF helpers and Tesseract.
@@ -100,10 +102,34 @@ GUI recognition artifacts/logs, result indexes and saved movement mixes live
 under the data directory in omr/, omr-index/ and omr-mix/.
 Back up the complete data/config directories and original music folder with
 the application closed; a SQLite metadata backup is not a score backup.
+.SH RELEASE AND REQUIREMENTS
+The v0.4.0 preview is published at:
+.UR https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.4.0
+v0.4.0 release notes and downloads
+.UE
+.PP
+The amd64 Linux package requires glibc >=2.43 and is not compatible with
+Ubuntu 22.04/24.04. Rebuild on the target distribution rather than replacing glibc.
+Stable/latest remains v0.2.1; v0.4.0 is a prerelease.
+.PP
+The published .deb includes the SDK-enabled helper at
+/usr/libexec/rustymusicsheets/rms-audio-host. APT resolves system runtime
+libraries; no compiler or VST3 SDK is needed to run it.
+Audiveris, the external FluidSynth executable for legacy playback, banks,
+plugins and sample libraries remain separate. Host playback requires existing
+JACK or PipeWire-JACK stereo output; the app does not configure an audio server.
+.PP
+The separate ARM64 Android APK is experimental, debuggable and locally
+debug-signed, not production signed or desktop feature parity. API 26 minimum,
+target API 36; the v0.4.0 APK passed static checks but was not executed on a device.
+Preserve data and signer continuity; do not uninstall to bypass a mismatch.
+Release checksums, unsigned build provenance and third-party notices are
+attached on GitHub. Attachments use flat filenames; checksums are not signatures.
 .SH MUSIC AND PERFORMANCE
-Install Audiveris, FluidSynth and a SoundFont separately for optional Linux
-music recognition/playback. Default playback uses external FluidSynth; the
-optional audio-host helper links the system FluidSynth library.
+Install Audiveris separately for optional Linux recognition.
+Default legacy playback needs the external FluidSynth executable and a bank.
+The optional audio-host helper links the system FluidSynth library, but
+pure-VST3 host playback needs neither that executable nor a SoundFont bank.
 Instrument-label detection is text classification, not note transcription.
 Audiveris is AGPLv3, FluidSynth LGPL, and SoundFonts have separate licenses.
 .PP
@@ -117,11 +143,24 @@ Cancellation preserves fields; exports do not overwrite existing files.
 Play/Pause, Rewind 5s, Fast-forward 5s and Stop control the persistent GUI synth.
 Pause freezes position; resume/seek reconstruct held notes and restart envelopes.
 Stop resets musical position, not the displayed page.
-Parts / volume controls up to 15 pitched parts, with independent mute, instrument
-and 0\-100% level. Both staves of a piano part stay together.
+Parts / volume controls independent mute, instrument and levels. Legacy
+playback/MIDI support up to 15 pitched parts; the native host supports up to 32.
+Both staves of a piano part stay together.
 Master volume scales all instruments without changing their balance.
 Master gain affects playback output, not exported MIDI part levels.
 Mix settings are saved per recognized movement.
+.PP
+Combine parts reunites explicitly selected OMR fragments at their existing
+absolute times. Save and unload instruments first; choose a retained target,
+name and preview before applying. No automatic abbreviation merges occur.
+Uncombine restores original notes/names while retaining subsequent target
+instrument settings. Exact-score/MusicXML-bound .audio-v3.json mixes retain
+hidden member settings and leave older sidecars untouched.
+After failed/cancelled saving, use Reload movement (discard unsaved edits).
+Recover using current layout (back up rejected mix) preserves a rejected
+sidecar before replacing it. Settings changes require a new preview.
+Playback/MIDI use combinations; Export original MusicXML preserves source
+bytes and original parts. Finish plugin dialogs before saving/unloading.
 .PP
 Enable Follow score pages for optional automatic original-score page turning.
 Consistent Audiveris source-sheet/page/system metadata is required; page duration
@@ -139,7 +178,7 @@ automatically starts another setlist score. Help/Library suspend visual followin
 Recognition and musical performance are unverified approximations: review pitches,
 rhythm, ties, repeats, part names and pagination. Expression, pedal, grace notes,
 advanced navigation and nested repeats may be unsupported or approximated.
-There is no VST host, microphone score tracking, looping or metronome.
+There is no VST2/CLAP/LV2 hosting, microphone score tracking, looping or metronome.
 Android OMR/synth parity is not implemented.
 .SS OPTIONAL AUDIO-HOST PREVIEW
 Legacy FluidSynth remains the default. Explicitly select Audio host preview
@@ -150,8 +189,10 @@ Both require existing stereo physical playback ports; the first two ports are
 connected automatically. Output-routing selection is not implemented yet.
 .PP
 The companion provides process supervision, bounded Unix-socket control and a
-shared device-clock SoundFont mixer for up to 32 parts.
-VST3 loading/editors/state and yabridge/Wine setup remain unimplemented.
+shared device-clock SoundFont/VST3 mixer for up to 32 parts.
+VST3 instruments, scanning, parameters/presets and state require an SDK-enabled
+helper. Custom editors use separate X11 windows when available.
+Wine installation, prefix management and automatic bridge setup are not provided.
 MIDI export and legacy playback retain the 15-pitched-part limit.
 Host failure stops audio without closing the reader or silently switching engines.
 Press Play explicitly to retry. Only owned processes/private files are cleaned up.
@@ -165,6 +206,9 @@ desktop also needs pipewire-jack; fluid-soundfont-gm provides an example bank.
 The runtime FluidSynth package alone does not provide development headers.
 These prerequisites are installed manually, never by the application.
 Wine, yabridge and the VST3 SDK are not needed for this stage.
+These are source-build requirements, not requirements for running the
+published v0.4.0 package. The base helper build needs CMake >=3.16;
+the VST3 build below additionally needs CMake >=3.25 and libx11-dev.
 Build the application with cargo build --locked --release and launch
 \&./target/release/rustymusicsheets from the source root. Build the separate
 helper as above, Browse to its absolute output path, select a SoundFont
@@ -185,6 +229,61 @@ fixing routing and retrying explicitly. More than ten seconds of reported
 latency or exhausted timing history fails closed. Muting does not unload
 SoundFonts/free sample RAM. See the README for a muted real-helper smoke test.
 .PP
+For VST3 use CMake >=3.25 and libx11-dev. Explicitly acquire the pinned official
+SDK with python3 scripts/fetch-vst3-sdk.py, then build the helper with
+python3 scripts/build-audio-host.py --test --vst3-sdk "$PWD/target/vst3-sdk".
+Normal Cargo/CMake/Android builds do not download the SDK.
+Use --build-info to check protocol2/vst3 capability and rebuild the app/helper
+together; the older M0 helper used protocol1.
+.PP
+In application Settings (no score required), or Music / OMR engine settings,
+expand VST3 bundle discovery (shared by all parts). Browse the single Direct
+\&.vst3 bundle folder and Inspect this bundle, or Add search folder / Browse /
+Scan selected roots. Scan each bundle once: all part dropdowns share the
+catalogue, but assignments, instances, gain and state remain independent.
+Browsing/scanning never assigns a part. Retry this bundle retries quarantine.
+Selected bundles are shown read-only per part.
+Choose the exact class by vendor/path/ID. Linux .vst3 plugins are bundle
+directories containing Contents/x86_64-linux/<bundle-name>.so, not raw Windows
+files or loose VST2 DLL/SO files. Use Load instruments paused, then Open editor,
+Generic parameters, or a matching .vstpreset while paused/stopped.
+Post-plugin gain is separate from GM/CC7. Save plugin assignments and state
+before changing instruments; external samples/licenses are not bundled.
+Missing plugins never silently become SoundFonts. A VST-only session needs
+no SoundFont bank. MIDI export retains GM choices, not plugin audio/state.
+.PP
+SFZ instruments use a separately acquired native sfizz VST3 sampler, not the
+SF2/SF3 SoundFont field. Discover sfizz.vst3 globally and select the stereo
+sfizz class, not sfizz-multi. Load instruments paused, Open editor and choose
+the .sfz inside sfizz, or load a class-matching .vstpreset. Play at a low master
+level, then pause/stop and Save plugin assignments and state.
+SFZ definitions, samples and includes remain external and must stay available.
+Normal builds do not download/install sfizz; no second SFZ engine or
+vendor-specific production state format is added.
+.PP
+Rebuild both reader and helper for synchronous editor file pickers.
+The negotiated editor_keepalive capability on X11 distinguishes a busy
+editor callback from a missing heartbeat without acknowledging commands early.
+Transport is held until the dialog finishes. Finish/cancel it, or use Stop
+audio to cancel the owned helper and retain the previous saved checkpoint.
+The normal five-second missing-heartbeat watchdog remains enabled; continuous
+editor activity has a separate thirty-minute limit.
+.PP
+For existing yabridge use generated Linux VST3 wrappers, normally
+~/.vst3/yabridge, and run Read-only bridge diagnostics before scanning.
+Tool/wrapper-root/Wine-loader paths have Browse controls.
+Vendor installation/activation and user-reviewed registration/sync are external.
+Wine9.22/10.x with yabridge <=5.1.1 is incompatible upstream; the local
+Wine10.0/yabridge5.1.0 pair is blocked before known wrapper loads/scans.
+Updating only to5.1.1 is not a fix. Select a verified compatible existing
+runtime/profile; no automatic installs, sync/prune or prefix changes occur.
+WINELOADER is helper-scoped; WINEPREFIX is not globally overridden.
+Version preflight is not individual plugin compatibility certification.
+Real Windows audio/editor/state remain unverified here without a compatible
+runtime. VST3 packages require --with-audio-host --vst3-sdk SDK_PATH so pinned
+SDK license/provenance is included. The published v0.4.0 .deb uses this
+SDK-enabled variant. Building does not install/publish a package.
+.PP
 Audible position is an estimate requiring loopback calibration. FluidSynth's
 internal 64-frame quantum may delay acoustic onset. Chorus/reverb are disabled
 for pause/seek flushing, so sound differs from legacy playback. Each part loads
@@ -192,8 +291,9 @@ its own SoundFont instance; test memory, levels and timing before performance us
 .SH NOTES
 Folder watching runs while the application is open.
 Use the Library section to choose a music folder and configure readable titles.
-F11 toggles fullscreen; Escape closes an open music window/mixer before leaving
-performance mode.
+F11 toggles fullscreen; Escape closes Combine parts, then an open music
+window/mixer before leaving performance mode. Reader page-turn shortcuts
+are suspended while the combination editor is open.
 Arrow keys and PageUp/PageDown turn pages.
 .PP
 Settings contains an opt-in keep-awake control to inhibit screen dimming,

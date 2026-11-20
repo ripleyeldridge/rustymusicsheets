@@ -1,5 +1,6 @@
 #pragma once
 #include "protocol.hpp"
+#include "vst3.hpp"
 #include <atomic>
 #include <fluidsynth.h>
 #include <jack/jack.h>
@@ -27,6 +28,7 @@ public:
     Live(Plan, const std::string& soundfont, double master, double scale, bool autoplay);
     ~Live();
     void apply(const std::string& type, const Json&);
+    Json operation(const std::string& type, const Json&);
     Json status(const Envelope&);
 private:
     static constexpr uint32_t capacity = 65536;
@@ -36,7 +38,7 @@ private:
     jack_nframes_t expected_frame_ = 0;
     bool clock_started_ = false;
     Plan plan_;
-    std::vector<std::unique_ptr<SoundFont>> nodes_;
+    std::vector<std::unique_ptr<Instrument>> nodes_;
     std::unique_ptr<Engine> engine_;
     std::atomic<bool> quiescent_{true}, in_callback_{false}, lost_{false};
     std::atomic<bool> control_hold_{false}, mapping_failed_{false};
@@ -54,5 +56,5 @@ private:
     void quiesce();
     void cleanup() noexcept;
 };
-int serve(const std::string&, pid_t);
+int serve(const std::string&, pid_t, const std::string& mode = "serve");
 } // namespace rms

@@ -9,8 +9,10 @@ use std::fs::File;
 use std::io::{Read, Seek};
 use std::path::{Component, Path};
 
+mod combine;
 mod midi;
 mod pagination;
+pub use combine::{apply_part_groups, preview_part_group, PartGroup, PartGroupPreview};
 pub use midi::to_midi;
 #[cfg(test)]
 mod tests;
@@ -279,6 +281,7 @@ struct RawNote {
 #[derive(Default)]
 struct Measure {
     number: String,
+    implicit: bool,
     source_page: Option<u32>,
     duration: f64,
     notes: Vec<RawNote>,
@@ -574,6 +577,19 @@ fn align_parts(
             .iter()
             .map(|p| p[index].duration)
             .fold(0.0f64, f64::max);
+        ensure!(
+            duration > 0.0,
+            "Empty implicit measure at position {} has no duration in any part; review OMR timing",
+            index + 1
+        );
+        for (part, model) in parts.iter().zip(models) {
+            if part[index].implicit && part[index].duration == 0.0 {
+                warn(warnings, format!(
+                    "Part {} has an empty implicit measure at position {}; treated as a rest using shared timing. Review OMR durations.",
+                    model.id, index + 1
+                ));
+            }
+        }
         let forward = parts.iter().any(|p| p[index].forward_repeat);
         let backward = parts.iter().find_map(|p| p[index].backward_repeat);
         let endings = parts
@@ -643,6 +659,7 @@ fn parse_part(
         ensure!(result.len() < MAX_MEASURES, "Too many measures");
         let mut measure = Measure {
             number: measure_node.attribute("number").unwrap_or("").to_owned(),
+            implicit: measure_node.attribute("implicit") == Some("yes"),
             endings: ending.clone(),
             ..Measure::default()
         };
@@ -891,26 +908,31 @@ fn parse_part(
         }
         // MusicXML implicit measures and initial short measures are pickups.
         // Normal measures retain their metrical length even with sparse voices.
-        measure.duration = if measure_node.attribute("implicit") == Some("yes")
-            || (result.is_empty() && extent > 0.0 && extent < nominal)
-        {
-            extent
-        } else {
-            if extent < nominal {
-                warn(
+        measure.duration =
+            if measure.implicit || (result.is_empty() && extent > 0.0 && extent < nominal) {
+                extent
+            } else {
+                if extent < nominal {
+                    warn(
                     warnings,
                     "An underfull non-pickup measure is padded to its meter; review OMR durations.",
                 );
-            }
-            extent.max(nominal)
-        };
+                }
+                extent.max(nominal)
+            };
         if nominal > 0.0 && extent > nominal + 0.000_001 {
             warn(
                 warnings,
                 "An overfull measure exceeds its meter; review OMR durations and voice timing.",
             );
         }
-        ensure!(measure.duration > 0.0, "Empty implicit measure");
+        // OMR can leave a layout-only implicit placeholder in one part. Keep
+        // its metadata and ordinal position; align_parts must supply timing
+        // from another part rather than inventing a full bar or deleting it.
+        ensure!(
+            measure.duration > 0.0 || measure.implicit,
+            "Empty measure has no duration"
+        );
         ticks(measure.duration)?;
         result.push(measure);
     }

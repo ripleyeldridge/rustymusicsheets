@@ -27,6 +27,7 @@ pub enum SelectionKind {
     Folder,
     Executable,
     SoundFont,
+    VstPreset,
     MusicXml,
     SaveMxl,
     SaveMusicXml,
@@ -41,6 +42,7 @@ impl SelectionKind {
         match self {
             Self::Score => SCORE_EXTENSIONS,
             Self::SoundFont => &["sf2", "sf3"],
+            Self::VstPreset => &["vstpreset"],
             Self::MusicXml => &["mxl", "musicxml", "xml"],
             Self::SaveMxl => &["mxl"],
             Self::SaveMusicXml => &["musicxml", "xml"],
@@ -54,6 +56,7 @@ impl SelectionKind {
             Self::Folder => "Select folder",
             Self::Executable => "Select executable",
             Self::SoundFont => "Select SoundFont",
+            Self::VstPreset => "Select VST3 preset",
             Self::MusicXml => "Select MusicXML",
             Self::SaveMxl | Self::SaveMusicXml => "Save MusicXML",
             Self::SaveMidi => "Save MIDI",

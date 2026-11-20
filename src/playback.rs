@@ -33,6 +33,7 @@ pub struct Snapshot {
     pub source_page: Option<u32>,
     pub score_tick: u64,
     pub audio: Option<crate::audio::Diagnostics>,
+    pub plugins: crate::audio::plugins::View,
 }
 
 #[derive(Debug)]
@@ -44,6 +45,7 @@ pub(crate) enum Command {
     Mix(String, bool, u8, u8),
     Tempo(f64),
     MasterVolume(u8),
+    Plugin(crate::audio::plugins::Request),
 }
 
 pub struct Transport {
@@ -88,10 +90,41 @@ impl Transport {
         autoplay: bool,
         master_volume: u8,
     ) -> Result<Self> {
+        Self::start_with_sources(
+            settings,
+            audio,
+            score,
+            options,
+            autoplay,
+            master_volume,
+            BTreeMap::new(),
+        )
+    }
+    pub fn start_with_sources(
+        settings: Settings,
+        audio: crate::audio::Settings,
+        score: Composition,
+        options: MidiOptions,
+        autoplay: bool,
+        master_volume: u8,
+        sources: BTreeMap<String, crate::audio::plugins::Source>,
+    ) -> Result<Self> {
         ensure!(master_volume <= 100, "Master volume must be 0–100%");
+        ensure!(
+            audio.backend != crate::audio::Backend::Legacy || !sources.values().any(|s| s.is_plugin()),
+            "VST3 assignments require the audio-host backend; select SoundFont explicitly to use legacy playback"
+        );
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = (settings, audio, score, options, autoplay, master_volume);
+            let _ = (
+                settings,
+                audio,
+                score,
+                options,
+                autoplay,
+                master_volume,
+                sources,
+            );
             anyhow::bail!("Synth transport is currently available only on Linux");
         }
         #[cfg(target_os = "linux")]
@@ -99,7 +132,9 @@ impl Transport {
             let plan = if audio.backend == crate::audio::Backend::Legacy {
                 None
             } else {
-                Some(crate::audio::plan::compile(&score, &options)?)
+                Some(crate::audio::plan::compile_with_sources(
+                    &score, &options, &sources,
+                )?)
             };
             let timeline = if plan.is_none() {
                 let mut timeline = Timeline::new(&score, &options)?;
@@ -123,6 +158,7 @@ impl Transport {
                 source_page: None,
                 score_tick: 0,
                 audio: None,
+                plugins: Default::default(),
             }));
             let cancelled = Arc::new(AtomicBool::new(false));
             let process = Arc::new(Mutex::new(None));
@@ -216,14 +252,19 @@ impl Transport {
         ensure!(percent <= 100, "Master volume must be 0–100%");
         self.send(Command::MasterVolume(percent))
     }
+    pub fn plugin(&self, request: crate::audio::plugins::Request) -> Result<()> {
+        self.send(Command::Plugin(request))
+    }
 }
 
 impl Drop for Transport {
     fn drop(&mut self) {
         self.cancelled.store(true, Ordering::Relaxed);
         #[cfg(target_os = "linux")]
-        if let Some(group) = *self.process.lock().unwrap_or_else(|e| e.into_inner()) {
-            crate::omr::linux::kill_group(group);
+        if let Ok(slot) = self.process.try_lock() {
+            if let Some(group) = *slot {
+                crate::omr::linux::kill_group(group);
+            }
         }
     }
 }

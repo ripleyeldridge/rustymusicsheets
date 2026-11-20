@@ -119,6 +119,10 @@ pub struct MusicApp {
     auto_detection_pending: std::collections::HashSet<i64>,
     help: Help,
     music: Music,
+    #[cfg(target_os = "linux")]
+    closing_plugins: bool,
+    #[cfg(target_os = "linux")]
+    allow_close: bool,
 }
 
 impl MusicApp {
@@ -222,6 +226,10 @@ impl MusicApp {
             auto_detection_pending: std::collections::HashSet::new(),
             help: Help::default(),
             music: Music::default(),
+            #[cfg(target_os = "linux")]
+            closing_plugins: false,
+            #[cfg(target_os = "linux")]
+            allow_close: false,
         })
     }
 
@@ -823,6 +831,10 @@ impl MusicApp {
             return;
         }
         if ctx.input(|i| i.key_pressed(Key::Escape)) {
+            if self.music.combine_open() {
+                self.music.close_combine();
+                return;
+            }
             if self.music.open || self.music.controls_active {
                 self.music.open = false;
                 return;
@@ -840,6 +852,7 @@ impl MusicApp {
             || (self.left_editor.is_some() && !self.performance)
             || self.setlist_manager.is_some()
             || self.music.open
+            || self.music.combine_open()
             || self.music.controls_active
             || self.picker.is_some()
         {
@@ -1987,15 +2000,17 @@ impl MusicApp {
                 if let Some(field)=crate::music::settings_ui(ui, &mut self.prefs.music,self.picker.is_some()) {
                     self.music.browse_settings(field,&self.prefs.music);
                 }
-                if crate::music::audio_settings_ui(ui, &mut self.prefs.audio, self.picker.is_some()) {
-                    self.music.browse_audio_host(&self.prefs.audio);
+                if let Some(field) = crate::music::audio_settings_ui(ui, &mut self.prefs.audio, self.picker.is_some()) {
+                    self.music.browse_audio_setting(field, &self.prefs.audio);
                 }
+                #[cfg(target_os = "linux")]
+                self.music.plugin_discovery_ui(ui, &mut self.prefs.audio);
                 ui.label("Open a score in Reader, then Music / OMR. Save preferences to retain engine settings.");
                 ui.separator();
                 ui.label(format!("Music folder: {}", self.paths.score_dir().display()));
                 ui.label(format!("Metadata: {}", self.paths.data.display()));
                 ui.label(format!("Version {} — PDF library / reader milestone.", env!("CARGO_PKG_VERSION")));
-                ui.label("Annotations, VST hosting, sync and full feature parity are not implemented yet.");
+                ui.label("Annotations, sync and full feature parity are not implemented yet.");
             });
     }
 
@@ -2281,6 +2296,31 @@ impl eframe::App for MusicApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.ime.prepare(ctx);
         self.poll(ctx);
+        #[cfg(target_os = "linux")]
+        if !self.allow_close {
+            if ctx.input(|i| i.viewport().close_requested()) && self.music.has_plugin_session() {
+                self.closing_plugins = true;
+                self.music.begin_shutdown();
+            }
+            if self.closing_plugins {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                egui::Window::new("Saving plugin state before closing").collapsible(false).show(ctx, |ui| {
+                    ui.label("Pausing and capturing plugin state asynchronously (up to 65 seconds). Last valid checkpoints remain safe if this fails.");
+                    if let Some(error) = self.music.shutdown_error() {
+                        ui.colored_label(Color32::LIGHT_RED, error);
+                        if ui.button("Keep the reader open").clicked() { self.closing_plugins = false; }
+                    }
+                    if ui.button("Close without waiting (unsaved changes may be lost)").clicked() {
+                        self.allow_close = true;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                });
+                if !self.music.shutdown_pending() && self.music.shutdown_error().is_none() {
+                    self.allow_close = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
         self.shortcuts(ctx);
         self.text_input_active = false;
         let dropped: Vec<_> = ctx.input(|i| {
@@ -2371,6 +2411,135 @@ pub fn expand_path(path: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn global_bundle_discovery_is_reachable_in_settings_without_a_score() {
+        let (_root, ctx, mut app) = test_app();
+        app.left_editor = Some(EditorPanel::Settings);
+        fn draw(
+            app: &mut MusicApp,
+            ctx: &egui::Context,
+            events: Vec<egui::Event>,
+        ) -> egui::FullOutput {
+            ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(640., 360.),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    app.sidebar(ctx);
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        ui.label("Empty test library");
+                    });
+                },
+            )
+        }
+        fn visible(output: &egui::FullOutput, label: &str) -> Option<egui::Rect> {
+            output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text == label => {
+                    let rect = shape
+                        .clip_rect
+                        .intersect(egui::Rect::from_min_size(text.pos, text.galley.size()));
+                    (rect.height() > 8. && rect.width() > 8.).then_some(rect)
+                }
+                _ => None,
+            })
+        }
+        fn scroll(app: &mut MusicApp, ctx: &egui::Context) -> egui::FullOutput {
+            draw(
+                app,
+                ctx,
+                vec![
+                    egui::Event::PointerMoved(egui::pos2(240., 200.)),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: egui::vec2(0., -80.),
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            )
+        }
+        fn click(app: &mut MusicApp, ctx: &egui::Context, pos: egui::Pos2) {
+            for pressed in [true, false] {
+                draw(
+                    app,
+                    ctx,
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+        }
+        for _ in 0..3 {
+            draw(&mut app, &ctx, vec![]);
+        }
+        let mut header = None;
+        for _ in 0..60 {
+            let output = scroll(&mut app, &ctx);
+            header = visible(&output, "VST3 bundle discovery (shared by all parts)");
+            if header.is_some() {
+                break;
+            }
+        }
+        click(
+            &mut app,
+            &ctx,
+            header
+                .expect("Shared discovery must be reachable without a score")
+                .center(),
+        );
+        let mut browse = None;
+        for _ in 0..60 {
+            let output = draw(&mut app, &ctx, vec![]);
+            if let Some(label) = visible(&output, "Direct .vst3 bundle folder:") {
+                browse = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text)
+                            if text.galley.job.text == "Browse…"
+                                && text.pos.y > label.bottom()
+                                && text.pos.y < label.bottom() + 100. =>
+                        {
+                            let rect = shape
+                                .clip_rect
+                                .intersect(egui::Rect::from_min_size(text.pos, text.galley.size()));
+                            (rect.height() > 8.).then_some(rect)
+                        }
+                        _ => None,
+                    })
+                    .min_by(|a, b| a.top().total_cmp(&b.top()));
+            }
+            if browse.is_some() {
+                break;
+            }
+            scroll(&mut app, &ctx);
+        }
+        click(
+            &mut app,
+            &ctx,
+            browse
+                .expect("Global bundle Browse must be reachable")
+                .center(),
+        );
+        assert_eq!(
+            app.music.take_path_request().unwrap().field,
+            crate::music::PathField::PluginBundle
+        );
+        assert!(app.scores.is_empty() && app.reader.score_id.is_none());
+        assert!(app.import_task.is_none());
+    }
 
     #[test]
     fn music_chooser_results_update_only_the_requested_field_and_cancel_is_harmless() {
@@ -2502,6 +2671,44 @@ mod tests {
             assert_eq!(app.reader.page, 1);
             assert!(app.performance);
         }
+    }
+
+    #[test]
+    fn combine_editor_blocks_reader_keys_and_escape_closes_only_the_editor() {
+        let (_root, ctx, mut app) = test_app();
+        let id = app
+            .db
+            .insert("combine-shortcuts", "Generated", 4, "")
+            .unwrap();
+        app.reload();
+        app.load_score(id, Some(1));
+        app.performance = true;
+        app.music.open = false;
+        app.music.open_combine();
+        for key in [
+            Key::PageDown,
+            Key::ArrowRight,
+            Key::Home,
+            Key::End,
+            Key::Escape,
+        ] {
+            let _ = ctx.run(
+                egui::RawInput {
+                    events: vec![egui::Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                    ..Default::default()
+                },
+                |ctx| app.shortcuts(ctx),
+            );
+            assert_eq!(app.reader.page, 1);
+            assert!(app.performance);
+        }
+        assert!(!app.music.combine_open());
     }
 
     fn test_app() -> (tempfile::TempDir, egui::Context, MusicApp) {

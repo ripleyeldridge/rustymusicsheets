@@ -82,6 +82,118 @@ fn two_part_score(first: &str, second: &str) -> String {
 }
 
 #[test]
+fn empty_implicit_measure_inherits_shared_duration_without_padding_or_drift() {
+    let timed = format!(
+        r#"<measure number="1"><attributes><divisions>2</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes>{}</measure>
+<measure number="2" implicit="yes">{}</measure>
+<measure number="3">{}</measure>"#,
+        pitched("C", 8, ""),
+        pitched("D", 6, ""),
+        pitched("E", 8, "")
+    );
+    let missing = format!(
+        r#"<measure number="1"><attributes><divisions>2</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes>{}</measure>
+<measure number="2" implicit="yes"><print new-system="yes"/><attributes><divisions>4</divisions><clef><sign>F</sign><line>4</line></clef></attributes><direction><sound tempo="90"/></direction></measure>
+<measure number="3">{}</measure>"#,
+        pitched("F", 8, ""),
+        pitched("G", 16, "")
+    );
+    for empty_first in [false, true] {
+        let xml = if empty_first {
+            two_part_score(&missing, &timed)
+        } else {
+            two_part_score(&timed, &missing)
+        };
+        let c = parse_musicxml(&xml).unwrap();
+        let empty = &c.parts[usize::from(!empty_first)];
+        let timed = &c.parts[usize::from(empty_first)];
+        assert_eq!(c.duration_ticks, 11 * 960);
+        assert_eq!(
+            empty.notes.iter().map(|n| n.start_tick).collect::<Vec<_>>(),
+            [0, 7 * 960]
+        );
+        assert_eq!(
+            empty.notes[1].duration_ticks,
+            4 * 960,
+            "Attributes in the empty measure still apply"
+        );
+        assert_eq!(
+            timed.notes.iter().map(|n| n.start_tick).collect::<Vec<_>>(),
+            [0, 4 * 960, 7 * 960]
+        );
+        assert!(c
+            .tempos
+            .iter()
+            .any(|tempo| tempo.tick == 4 * 960 && tempo.bpm == 90.));
+        assert!(c
+            .warnings
+            .iter()
+            .any(|w| w.contains("empty implicit") && w.contains(&empty.id)));
+        assert!(to_midi(&c, &MidiOptions::default()).is_ok());
+    }
+}
+
+#[test]
+fn empty_implicit_pickup_uses_the_other_parts_short_pickup() {
+    let attributes = "<attributes><divisions>4</divisions><time><beats>6</beats><beat-type>8</beat-type></time></attributes>";
+    let first = format!(
+        r#"<measure number="0" implicit="yes">{attributes}</measure><measure number="1">{}</measure>"#,
+        pitched("C", 12, "")
+    );
+    let second = format!(
+        r#"<measure number="0" implicit="yes">{attributes}{}</measure><measure number="1">{}</measure>"#,
+        pitched("D", 2, ""),
+        pitched("E", 12, "")
+    );
+    let c = parse_musicxml(&two_part_score(&first, &second)).unwrap();
+    assert_eq!(c.parts[0].notes[0].start_tick, 480);
+    assert_eq!(c.parts[1].notes[1].start_tick, 480);
+    assert_eq!(c.duration_ticks, 3360);
+}
+
+#[test]
+fn empty_implicit_without_shared_timing_remains_an_error() {
+    for xml in [
+        score(r#"<measure number="1" implicit="yes"><print/></measure>"#),
+        two_part_score(
+            r#"<measure number="1" implicit="yes"/>"#,
+            r#"<measure number="1" implicit="yes"><direction><sound tempo="90"/></direction></measure>"#,
+        ),
+    ] {
+        assert!(
+            parse_musicxml(&xml).is_err(),
+            "Do not invent a silent bar or discard a measure without timing"
+        );
+    }
+}
+
+#[test]
+fn empty_implicit_retains_tempo_and_shared_repeat_markings() {
+    let first = format!(
+        r#"<measure number="1" implicit="yes"><direction><sound tempo="90"/></direction><barline><repeat direction="forward"/></barline></measure><measure number="2" implicit="yes">{}</measure>"#,
+        pitched("C", 1, "")
+    );
+    let second = format!(
+        r#"<measure number="1" implicit="yes">{}</measure><measure number="2" implicit="yes">{}<barline><repeat direction="backward"/></barline></measure>"#,
+        pitched("D", 1, ""),
+        pitched("E", 1, "")
+    );
+    let c = parse_musicxml(&two_part_score(&first, &second)).unwrap();
+    assert_eq!(c.duration_ticks, 3840);
+    assert_eq!(
+        c.parts[0]
+            .notes
+            .iter()
+            .map(|n| n.start_tick)
+            .collect::<Vec<_>>(),
+        [960, 2880]
+    );
+    assert_eq!(
+        c.tempos.iter().map(|t| (t.tick, t.bpm)).collect::<Vec<_>>(),
+        [(0, 90.), (1920, 90.)]
+    );
+}
+#[test]
 fn shared_clock_and_repeats_prevent_cross_part_drift() {
     let first = format!(
         "<measure number=\"1\">{}</measure><measure number=\"2\" implicit=\"yes\">{}</measure>",

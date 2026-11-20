@@ -1,0 +1,186 @@
+rms-audio-host protocol 2 integration contract
+============================================
+Wire contract for the SDK-optional native audio host and Rust reader.
+All paths below are Unicode absolute paths on the local Linux machine.
+The reader never loads modules itself or executes shell command strings.
+
+Common envelope and launch
+--------------------------
+Keep M0 framing/authentication: nonzero big-endian u32 byte length, UTF-8 JSON,
+<=1 MiB per control frame, private 0700 directory/0600 socket, SO_PEERCRED
+verification in both directions. version is now 2, not 1. Every object has
+{version:2,session:64lowerhex,request_id:u64,epoch:u64,type:string,...}.
+Parent initiates hello at id0/epoch0. Helper replies hello with capabilities.
+Required base capabilities: "soundfont","jack".
+SDK builds add "vst3","plugin_state","parameters","presets".
+Usable X11 builds also advertise "editor_keepalive" for the negotiated modal
+editor liveness extension below. Ordinary clients need not enable it.
+Advertise "editor_x11" only when actually implemented and usable.
+Child modes:
+  rms-audio-host serve --socket PATH --parent-pid PID
+  rms-audio-host probe --socket PATH --parent-pid PID
+  rms-audio-host scan  --socket PATH --parent-pid PID
+Probe: hello then shutdown, without opening audio/loading plugins.
+Scan: hello, one scan request/result (below), then shutdown. No audio device.
+Old-version/missing-capability errors are actionable, never instrument fallback.
+
+Request IDs strictly increase. play/pause/stop/seek/tempo increase epoch.
+load/scan/gain/mix/master/parameter/editor/state operations keep epoch.
+Replies acknowledge only safely completed operations. Both applied ID and its
+expected epoch must match. Retain M0 generation/epoch and heartbeat validation.
+Retain fatal {type:"error",message} for failed session/protocol/audio lifecycle.
+Nonfatal operation errors use:
+  {type:"operation_error",operation,part_id:null|string,message}
+The reply envelope echoes that request ID/epoch and completes the operation.
+Ordinary transport/heartbeat deadlines remain five seconds. Checkpoint/preset
+operations are allowed up to sixty seconds ONLY while paused/stopped; UI must
+remain cancellable, audio processing quiescent, and page position frozen.
+No indefinite shutdown/join on the egui thread.
+
+Modal editor liveness (optional protocol-2 extension)
+---------------------------------------------------
+The parent hello may offer client_capabilities:["editor_keepalive"].
+Only when offered by the parent and advertised by the helper, serve mode
+may send {type:"editor_keepalive",editor_busy:true} with request_id=0,epoch=0
+and the authenticated session envelope. These are liveness-only frames:
+they never acknowledge a command or provide new transport/parameter state.
+They are emitted off-RT while an actual editor/event/timer callback is active,
+including synchronous file choosers. Plugin calls remain on the main thread;
+control-socket writes are serialized, never written by the JACK callback.
+The reader keeps its five-second missing-heartbeat watchdog. A continuous
+editor callback is additionally bounded to thirty minutes. Pending command
+budgets exclude this authenticated busy interval and resume when normal
+status returns; non-editor state-operation limits are unchanged. New commands
+are refused while the editor is busy. Stop audio cancels the owned companion/
+process group and retains the previous valid checkpoint. Normal status clears
+editor-busy state. Older clients receive no extension frames. Buffered control
+bytes are drained after a blocked reader resumes; incomplete stalled frames
+still time out rather than gaining an indefinite grace period.
+
+Playback load and plan
+----------------------
+Retain load fields plan_path,plan_sha256,plan_bytes,autoplay,master_volume,
+tempo_scale; soundfont is an absolute path or null. Require/open/validate it
+only when at least one part has source.kind="soundfont".
+Private plan limits/file validation remain M0 (64MiB, owner/mode/digest).
+Plan version=2; retain ticks_per_quarter=960,duration_ticks,tempos and notes.
+Each part retains {id,enabled,volume:0..127,program:0..127,notes:[...]} and adds:
+  source: {kind:"soundfont"}
+or
+  source: {
+    kind:"vst3", path:ABS_BUNDLE_DIRECTORY, class_id:32UPPERHEX,
+    module_sha256:64lowerhex, gain:finite0..1,
+    component_state:null|StateFile, controller_state:null|StateFile
+  }
+StateFile = {path:ABS_PATH,sha256:64lowerhex,bytes:u64}.
+Absent source may default to soundfont for generated fixture convenience,
+but live Rust writer sends it explicitly. Native validates class/hash before
+loading; class identity is distinct from module identity and display name.
+The bundle, not its internal SO path or its chainloader's canonical target,
+is passed to the SDK loader. Preserve wrapper/resource identity.
+Hash the actual Contents/x86_64-linux/<bundle-stem>.so, not folder name.
+Do not require the shared object to have executable mode bits.
+Keep M0 32-node/250000-note+tempo/tick/duration limits.
+SoundFont volume remains CC7; VST3 uses source.gain post-DSP and ignores GM
+program/CC7 volume. Keep old GM selections for explicit fallback/MIDI export.
+mix keeps its M0 fields and changes mute/enabled for every node; GM/volume
+semantics apply only to SoundFont nodes. New gain request:
+  {type:"gain",part_id,gain:finite0..1} -> ack.
+No plugin gain is applied a second time through CC7.
+
+Status/acks
+-----------
+Retain M0 status state,position,rendered_position,duration,score_tick,
+tempo_scale,sample_rate,latency_frames,xruns. Times remain BASE seconds.
+latency_frames includes device plus maximum aligned plugin latency, <=10s.
+Add dirty_parts:[part_id,...] (only plugin instances needing checkpoint).
+Nonstatus operation replies carry their matching request ID/epoch.
+Simple successful operations return {type:"ack",operation,part_id:null|string}.
+Status may subsequently acknowledge that same/latest safely applied request.
+Plugin UI callbacks stay on native main thread; parameter transfer to process
+uses bounded preallocated queues. Do not serialize/parse JSON on JACK callback.
+
+Isolated scanning
+-----------------
+Parent validates/enumerates candidate bundle paths without executing them.
+One fresh scan child per module, cancellable timeout, bounded logs and output.
+Scan request id1/epoch0:
+  {type:"scan",path:ABS_BUNDLE_DIRECTORY,module_sha256:64lowerhex}
+Successful reply:
+  {type:"scan_result",path,module_sha256,classes:[
+    {class_id:32UPPERHEX,name:string,vendor:string,version:string}
+  ]}
+Return only VST3 instrument component classes; <=128 classes/module.
+Class labels <=256 UTF-8 bytes, versions <=128. Reject unsupported/no-instrument
+bundles explicitly. Do not launch a user's known-bad yabridge runtime merely
+to populate a catalogue. Native and Rust recheck module fingerprint on use.
+Do not recursively traverse bundle resources, source symlink loops or Wine
+prefixes while enumerating roots. Native scan errors remain process-isolated.
+
+Parameters, presets and editors
+------------------------------
+parameters request {type:"parameters",part_id,offset:u32,limit:1..128}.
+Reply {type:"parameters_result",part_id,total:u32,offset:u32,parameters:[
+  {id:u32,title:string,units:string,value:finite0..1,
+   default_value:finite0..1,step_count:nonnegativei32,flags:u32}
+]}.
+Bound supported total parameter count to 4096 initially; report larger sets.
+Titles <=256 UTF-8 bytes, units <=128; never trust plugin display strings.
+Read-only parameter flag is SDK ParameterInfo::kIsReadOnly.
+parameter request {type:"parameter",part_id,param_id:u32,value:finite0..1}
+updates controller and safely queues processor parameter change; reply ack.
+editor_open/editor_close requests {type,part_id} -> ack/operation_error.
+Use an X11 top-level host window plus IPlugFrame/Linux IRunLoop as required.
+Native editor-unavailable is nonfatal; offer generic parameters/preset route.
+preset_load request {type:"preset_load",part_id,path:ABS_VSTPRESET_FILE}.
+Class-check preset and enforce <=64MiB before SDK/plugin parsing. Require
+paused/stopped state, restore in SDK order, mark dirty; ack/operation_error.
+Preset browsing does not itself load data or overwrite a previous preset.
+
+State checkpoints
+-----------------
+Opaque state never travels inline in control JSON. State restore descriptors
+in plans require private owned regular no-symlink digest-checked files.
+Combined component/controller bytes <=64MiB/instance and <=256MiB/session.
+checkpoint request {type:"checkpoint",directory:ABS_FRESH_PRIVATE_DIRECTORY}.
+Require paused/stopped/quiescent processing; directory must be owned 0700,
+regular directory/no final symlink. Write only newly created private 0600
+files there, no overwrite, deterministic per-part-index filenames.
+Reply {type:"checkpoint_result",parts:[
+  {part_id,class_id,component_state:null|StateFile,controller_state:null|StateFile}
+]}.
+An unsupported/empty controller state may be null; failures do not replace
+the last checkpoint. Rust verifies file/path/digest limits then atomically
+stores persistent content-addressed state and referencing movement manifest.
+On normal UI shutdown/score switch, pause/checkpoint asynchronously before
+teardown where possible; never block egui indefinitely or silently discard
+dirty edits. Explicit Save is available and failure/unsaved state is visible.
+
+Yabridge integration boundary
+----------------------------------------
+src/audio/yabridge.rs provides read-only preflight. Rust UI calls it before known
+wrapper scans or live loads and scope WINELOADER to children. Never set global
+WINEPREFIX or mutate registrations/prefixes. Initial runtime is known-bad:
+Wine10.0 + yabridge5.1.0. Native feature verification uses our generated/SDK
+test instrument, not existing user plugins. Bridge playback remains unverified
+without a compatible user-selected profile.
+The wrapper classifier preserves bundle locators and checks only bounded ELF
+metadata. Executable discovery supports explicit paths/PATH/documented install
+locations, not interactive shell aliases. No registration/prune/install operation
+is part of this protocol.
+
+Build and lifecycle notes
+---------
+scripts/fetch-vst3-sdk.py is explicit opt-in acquisition; ordinary builds
+perform no SDK download. SDK/submodule pins are in native/vst3-sdk.lock.json.
+--build-info reports protocol, capabilities and SDK revision without audio or
+module loading. probe negotiates the same information through authenticated IPC.
+Initial plugin routing has zero audio inputs and one mono/stereo main output.
+Supported latency/bus changes pause and reprepare the graph off the callback;
+unsupported layouts or full component reload requests fail explicitly.
+The host owns callback objects/streams/queues; SDK reference release cannot
+delete objects owned by the host. Graph teardown clears handlers before module
+unload. Linux parent-death protection terminates a wedged companion if its
+owning parent disappears, without killing unrelated Wine applications.
+The UI can cancel a slow paused state operation by stopping its owned helper;
+the last valid persistent checkpoint remains referenced.

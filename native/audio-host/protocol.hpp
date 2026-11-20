@@ -1,6 +1,7 @@
 #pragma once
 #include "core.hpp"
 #include <nlohmann/json.hpp>
+#include <mutex>
 #include <sys/types.h>
 
 namespace rms {
@@ -10,12 +11,17 @@ double number(const Json&, const char* key, double minimum, double maximum);
 bool boolean(const Json&, const char* key);
 std::string text(const Json&, const char* key, size_t maximum);
 void hex64(const std::string&);
+void absolute(const std::string&);
+std::string digest_bytes(const std::string&);
+std::string read_private(const StateFile&, uint64_t maximum = 64 * 1024 * 1024);
+StateFile write_private(const std::string&, const std::string&);
 Plan parse_plan(const Json&);
 Plan read_plan(const Json& load);
 Json parse_json(const std::string&);
 struct Envelope {
     std::string session;
     uint64_t request = 0, epoch = 0;
+    bool editor_keepalive = false;
     void hello(const Json&);
     std::string command(const Json&);
     Json message(const char* type) const;
@@ -35,5 +41,6 @@ private:
     std::vector<uint8_t> input_;
     size_t wanted_ = 0;
     int64_t partial_since_ = 0;
+    std::mutex output_mutex_;
 };
 } // namespace rms

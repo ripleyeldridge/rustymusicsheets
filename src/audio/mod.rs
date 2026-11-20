@@ -2,10 +2,16 @@
 use serde::{Deserialize, Serialize};
 
 #[cfg(target_os = "linux")]
+pub mod checkpoint;
+#[cfg(target_os = "linux")]
+pub mod discovery;
+#[cfg(target_os = "linux")]
 mod ipc;
 pub mod plan;
+pub mod plugins;
 #[cfg(target_os = "linux")]
 pub(crate) mod supervisor;
+pub mod yabridge;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -32,6 +38,8 @@ pub struct Settings {
     pub backend: Backend,
     /// Empty selects the package-controlled companion, never an arbitrary PATH entry.
     pub host_executable: String,
+    pub plugin_roots: Vec<String>,
+    pub yabridge: yabridge::Settings,
 }
 
 #[derive(Clone, Debug)]
@@ -57,6 +65,7 @@ mod tests {
         preferences.audio = Settings {
             backend: Backend::PipeWire,
             host_executable: "/opt/host/rms-audio-host".into(),
+            ..Default::default()
         };
         let saved = serde_json::to_vec(&preferences).unwrap();
         let restored: crate::model::Preferences = serde_json::from_slice(&saved).unwrap();

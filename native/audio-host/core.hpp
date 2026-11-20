@@ -10,11 +10,19 @@ constexpr uint64_t max_tick = 82944000;
 constexpr size_t max_items = 250000;
 struct Tempo { uint64_t tick; double bpm; };
 struct Note { uint64_t start_tick, duration_ticks; uint8_t pitch, velocity; };
+struct StateFile { std::string path, sha256; uint64_t bytes = 0; };
+struct Source {
+    bool vst3 = false;
+    std::string path, class_id, module_sha256;
+    double gain = 1;
+    StateFile component, controller;
+};
 struct Part {
     std::string id;
     bool enabled = true;
     uint8_t volume = 100, program = 0;
     std::vector<Note> notes;
+    Source source{};
 };
 struct Plan {
     uint64_t duration_ticks = 0;
@@ -27,6 +35,9 @@ public:
     explicit Timeline(const Plan&);
     double seconds(uint64_t tick) const noexcept;
     uint64_t tick(double seconds) const noexcept;
+    double quarters(double seconds) const noexcept;
+    double bpm(double seconds) const noexcept;
+    double next_tempo(double seconds) const noexcept;
 private:
     struct Point { uint64_t tick; double seconds, seconds_per_tick; };
     std::vector<Point> points_;
@@ -40,6 +51,9 @@ struct Instrument {
     virtual void silence() noexcept = 0;
     virtual void configure(uint8_t volume, uint8_t program) noexcept = 0;
     virtual void render(float* left, float* right, uint32_t frames) noexcept = 0;
+    virtual bool failed() const noexcept { return false; }
+    virtual uint32_t latency() const noexcept { return 0; }
+    virtual void transport(double, double, bool, double = 0, uint64_t = 0) noexcept {}
 };
 enum class State { stopped, playing, paused, finished };
 const char* state_name(State) noexcept;
@@ -55,6 +69,9 @@ public:
     void tempo(double scale) noexcept;
     void mix(size_t part, bool enabled, uint8_t volume, uint8_t program) noexcept;
     void master(double percent) noexcept;
+    void gain(size_t part, double gain) noexcept;
+    uint32_t plugin_latency() const noexcept { return plugin_latency_; }
+    void rebuild_latency();
     // Device frames emitted as silence while the control thread owns the graph.
     // Unlike an xrun these advance the device clock, not musical position.
     void hold(uint64_t frames) noexcept;
@@ -75,6 +92,10 @@ private:
     std::vector<Event> events_;
     std::vector<Instrument*> instruments_;
     std::vector<float> scratch_l_, scratch_r_;
+    struct Delay { std::vector<float> left, right; size_t cursor = 0; };
+    std::vector<Delay> delays_;
+    std::vector<double> part_gains_;
+    uint32_t plugin_latency_ = 0;
     uint32_t rate_, capacity_;
     size_t cursor_ = 0;
     State state_ = State::stopped;

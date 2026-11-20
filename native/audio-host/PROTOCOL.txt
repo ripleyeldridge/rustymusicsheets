@@ -1,5 +1,8 @@
 rms-audio-host protocol 1 — SoundFont foundation
 
+Historical M0 protocol reference. Current VST3 integration uses version2;
+see PROTOCOL_V2.txt. Version1 app/helper binaries must be rebuilt together.
+
 Launch: rms-audio-host serve --socket ABSOLUTE_PATH --parent-pid PID
 The Rust parent owns a private 0700 directory, 0600 socket and 0600 plan.
 Both endpoints verify Linux SO_PEERCRED UID/PID. The helper connects to the

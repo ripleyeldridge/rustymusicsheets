@@ -43,6 +43,29 @@ void Plan::validate() const {
     }
     require(count <= max_items, "too many notes and tempos");
 }
+void Engine::rebuild_latency() {
+    // Called only with processing quiescent on the control thread.
+    pause();
+    uint32_t maximum = 0;
+    for (auto* node : instruments_) {
+        if (node->latency() > uint64_t(rate_) * 10) throw std::runtime_error("plugin latency exceeds supported profile");
+        maximum = std::max(maximum,node->latency());
+    }
+    std::vector<Delay> replacement(instruments_.size());
+    uint64_t bytes = 0;
+    for (size_t i=0;i<instruments_.size();++i) {
+        uint32_t count = maximum-instruments_[i]->latency();
+        bytes += uint64_t(count)*2*sizeof(float);
+        if (bytes > 256*1024*1024) throw std::runtime_error("latency alignment exceeds 256MiB host-buffer limit");
+        replacement[i].left.resize(count); replacement[i].right.resize(count);
+    }
+    delays_.swap(replacement);
+    plugin_latency_ = maximum;
+}
+void Engine::gain(size_t part, double gain) noexcept {
+    if (part < plan_.parts.size() && plan_.parts[part].source.vst3 && std::isfinite(gain) && gain >= 0 && gain <= 1)
+        plan_.parts[part].source.gain = gain;
+}
 Timeline::Timeline(const Plan& p) {
     p.validate();
     double seconds = 0;
@@ -70,6 +93,24 @@ uint64_t Timeline::tick(double seconds) const noexcept {
     double t = p.tick + (seconds - p.seconds) / p.seconds_per_tick;
     return static_cast<uint64_t>(std::min<double>(max_tick, std::max(0.0, t + 1e-7)));
 }
+double Timeline::quarters(double seconds) const noexcept {
+    if (!std::isfinite(seconds) || seconds <= 0) return 0;
+    auto it = std::upper_bound(points_.begin(), points_.end(), seconds,
+        [](double value, const Point& p) { return value < p.seconds; });
+    const auto& p = *--it;
+    return (p.tick + (seconds - p.seconds) / p.seconds_per_tick) / 960.0;
+}
+double Timeline::bpm(double seconds) const noexcept {
+    auto it = std::upper_bound(points_.begin(), points_.end(), seconds,
+        [](double value, const Point& p) { return value < p.seconds; });
+    const auto& p = *--it;
+    return 60.0 / (p.seconds_per_tick * 960.0);
+}
+double Timeline::next_tempo(double seconds) const noexcept {
+    auto it = std::upper_bound(points_.begin(), points_.end(), seconds + 1e-10,
+        [](double value, const Point& p) { return value < p.seconds; });
+    return it == points_.end() ? std::numeric_limits<double>::infinity() : it->seconds;
+}
 const char* state_name(State s) noexcept {
     switch (s) {
         case State::playing: return "playing";
@@ -84,6 +125,22 @@ Engine::Engine(Plan p, uint32_t rate, uint32_t capacity, const std::vector<Instr
       duration_(timeline_.seconds(plan_.duration_ticks)), gain_step_(1.0 / (0.01 * rate)) {
     if (rate < 8000 || rate > 384000 || !capacity || instruments.size() != plan_.parts.size())
         throw std::runtime_error("invalid engine preparation");
+    for (auto* node : instruments_) {
+        if (!node || node->latency() > uint64_t(rate) * 10) throw std::runtime_error("invalid node latency");
+        plugin_latency_ = std::max(plugin_latency_, node->latency());
+    }
+    delays_.resize(instruments_.size());
+    part_gains_.reserve(instruments_.size());
+    for (const auto& part : plan_.parts)
+        part_gains_.push_back(part.source.vst3 ? part.source.gain : 1.0);
+    uint64_t delay_bytes = 0;
+    for (size_t i = 0; i < instruments_.size(); ++i) {
+        auto delay = plugin_latency_ - instruments_[i]->latency();
+        delay_bytes += uint64_t(delay)*2*sizeof(float);
+        if (delay_bytes > 256*1024*1024) throw std::runtime_error("latency alignment exceeds 256MiB host-buffer limit");
+        delays_[i].left.resize(delay);
+        delays_[i].right.resize(delay);
+    }
     for (size_t i = 0; i < plan_.parts.size(); ++i) {
         if (!instruments_[i]) throw std::runtime_error("null instrument");
         const auto& part = plan_.parts[i];
@@ -100,7 +157,14 @@ Engine::Engine(Plan p, uint32_t rate, uint32_t capacity, const std::vector<Instr
         return a.pitch < b.pitch;
     });
 }
-void Engine::silence() noexcept { for (auto* i : instruments_) i->silence(); }
+void Engine::silence() noexcept {
+    for (auto* i : instruments_) i->silence();
+    for (auto& d : delays_) {
+        std::fill(d.left.begin(), d.left.end(), 0);
+        std::fill(d.right.begin(), d.right.end(), 0);
+        d.cursor = 0;
+    }
+}
 void Engine::chase(size_t part) noexcept {
     if (!plan_.parts[part].enabled) return;
     for (auto n : plan_.parts[part].notes) {
@@ -150,8 +214,12 @@ void Engine::tempo(double scale) noexcept {
 void Engine::mix(size_t part, bool enabled, uint8_t volume, uint8_t program) noexcept {
     if (part >= instruments_.size() || volume > 127 || program > 127) return;
     auto& p = plan_.parts[part];
-    bool rechase = p.enabled != enabled || p.program != program || (p.volume == 0 && volume > 0);
-    if (rechase) instruments_[part]->silence();
+    bool rechase = p.enabled != enabled || (!p.source.vst3 && (p.program != program || (p.volume == 0 && volume > 0)));
+    if (rechase) {
+        instruments_[part]->silence();
+        auto& d = delays_[part];
+        std::fill(d.left.begin(),d.left.end(),0); std::fill(d.right.begin(),d.right.end(),0); d.cursor = 0;
+    }
     p.enabled = enabled;
     p.volume = volume;
     p.program = program;
@@ -225,12 +293,26 @@ void Engine::dispatch() noexcept {
     }
 }
 void Engine::render(float* left, float* right, uint32_t offset, uint32_t count) noexcept {
+    const double bpm = timeline_.bpm(position_);
     for (size_t p = 0; p < instruments_.size(); ++p) {
         if (!plan_.parts[p].enabled) continue;
+        instruments_[p]->transport(position_ / scale_, bpm * scale_, state_ == State::playing,
+            timeline_.quarters(position_), clock_ + offset);
         instruments_[p]->render(scratch_l_.data(), scratch_r_.data(), count);
+        auto& d = delays_[p];
+        const double target_gain = plan_.parts[p].source.vst3 ? plan_.parts[p].source.gain : 1.0;
         for (uint32_t i = 0; i < count; ++i) {
-            left[offset + i] += std::isfinite(scratch_l_[i]) ? scratch_l_[i] : 0;
-            right[offset + i] += std::isfinite(scratch_r_[i]) ? scratch_r_[i] : 0;
+            part_gains_[p] += std::clamp(target_gain-part_gains_[p],-gain_step_,gain_step_);
+            const float gain = static_cast<float>(part_gains_[p]);
+            float l = std::isfinite(scratch_l_[i]) ? scratch_l_[i] * gain : 0;
+            float r = std::isfinite(scratch_r_[i]) ? scratch_r_[i] * gain : 0;
+            if (!d.left.empty()) {
+                std::swap(l, d.left[d.cursor]);
+                std::swap(r, d.right[d.cursor]);
+                d.cursor = (d.cursor + 1) % d.left.size();
+            }
+            left[offset + i] += l;
+            right[offset + i] += r;
         }
     }
 }
@@ -249,6 +331,7 @@ void Engine::process(float* left, float* right, uint32_t frames, uint64_t latenc
         dispatch();
         double next = cursor_ < events_.size() ? events_[cursor_].seconds : duration_;
         next = std::min(next, duration_);
+        next = std::min(next, timeline_.next_tempo(position_));
         // Absolute base-time boundaries retain fractional conversion across blocks.
         double distance = std::max(0.0, (next - position_) * rate_ / scale_);
         uint32_t count = static_cast<uint32_t>(std::min<double>(frames - offset,
@@ -260,7 +343,10 @@ void Engine::process(float* left, float* right, uint32_t frames, uint64_t latenc
     }
     if (position_ >= duration_) {
         history(clock_ + offset, duration_, 0);
-        dispatch(); silence();
+        dispatch();
+        // Keep processors and alignment buffers draining until the final score
+        // sample reaches the audible clock. Do not truncate declared latency.
+        if (offset < frames) render(left,right,offset,frames-offset);
     }
     for (uint32_t i = 0; i < frames; ++i) {
         gain_ += std::clamp(gain_target_ - gain_, -gain_step_, gain_step_);
@@ -276,6 +362,6 @@ void Engine::process(float* left, float* right, uint32_t frames, uint64_t latenc
         silence(); state_ = State::paused;
         return;
     }
-    if (audible_ >= duration_ && position_ >= duration_) state_ = State::finished;
+    if (audible_ >= duration_ && position_ >= duration_) { state_ = State::finished; silence(); }
 }
 } // namespace rms

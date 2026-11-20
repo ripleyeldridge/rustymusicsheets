@@ -2,16 +2,24 @@
 A native Linux sheet-music library and performance reader, written in Rust with egui.
 **A headline feature: offline instrument detection that helps turn a folder of scores into an instrument-searchable library—even when the parts are scanned PDFs or standalone images.**
 
-**Version:** 0.3.1 preview · **Author:** [Ripley Eldridge](https://github.com/ripleyeldridge) · **Release year:** 2026 · **License:** [MIT](LICENSE)
+**Version:** 0.4.0 preview · **Author:** [Ripley Eldridge](https://github.com/ripleyeldridge) · **Release year:** 2026 · **License:** [MIT](LICENSE)
 
-## Latest preview: v0.3.1
-- [Release notes](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.3.1)
-- [Linux amd64 `.deb` — 0.3.1-1](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.3.1/rustymusicsheets_0.3.1-1_amd64.deb)
-- [SHA256SUMS](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.3.1/SHA256SUMS)
+## Release 0.4.0
+- Native SoundFont/VST3 audio-host playback, shared plugin discovery, independent instrument state and X11 editors, with modal-dialog liveness protection.
+- Explicit, previewed and reversible OMR part combinations; original notes/timing and individual instrument settings are preserved in v3 sidecars.
+- Recovery of layout-only empty implicit measures using shared timing, without rewriting source MusicXML.
 
-This is a **Linux preview**, requiring **glibc 2.43 or newer**; it is not compatible with Ubuntu 22.04/24.04. The tag, application version and package source for v0.3.1 agree. The [stable v0.2.1 release](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.2.1) remains available.
+Published from commit `207ba1c750a6e6e39052ba5b5aa2e5fccbfbb356`, matching annotated tag `v0.4.0`. This is a **prerelease**, not a stable/latest promotion. The Linux package includes the SDK-enabled helper, not plugins, samples, SDK source or personal data.
 
-There is **no Android APK attached to v0.3.1**. The separate [v0.2.3 Android foundation preview](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.2.3) is experimental, debug-signed, and does not have Linux feature parity. Initial Open with PNG/JPEG, private imports, metadata and Help are supported; native PDF/OCR, the in-app picker, synth playback and Android keep-awake remain incomplete. Debug builds may use different signing keys: preserve existing data and do not uninstall merely to bypass a signature mismatch. See [Android setup and boundaries](android/README.txt).
+## Latest published preview: v0.4.0
+- [Release notes](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.4.0)
+- [Linux amd64 `.deb` — 0.4.0-1](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.4.0/rustymusicsheets_0.4.0-1_amd64.deb)
+- [Experimental Android ARM64 debug APK](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.4.0/RustyMusicSheets-0.4.0-android-arm64-debug.apk)
+- [SHA256SUMS](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.4.0/SHA256SUMS), [build record](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.4.0/build-record.json), [license](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.4.0/LICENSE) and [third-party notices](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.4.0/rustymusicsheets-0.4.0-third-party-notices.tar.gz)
+
+The **Linux amd64 preview requires glibc 2.43 or newer**; it is not compatible with Ubuntu 22.04/24.04. The [stable/latest v0.2.1 release](https://github.com/ripleyeldridge/rustymusicsheets/releases/tag/v0.2.1) remains available.
+
+The Android APK is **experimental, debuggable and locally debug-signed**, not a production-signed mobile release. This build passed static checks but **was not executed on a device**. Initial Open with PNG/JPEG, private imports, metadata and Help are supported; native PDF/OCR, the in-app picker, synth playback and Android keep-awake remain incomplete. Debug builds may use different signing keys: preserve existing data and do not uninstall merely to bypass a signature mismatch. See [Android setup and boundaries](android/README.txt).
 
 ## Why this exists
 > I vibe-coded the fuck out of this because I couldn't find a suitable Linux sheet-music reader for what I needed and I have a full-time coding job so I don't have time to write the whole thing myself.
@@ -33,6 +41,8 @@ This project was built with substantial AI assistance. It is a working, evolving
 - **Find instructions inside the app** using a searchable, clickable offline help tree.
 - **Recognize printed music and audition selected parts on Linux** using optional Audiveris and FluidSynth helpers, with MusicXML/MIDI export, instrument choices, and tempo scaling.
 - **Balance accompaniment live** with per-part selection/volume, a master volume slider, play/pause, seek and stop; settings are remembered per recognized movement.
+- **Use native VST3 instruments** with shared discovery, independent per-part state and X11 editors through the optional host backend. Play SFZ through a separately acquired sfizz VST3 sampler.
+- **Reunite split OMR parts** with explicit selection, retained instrument/settings, overlap previews and reversible combinations, without rewriting original notation.
 - **Read ahead during playback** using optional original-score page following with an integer measure lead. Manual Previous/Next remains available in Performance without the synth.
 - **Choose paths instead of typing them** using Browse dialogs for music engines, SoundFonts, MusicXML input and export destinations.
 
@@ -56,18 +66,20 @@ See [Scan, review, apply](#instrument-detection-scan-review-apply) for the workf
 
 ## Install
 ### Option 1: Ubuntu/Debian package
-Download the [v0.3.1 preview package](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.3.1/rustymusicsheets_0.3.1-1_amd64.deb) and [SHA256SUMS](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.3.1/SHA256SUMS) into the **same directory**. Verify there, then install with APT so dependencies are resolved:
+Download the [v0.4.0 preview package](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.4.0/rustymusicsheets_0.4.0-1_amd64.deb) and [SHA256SUMS](https://github.com/ripleyeldridge/rustymusicsheets/releases/download/v0.4.0/SHA256SUMS) into the **same directory**. Verify the files you downloaded, then install with APT so dependencies are resolved:
 
 ```bash
-sha256sum -c SHA256SUMS
-sudo apt install ./rustymusicsheets_0.3.1-1_amd64.deb
+sha256sum --ignore-missing -c SHA256SUMS
+sudo apt install ./rustymusicsheets_0.4.0-1_amd64.deb
 ```
 
 These commands are for a compatible reader; check the architecture and runtime requirement below first. New downloads are published as GitHub Release assets. Development builds live in ignored `dist/`; [`packages/`](packages/) contains older selected packages, not the current preview. Build from source if the package does not match your system.
 
+All six release attachments have flat filenames. `--ignore-missing` permits verifying just the downloaded subset; to verify the entire set, download every attachment and use `sha256sum -c SHA256SUMS` without that option. The build record is unsigned provenance, not a cryptographic attestation; checksums are not a release signature.
+
 **Compatibility matters:** the current native amd64 build targets the confirmed **Ubuntu 26.10 x86_64** reader and requires **glibc 2.43 or newer**. It is **not compatible with Ubuntu 22.04/24.04**. A `.deb` is not a universal Linux binary: use a matching package or build on your target distribution. Do not force-install incompatible packages or replace system glibc.
 
-The package declares Poppler, Tesseract with English language data, and the graphics/input libraries it needs. Zenity is recommended for graphical file/folder pickers.
+The published package includes `/usr/libexec/rustymusicsheets/rms-audio-host` with protocol-v2 SoundFont/VST3 and X11 editor support. APT resolves its system runtime libraries, including FluidSynth, JACK and OpenSSL, plus Poppler/Tesseract/graphics dependencies. **You do not need a compiler or the VST3 SDK to run this package.** Audiveris, the external FluidSynth executable for legacy playback, SoundFont banks, VST3 plugins and sample libraries are separate optional dependencies. Zenity is recommended for file/folder pickers. An existing JACK or PipeWire-JACK output is required for the host backend; installing the package does not configure an audio server.
 
 ### Option 2: Build from source
 You need **Rust 1.86 or newer**, Cargo, Git, a C compiler, pkg-config, and the graphics/input development libraries required by eframe on your distribution. The app uses OpenGL and supports X11 and Wayland.
@@ -98,7 +110,7 @@ To build a native Debian package without installing it or requiring root:
 python3 scripts/build-deb.py
 ```
 
-Packaging also requires Python 3.9+, dpkg-dev, dpkg-deb, and binutils. The builder performs a locked release build and writes `dist/rustymusicsheets_0.3.1-1_<architecture>.deb`. `--revision 2` selects Debian revision 2; `--skip-build` is only for a separately verified, current release executable. See [Publishing a release](#publishing-a-release) for commit/tag/checksum requirements.
+Packaging also requires Python 3.9+, dpkg-dev, dpkg-deb, and binutils. The builder performs a locked release build and writes `dist/rustymusicsheets_0.4.0-1_<architecture>.deb`. `--revision 2` selects Debian revision 2; `--skip-build` is only for a separately verified, current release executable. See [Publishing a release](#publishing-a-release) for commit/tag/checksum requirements.
 
 ## Start the app
 **After installing the package:** launch **RustyMusicSheets** from your desktop application menu, or run:
@@ -149,14 +161,14 @@ Manual scans create proposals; they do not silently write assigned metadata. Exi
 Automatic detection for new GUI imports is optional and off by default. It fills only clear, empty, unprotected instrument values. Ambiguous labels such as bare “Alto 1” are not blindly treated as saxophone.
 
 ## Music recognition, MusicXML export, and MIDI playback (Linux)
-This is an **experimental, review-first OMR workflow**, separate from instrument-label detection. Audiveris recognizes printed notation into MusicXML; RustyMusicSheets interprets supported notation and drives a separately installed FluidSynth process. No scores are uploaded, and source documents and library metadata remain unchanged.
+This is an **experimental, review-first OMR workflow**, separate from instrument-label detection. Audiveris recognizes printed notation into MusicXML; RustyMusicSheets interprets it using legacy external FluidSynth or the optional native SoundFont/VST3 host. No scores are uploaded, and source documents and library metadata remain unchanged.
 
 ### Setup
 - Use **Browse…** beside the Audiveris, FluidSynth and SoundFont fields instead of typing filenames. MusicXML input and both export destination fields also have format-appropriate open/save dialogs. Library/import path controls provide file/folder selection. Text entry and paste remain available; Linux dialogs use optional Zenity.
 - Install [Audiveris](https://github.com/Audiveris/audiveris/releases) separately using its official Linux package. Recent releases include Java. Configure its executable in **Settings → Music recognition and MIDI playback**, or **Reader → Music / OMR → Engine settings**. An absolute path such as `/opt/audiveris/bin/Audiveris` works; a Flatpak command with arguments is not an executable path—use a launcher script if necessary.
-- Install FluidSynth and a SoundFont, for example `sudo apt install fluidsynth fluid-soundfont-gm`. Choose a `.sf2`/`.sf3` bank in settings; common system banks are detected automatically.
+- For legacy playback, install FluidSynth and a SoundFont, for example `sudo apt install fluidsynth fluid-soundfont-gm`. Choose a `.sf2`/`.sf3` bank in settings; common system banks are detected automatically. Pure-VST3 host playback needs neither that executable nor a bank, but still uses the package's system runtime libraries.
 - Audiveris needs its own OCR language setup, even if the application's existing Tesseract label detector works. Install English through Audiveris's language management, or point `TESSDATA_PREFIX` at compatible full [Tesseract tessdata](https://github.com/tesseract-ocr/tessdata) models before launching the app. LSTM-only distro models may not provide the legacy data required by Audiveris.
-- Save preferences. Missing helpers, unsupported targets, malformed notation, and audio-device failures are reported; optional helpers are not bundled or automatically installed.
+- Save preferences. Missing helpers, unsupported targets, malformed notation, and audio-device failures are reported. The published v0.4.0 package includes the audio-host helper; recognition engines, plugins and instrument data are not automatically installed.
 
 ### Reader workflow
 1. Open a library score, then **Music / OMR → Recognize with Audiveris**. Recognition runs in the background and can be cancelled.
@@ -164,13 +176,25 @@ This is an **experimental, review-first OMR workflow**, separate from instrument
 3. Review warnings and the exported notation. Part names and instrument guesses can be wrong: a cello line may be labelled “Voice.” Choose **Cello (GM 43)** explicitly when needed; Piano is GM 1. Numbers in the UI/CLI are one-based.
 4. Tick the parts to hear and set each **Volume %** independently. A recognized piano grand staff stays one selectable part, with both staves and voices. Part choices, volume, instruments and tempo apply live and are remembered for that recognized movement.
 5. Use **Play selected parts / Pause**, **Rewind 5s**, **Fast-forward 5s**, and **Stop audio**. Pause freezes position and silences active voices; resuming or seeking reconstructs notes held at the target position. Stop resets to the beginning. Seek while paused to stay paused, or seek before the first Play to prepare a starting position. Instrument envelopes restart on reconstructed notes; this is musical-position seeking, not sample-exact audio seeking.
-6. Enter destination filenames and **Export MusicXML** or **Export selected MIDI**. Existing files are never overwritten. `.mxl` remains compressed MusicXML; use the matching extension. MusicXML preserves all recognized parts; MIDI reflects your selected parts, instruments, per-part channel volumes, and tempo.
+6. Enter destination filenames and **Export original MusicXML** or **Export selected MIDI**. Existing files are never overwritten. `.mxl` remains compressed MusicXML; use the matching extension. MusicXML preserves all original recognized parts; MIDI reflects your combined layout, selected parts, instruments, per-part channel volumes, and tempo.
+
+### Combine split OMR parts
+If Audiveris creates separate parts for a full instrument name and its later abbreviation, use **Combine parts…** beside the recognized parts or in **Parts / volume**. Nothing is combined automatically from names such as Vln., Vc. or V0.
+- If instruments are loaded, finish any editor/file dialog, then **Save and unload instruments**. Saving runs asynchronously; cancellation retains the last valid checkpoint and requires a movement reload before structural changes.
+- Use the separate combination checkboxes to select at least two ungrouped original IDs. Choose the retained target ID and a display name, then **Preview combination**. Review note ranges, simultaneous/unison/duplicate counts and each member's settings before **Apply combination**.
+- Notes overlay at their original absolute times; they are not concatenated, silent gaps remain, and no cross-part ties are inferred. Playback/MIDI's existing overlapping-unison coalescing may affect doubled-note articulation or loudness; raw notes are never deleted.
+- The target supplies the instrument/state, gain, volume and mute setting. Absorbed parts' settings remain stored but their plugins are not loaded. **Uncombine** or **Restore original part layout** restores the original notes/names; subsequent target instrument edits stay with that target.
+- Close Combine parts and press Play explicitly to restart from the beginning. Combinations affect playback and MIDI only; **Export original MusicXML** preserves the original bytes and parts.
+
+Groups and original-ID settings are stored in exact-score/MusicXML-bound `.audio-v3.json` sidecars. Older v1/v2 mixes are read as fallbacks and left untouched. Rejected/stale mixes are protected from autosave; the explicit recovery action preserves a backup before saving the current reviewed layout/settings.
+
+After a cancelled/failed instrument save, use **Reload movement (discard unsaved edits)** before regrouping. For a rejected saved mix, **Recover using current layout (back up rejected mix)** preserves a separate copy before replacing it. Changed preview settings require a fresh preview. Escape closes the combination editor before leaving Performance, and page-turn shortcuts are suspended while it is open.
 
 ### Performance accompaniment
 The **Master volume %** slider below the transport controls adjusts all instruments together, from mute (0%) to normal output (100%), without changing their individual balances. It applies live and is remembered per recognized movement. The same slider appears in Music / OMR. This is a playback-output control; exported MIDI retains the individual part levels.
 After saving engine settings, enter **Performance**. The bottom **Accompaniment** strip automatically loads saved recognition for the current score without opening settings. If no usable result exists, click **Recognize music** and use the visible progress/cancel controls. Multiple movements require an explicit **Load movement** choice.
 
-The strip keeps **Rewind 5s**, **Play/Pause**, **Fast-forward 5s**, **Stop**, and position/duration available while the score remains visible. Open **Parts / volume** to choose individual parts, set independent 0–100% levels, or change their GM instruments and tempo. Unchecking a part mutes it without restarting the timeline. Live mixing supports up to 15 musical parts; MIDI percussion channel 10 is reserved. **Music settings / results** opens the full settings/review/export window without leaving performance mode.
+The strip keeps **Rewind 5s**, **Play/Pause**, **Fast-forward 5s**, **Stop**, and position/duration available while the score remains visible. Open **Parts / volume** to choose individual parts, set independent levels/instruments and tempo, or combine fragments. Unchecking a part mutes it without restarting the timeline. Legacy playback and MIDI support up to 15 pitched parts; MIDI percussion channel 10 is reserved. The native host supports up to 32 parts. **Music settings / results** opens the full settings/review/export window without leaving performance mode.
 
 Closing the music window does not stop accompaniment; the performance strip remains available. Changing/removing the score, detecting a changed backing file, or exiting the application stops the synth. Escape closes an open music window/mixer before exiting performance.
 
@@ -191,14 +215,24 @@ Use **Load corrected or existing MusicXML** to load a private copy of a `.mxl`, 
 
 Successful recognition artifacts and logs live under the app-data `omr/<source-hash>/run-*/` tree, with a small `omr-index/` for reuse across restarts. Per-movement mixer settings live under `omr-mix/`, keyed by source and MusicXML content hashes. Include app data in backups. Failed/cancelled runs and temporary helper files are cleaned up. The backing score is hash-checked when loading results; detected later changes invalidate playback until the score is rescanned/reopened.
 
-Supported playback includes partwise MusicXML, chords/voices, multi-staff parts, rests, transposition, ties, tempo changes, basic repeats and first/second endings. Recognition and performance are **not guaranteed faithful**: expression, pedal, grace notes, advanced navigation/nested repeats and other unsupported constructs are warned about or approximated. GUI playback uses an application sequencer driving a persistent FluidSynth command process; the CLI retains one-shot MIDI playback. Note velocity is fixed, with independent part volume. A full notation editor, microphone/live-performance score tracking, looping, metronome, VST hosting, and Android/Windows OMR/audio are not implemented.
+Supported playback includes partwise MusicXML, chords/voices, multi-staff parts, rests, transposition, ties, tempo changes, basic repeats and first/second endings. Recognition and performance are **not guaranteed faithful**: expression, pedal, grace notes, advanced navigation/nested repeats and other unsupported constructs are warned about or approximated. Default GUI playback drives a persistent FluidSynth command process; the optional host below renders SoundFonts and VST3 instruments. The CLI retains one-shot MIDI playback. Note velocity is fixed, with independent part volume. A full notation editor, microphone/live-performance score tracking, looping, metronome, and Android/Windows OMR/audio are not implemented.
+
+Some OMR exports leave a layout-only `implicit="yes"` measure in one part. If another part supplies its timing, that placeholder becomes a rest on the shared measure clock, with a warning identifying the part and measure position. Its attributes, tempo/repeats and page boundary are retained; later notes are not shifted by a guessed full bar. If every part lacks timing at that position, loading still fails for review rather than inventing a duration. The source MusicXML and score are not rewritten.
 
 Audiveris is **AGPLv3**, FluidSynth is **LGPL**, and SoundFonts have their own licenses. Legacy playback uses separately installed programs/data; the optional helper below links the system FluidSynth library. Their licenses are not replaced by this application's MIT license.
 
-### Optional audio-host foundation (development preview)
-The first stage of the plugin-engine design is implemented: a separately supervised C++ audio process, bounded/versioned Unix-socket IPC, a device-clock scheduler, and independent SoundFont instruments mixed to stereo. **This does not load VST3 plugins yet.** Plugin discovery, editors, plugin state, yabridge and Wine setup remain later milestones.
+### Optional audio host and VST3 instruments (development preview)
+The separately supervised C++ host provides bounded/versioned Unix-socket control, shared-clock SoundFont/VST3 mixing, isolated plugin scanning, per-part instrument assignments, generic parameters/presets and saved plugin state. Custom editors use separate X11 windows when supported. **VST3 requires an SDK-enabled helper**; the ordinary helper build below remains SoundFont-only.
 
-Legacy FluidSynth playback remains the default. The initial preview target is native Linux x86_64. Ordinary Cargo/Android builds do not build or download native dependencies. **Wine, yabridge and the VST3 SDK are not needed for this stage.**
+Legacy FluidSynth playback remains the default. The preview targets native Linux x86_64. Ordinary Cargo/Android builds do not build/download the helper or SDK. **Wine/yabridge are not needed for native Linux VST3**; they are only relevant to existing Windows-plugin wrappers. A SoundFont-only helper does not need the SDK.
+#### Using the published v0.4.0 package
+The published `.deb` already contains the SDK-enabled helper. Sections 1–4 below describe **source builds**, not prerequisites for installed-package users; section 5 covers instrument setup for either route.
+1. With an existing JACK/PipeWire-JACK output available, open **Settings → Music recognition and MIDI playback** or **Music / OMR → Engine settings**, and choose the matching **Audio host preview** backend.
+2. Leave **Audio-host executable** empty to use `/usr/libexec/rustymusicsheets/rms-audio-host`. Clear an old source-preview path if you intend to use the packaged helper. Save preferences, then use **Probe helper capabilities** in shared discovery; look for `vst3` and, for modal X11 editors, `editor_keepalive`.
+3. Inspect/scan a separately installed native `.vst3` bundle once in **VST3 bundle discovery (shared by all parts)**, then choose the desired class for each part.
+4. **Load instruments paused**, configure the editor/parameters/preset, and **Save plugin assignments and state** while paused/stopped. A pure-VST3 graph needs no SoundFont bank; SoundFont parts and legacy playback do. Start at a low master level.
+
+The host uses existing audio services; it does not start JACK, set up PipeWire, install plugins or repair Wine prefixes. Custom editors require supported X11/display integration; generic controls do not provide native Wayland editor embedding.
 
 #### 1. Prepare the optional dependencies
 Complete the normal source-build setup above, including Rust >=1.86. The helper additionally needs CMake >=3.16, a C++17 compiler, pkg-config and development packages for JACK, FluidSynth >=2.2 and OpenSSL. Ubuntu package example:
@@ -240,7 +274,7 @@ Core-only mode does not create a live helper; it also tests the protocol when Op
 #### 3. Enable and test the preview
 1. In **Settings → Music recognition and MIDI playback**, or **Music / OMR → Engine settings**, select **Audio host preview — PipeWire/JACK** or **Audio host preview — native JACK** under **Playback backend (Linux)**.
 2. Use **Browse…** for **Audio-host executable** and select the absolute path of `target/audio-host/rms-audio-host`. An empty field instead selects `/usr/libexec/rustymusicsheets/rms-audio-host`, which requires a helper-enabled package; it does not search PATH.
-3. Choose an existing `.sf2`/`.sf3` **SoundFont** and save preferences/music settings. The external FluidSynth executable field is for legacy playback, not this backend.
+3. For SoundFont parts, choose an existing `.sf2`/`.sf3` **SoundFont** and save preferences/music settings. A pure-VST3 session needs no bank file. The external FluidSynth executable field is for legacy playback, not this backend.
 4. Load existing MusicXML or recognize a score using the workflow above. Audiveris is only needed for recognition, not existing MusicXML. Start with a low master level, then **Play selected parts**. Sample rate, estimated output latency and xruns appear with the transport.
 5. To return to the previous backend, choose **FluidSynth (legacy, default)** and save preferences. Backend changes stop playback; explicitly press Play to start the selected engine. There is no silent fallback or restart loop.
 
@@ -250,8 +284,51 @@ The preview supports up to 32 independent musical parts, preserving piano staff 
 
 Position and page following use estimated audible device-clock timing, including output latency and tempo changes. **Real loopback calibration is still required.** FluidSynth may delay note onset within its internal 64-frame synthesis quantum. Preview chorus/reverb are disabled to flush voices on pause/seek, so its sound is not acoustically identical to the legacy engine. Each part currently loads its own SoundFont instance, which can use substantial RAM. Test levels, timing and memory before relying on it in performance.
 
+#### 4. Build VST3 support explicitly
+For plugin loading, additionally supply **CMake >=3.25** and X11 development headers (`libx11-dev` on Ubuntu). Acquire the pinned official MIT-licensed SDK explicitly, then rebuild the helper:
+
+```bash
+python3 scripts/fetch-vst3-sdk.py
+python3 scripts/fetch-vst3-sdk.py --verify-only
+python3 scripts/build-audio-host.py --test --vst3-sdk "$PWD/target/vst3-sdk"
+target/audio-host/rms-audio-host --build-info
+cargo build --locked --release
+./target/release/rustymusicsheets
+```
+
+SDK setup downloads only the pinned official source/submodules to ignored `target/vst3-sdk/`. It never overwrites an existing modified checkout, installs packages or touches Wine. Normal Cargo/CMake/Android builds do not download it. SDK-enabled and non-SDK helpers use protocol v2; rebuild the app and helper together rather than mixing them with the older M0 protocol-v1 binary.
+
+#### 5. Browse, assign and configure an instrument
+1. Choose an audio-host backend and its freshly rebuilt helper as above. In application **Settings**, or **Music / OMR → Engine settings**, expand **VST3 bundle discovery (shared by all parts)** and use **Probe helper capabilities**. The reply must include `vst3`. No loaded score is required to discover plugins in Settings.
+2. Browse to the **Direct .vst3 bundle folder** in that shared section, then **Inspect this bundle**. Alternatively, use **Add search folder → Browse…**, then **Scan selected roots**; **Use standard Linux roots** fills existing conventional folders. Scan each bundle once: the shared catalogue populates every part's dropdown. Browsing/scanning never assigns a part automatically; browsing alone never executes a plugin. Use **Retry this bundle** or the root rescan to retry quarantine explicitly.
+3. Choose the exact instrument class from each part's dropdown. Vendor, module path and class ID disambiguate duplicate names; two parts may choose the same plugin independently, with separate instances, gain and state. The selected bundle is shown read-only in the part; bundle browsing/scanning is no longer repeated per part. The previous GM program is retained for explicit SoundFont selection and MIDI export, not sent to the VST3 instrument.
+4. Use **Load instruments paused** to prepare the graph without playing notes. Use **Open editor** for a supported custom X11 window, **Generic parameters** for paginated host controls, or Browse to a class-matching `.vstpreset` and **Load selected .vstpreset** while paused/stopped. Use a low master level initially. Plugin level is **Post-plugin audio gain**, not CC7.
+5. While paused/stopped, use **Save plugin assignments and state**. Assignments/checkpoints are tied to the original score and MusicXML hashes; component/controller chunks remain separate. A plugin's external samples/licenses are not bundled. Dirty changes are indicated; missing plugins never silently become SoundFonts.
+
+Linux `.vst3` plugins are **bundle directories**, usually containing `Contents/x86_64-linux/<bundle-name>.so`; choose the outer `.vst3` folder in the browser. A Windows `.vst3` file, VST2 `.dll`/loose `.so`, effect or wrong-architecture plugin cannot be loaded directly. VST2, CLAP/LV2, effects chains and plugin audio export are not implemented. MIDI export contains retained GM choices, not plugin audio/state. Failed scans are quarantined until an explicit **Retry quarantined / rescan** or a changed module/runtime profile.
+
+Initial DSP routing requires zero audio inputs and one mono/stereo main output bus; multi-output instruments are rejected rather than silently misrouted. Supported latency/bus changes pause and reprepare processing/alignment; press Play after reviewing the change. A requested full component reload or unsupported bus layout is reported explicitly. During a paused preset/checkpoint operation, **Stop audio** cancels the owned helper and keeps the last valid checkpoint; unsaved edits may be lost. Reload the movement before restarting after such cancellation. Save before changing instruments. New mix metadata uses `.audio-v3.json` sidecars with original-ID settings/groups, leaving v1/v2 files intact.
+
+#### SFZ instruments through sfizz
+SFZ is not a SoundFont or plugin bundle. Use the native Linux x86_64 **[sfizz VST3](https://github.com/sfztools/sfizz-ui/releases/tag/1.2.3)** sampler to play an `.sfz` definition and its sample files. Discover its outer `sfizz.vst3` bundle once in the shared section, then choose **sfizz**, not **sfizz-multi**, for each desired part. The multi-output class is outside this host's routing profile.
+
+Use **Load instruments paused → Open editor**, then choose the `.sfz` inside sfizz. A class-matching `.vstpreset` can also supply the instrument. Use a low master level, play, then pause/stop and **Save plugin assignments and state**. SFZ/sample paths are retained in the plugin's opaque state; the application does not copy, convert or bundle the SFZ, WAV files, includes or licenses. Keep their folder layout available when reopening the movement. Different parts may use different sfizz instances and SFZ instruments.
+
+Rebuild/reopen **both app and helper** for modal-file-dialog support. Some plugin editors synchronously wait for their file picker; the negotiated `editor_keepalive` extension prevents that legitimate wait from being mistaken for a dead host. The transport is held while the editor callback is busy; finish/cancel its dialog to resume, or use **Stop audio** to cancel the owned helper and retain the last saved checkpoint. Finish the dialog before issuing new control/state operations; they are refused while it is busy. The normal five-second missing-heartbeat watchdog remains enabled, with a separate thirty-minute bound on continuous editor activity.
+
+The optional plugin is acquired/built separately; normal application/helper builds never download or install sfizz. Prefer official native builds or official source, preserve the plugin's licenses, and retain a verified build. The official 1.2.3 release provides source rather than a Linux binary. This preview uses bounded plugin process blocks independently of its larger scratch buffers, avoiding sfizz's oversized-block assertion. SFZ remains unsupported in the `.sf2`/`.sf3` SoundFont picker, and no second SFZ engine or vendor-specific production state format is added.
+
+Official sfizz 1.2.3 was verified with a GCC 13 native build; its bundled GUI library fails to build unchanged with the local GCC 15. Development dependencies were staged privately for verification, not installed into the system. The installed plugin remains separate from this repository's binaries, SDK and license.
+
+#### Existing yabridge wrappers
+The host loads yabridge's generated **Linux VST3 bundles**, normally under `~/.vst3/yabridge`, through the same VST3 adapter. It does not load the original Windows file or install/activate the vendor plugin.
+
+Use **Read-only bridge diagnostics** before **Use existing yabridge wrappers → Scan selected roots**. The yabridgectl executable, generated wrapper root and existing Wine loader each have Browse controls. The Wine loader is scoped to the helper; there is no global `WINEPREFIX` override, installation, automatic `add`/`sync`/`prune`, prefix modification or Wine downgrade. Vendor installation and user-reviewed yabridge registration/synchronization must already be complete; do not register generated output as a source or recursively nest wrapper roots.
+
+**Known local blocker:** upstream says Wine 9.22/10.x is incompatible with yabridge 5.1.1 and earlier. Wine 10.0 with yabridge 5.1.0 is therefore blocked before scanning/loading known wrappers. Updating only to 5.1.1 is not a fix. Choose a separately verified compatible existing runtime/profile using the loader browser; consult [official yabridge guidance](https://github.com/robbert-vdh/yabridge#troubleshooting-common-issues). An allowed version preflight is not a guarantee that a specific plugin's audio, editor, samples or state works. This machine's Windows-plugin playback remains unverified until a compatible profile is supplied.
+
 #### Optional native package
-`python3 scripts/build-deb.py --with-audio-host` builds/packages both binaries, derives their shared-library dependencies and includes native notices. Default packages omit the helper. Install the explicitly chosen output `.deb` using your normal package manager; for a helper-enabled package, leave **Audio-host executable** empty to use the installed location. Building a package does not install/publish it or change Wine/yabridge. `--skip-build` reuses both existing binaries and requires checking they match the intended source. Native packages retain build-host architecture/glibc requirements; this is not a universal Ubuntu binary.
+For source packaging, `python3 scripts/build-deb.py --with-audio-host` builds/packages a SoundFont-only helper. Add `--vst3-sdk "$PWD/target/vst3-sdk"` for the VST3-enabled variant shipped in v0.4.0, with pinned SDK provenance/license notices. Invoking the builder without `--with-audio-host` omits the helper; that is not the published v0.4.0 package configuration. Install the explicitly chosen output `.deb` using your normal package manager; leave **Audio-host executable** empty for its installed location. Building does not install/publish a package or change Wine/yabridge. `--skip-build` checks helper protocol/features and SDK provenance; it does not rebuild stale binaries. Native packages retain build-host architecture/glibc requirements and are not universal Ubuntu binaries.
 
 #### Verification and troubleshooting
 
@@ -264,12 +341,35 @@ RMS_TEST_AUDIO_HOST="$PWD/target/audio-host/rms-audio-host" \
 
 It uses the detected SoundFont and PipeWire by default; optionally set `RMS_TEST_SOUNDFONT` and `RMS_TEST_AUDIO_BACKEND=jack`. This verifies live lifecycle/clock/controls, not acoustic onset or loopback page timing.
 
+`tests/vst3_host.rs` also has explicit muted Rust-to-host checks for independent generated-plugin states and mixed SoundFont/VST3 playback. Set `RMS_TEST_AUDIO_HOST` to the SDK-enabled helper, `RMS_TEST_VST3_BUNDLE` to its generated `VST3/RelWithDebInfo/rms-test-instrument.vst3` bundle, and optionally `RMS_TEST_AUDIO_BACKEND=jack` and `RMS_TEST_SOUNDFONT`. Run the named ignored fixture tests with one test thread so live audio clients do not overlap.
+
+To test a trusted real native instrument instead of the fixture, explicitly set `RMS_TEST_REAL_VST3_BUNDLE` and `RMS_TEST_REAL_VST3_PARAM_ID`, then run `cargo test --locked --test vst3_host actual_native_instrument_plays_and_restores_state_without_soundfont -- --ignored --nocapture`. Also set `RMS_TEST_REAL_VST3_CLASS_ID` for a multi-class bundle; no class is guessed. Choose a writable, persistent continuous parameter from its first parameter page. This executes third-party code, edits that parameter in a temporary instance, checkpoints it, reloads it, and advances playback with master muted. Dexed 1.1.0 has been verified with Output parameter ID `1141971201`; sfizz's stereo class is `E8FAB71815ED46E38B5983101E12993F` and Volume parameter ID is `0`. Plugin defaults/presets and existing movement state are not rewritten.
+
+The sfizz-specific opt-in verifier generates its own SFZ, WAV and standard VST3 preset in a **fresh** directory. It checks all three chord frequencies, opaque checkpoint/reload, parameters, and optionally the X11 editor. It uses a private HOME/config/data/cache and opens **no JACK client or audio device**. Build its target explicitly in your SDK-enabled helper build directory (adjust `HOST_BUILD` if you used `--build-dir`):
+
+```bash
+HOST_BUILD="$PWD/target/audio-host"
+cmake --build "$HOST_BUILD" --target rms-sfizz-verify
+python3 native/audio-host/sfizz_verify.py \
+  --binary "$HOST_BUILD/rms-sfizz-verify" \
+  --bundle "$HOME/.vst3/sfizz.vst3" \
+  --output "$PWD/target/sfizz-verification"
+```
+
+The output directory must not already exist. Add `--editor-seconds 3` for the optional X11 editor lifecycle check. This explicitly executes a trusted user-selected sfizz 1.2.3 bundle; it is never run by ordinary CTest/CI and does not download plugins. The fixture's sfizz state-schema knowledge is verification-only, not part of the production loader. To exercise the generated instrument through the Rust supervisor too, set `RMS_TEST_REAL_VST3_PRESET` to the resulting `generated.vstpreset` when running the real-instrument Rust test above, together with sfizz's class/parameter IDs. That test submits a simultaneous three-note chord with master muted and verifies state restoration.
+
 - **Missing `fluidsynth.pc`/headers:** install `libfluidsynth-dev`, not only the runtime/executable; check `pkg-config --modversion fluidsynth`.
 - **Missing helper/protocol mismatch:** build both binaries from the same checkout and Browse to the actual output. A source build does not install the helper under `/usr/libexec/`.
+- **File picker closes with a heartbeat error:** reload instruments using the rebuilt app/helper pair and probe for `editor_keepalive` on X11. An older pair may confuse a synchronous editor chooser with a stalled host. A busy editor can be cancelled with Stop audio; unsaved edits may be lost, but the last saved checkpoint is retained.
 - **JACK unavailable / no physical stereo ports:** match the running server/backend and enable a physical stereo output in the desktop/audio controls. PipeWire mode requires `/usr/bin/pw-jack`; native JACK does not start a daemon.
 - **Device/rate/output changed or host stalled:** fix the device/routing and explicitly press Play again. More than ten seconds of reported latency or exhausted retained timing history is rejected, not guessed.
 - **High RAM/repeated xruns:** reduce instrument instances and other heavy audio workloads, and review the existing server's buffer settings. Muting does not unload a SoundFont or free its sample RAM. Test on your setup before performance use.
 - **Old extracted-header overrides:** `FLUIDSYNTH_INCLUDE_DIR`/`FLUIDSYNTH_LIBRARY` and CMake's cached values are validation overrides, not portable prerequisites. Use a fresh `--build-dir` when changing them and Browse to its helper output. Debian packaging expects the default `target/audio-host/` output.
+- **Desktop launch stalls during graphics initialization:** try the command-scoped X11 route below, which passes startup/close validation. This does not change global desktop/environment settings, and is not evidence of native Wayland plugin-editor support:
+
+```bash
+env -u WAYLAND_DISPLAY WINIT_UNIX_BACKEND=x11 ./target/release/rustymusicsheets
+```
 
 ### Standalone music commands
 These commands do not open or change the library database. Output directories/files are explicit:
@@ -282,6 +382,8 @@ rustymusicsheets --midi "/path/to/results/score.mxl" "/path/to/cello.mid" --part
 ```
 
 Recognition prints the exact generated movement paths; use those in subsequent commands. Part IDs are read from MusicXML, not guessed from this example. Optional MIDI arguments include `--tempo-scale 0.8`, `--soundfont /absolute/bank.sf2`, and `--fluidsynth /absolute/fluidsynth`. CLI engines use their automatic defaults or explicit options, not GUI preferences. `--play-seconds` requires `--play`; without a duration playback continues until the MIDI finishes.
+
+CLI `--midi` reads the original supplied notation and **does not apply GUI part combinations or saved mixes**. Use **Export selected MIDI** in the GUI for a combined layout.
 
 ## Useful command-line options
 ```bash
@@ -304,7 +406,7 @@ By default:
 The app honors `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, and `XDG_CACHE_HOME`. For a complete backup, **close the app**, then copy the selected music folder **and** the entire app data and config directories. Automatic pre-rescan/schema-migration snapshots contain metadata only, not copies of your scores.
 
 ## Current limitations
-Not implemented yet: annotations, crop/rotation/page reordering, in-score navigation links, vertical/half-page display, metronome, VST hosting, ChordPro/text, assembling image sequences, document printing/export, portable backup/restore, cloud integration, and multi-device sync. MusicXML/MIDI export and experimental Linux MIDI playback are available as described above.
+Not implemented yet: annotations, crop/rotation/page reordering, in-score navigation links, vertical/half-page display, metronome, VST2/CLAP/LV2 hosting, ChordPro/text, assembling image sequences, document printing/export, portable backup/restore, cloud integration, and multi-device sync. MusicXML/MIDI export, experimental Linux SoundFont/VST3 instrument playback and compatibility limits are described above.
 
 Instrument OCR remains conservative label detection; musical transcription uses the separate optional Audiveris workflow. Faint scans, handwriting, uncommon abbreviations, and labels outside inspected regions may need manual entry. Audiveris targets printed notation, not handwriting. Physical pedals and touchscreens require device-specific testing. No compatibility is claimed for MobileSheets proprietary formats.
 
@@ -317,14 +419,15 @@ File selection and keep-awake behavior use shared interfaces with separate platf
 
 Picker results use native paths, with cancellation separated from reported errors. Power guards release their requests when disabled, replaced/retried, cancelled, or shut down; Windows acquire/release operations stay on the same worker thread. Linux-only D-Bus dependencies are excluded from Windows builds.
 
-**This refactor is not a Windows release:** the published download above is still Linux-only. A complete Windows package still needs its PDF/OCR helper tools, DLLs/language data, a native build toolchain, and Windows runtime testing. Module cross-compilation does not establish runtime compatibility.
+**This refactor is not a Windows release:** the `.deb` above is Linux-only, and the Android APK is a separate experimental foundation. A complete Windows package still needs its PDF/OCR helper tools, DLLs/language data, a native build toolchain, and Windows runtime testing. Module cross-compilation does not establish runtime compatibility.
 
 ### Android foundation
 The source now includes a NativeActivity entry point and a document-access layer that distinguishes desktop paths from Android `content://` URIs. An initial Android **Open with** PNG/JPEG can be read through `ContentResolver`, staged privately, and passed to the existing importer without treating the URI as a filename.
 
-This is an **experimental Android prerelease**, not desktop feature parity. Native PDF/OCR, the in-app Android picker, document-tree watching, and Android keep-awake integration remain incomplete. The ARM64 debug APK builds using `scripts/build-android.sh`; signature/manifest/16 KiB alignment checks pass with `scripts/verify-android-apk.py`. Startup was checked on a Pixel 8 Pro (API 37), and the user confirmed the safe-area layout works. Broader rendering, import/provider, and device testing remains pending. See [Android setup and implementation boundaries](android/README.txt) before attempting a build or installation.
+This is an **experimental Android prerelease**, not desktop feature parity. Native PDF/OCR, the in-app Android picker, document-tree watching, and Android keep-awake integration remain incomplete. The ARM64 debug APK builds using `scripts/build-android.sh`; signature/manifest/16 KiB alignment checks pass with `scripts/verify-android-apk.py`. The published 0.4.0 APK reports versionName `0.4.0`, versionCode `16778240`, minimum API 26 and target API 36. Earlier foundation builds had Pixel 8 Pro (API 37) startup/safe-area checks; **the 0.4.0 APK has static verification only, not current device execution**. Broader rendering, import/provider, and device testing remains pending. See [Android setup and implementation boundaries](android/README.txt) before attempting a build or installation.
 
 ### Validation commands
+The published v0.4.0 commit passed 277 standard Rust tests, all 9 opt-in Rust tests, 46 Python tests, formatting/strict Clippy, 16 native CTests including sanitizers, sfizz checks, Android static verification and packaged-app startup/close. Final live regressions used a private dummy JACK server, not physical audio-output certification; device-clock latency still needs real loopback calibration. The Android APK was not run on a device. See the release build record for retry/environment limits; these are not claims that every plugin, pedal or desktop has been tested.
 ```bash
 cargo fmt --check
 cargo test --locked
@@ -349,14 +452,14 @@ RMS_TEST_MUSICXML="/absolute/path/to/score.mxl" cargo test --locked --lib playba
 This check plays a short passage and requires consistent original-page metadata with a multi-measure page before the next page. Do not commit personal scores or generated notation/audio as test fixtures.
 
 ## Publishing a release
-These are **maintainer instructions**, not actions performed automatically by the application or CI. Run them from the repository root after review/merge. The v0.3.1 release already exists: choose an unused next version before following this procedure. Publishing a tag alone neither builds assets nor creates a GitHub Release.
+These are **maintainer instructions**, not actions performed automatically by the application or CI. Run them from the repository root after review/merge. The v0.4.0 release already exists: choose an unused next version before following this procedure. Publishing a tag alone neither builds assets nor creates a GitHub Release.
 
 1. Update the root application version in `Cargo.toml` and its own `Cargo.lock` entry, current README headings and the man-page header. Do not replace dependency versions or regenerate the whole lockfile. CLI/About and cargo-apk derive application version metadata from Cargo; numeric Android updates need an increasing major/minor/patch, not just an alpha/beta suffix.
 2. Run the validation commands above, review changes, and commit them **before building/tagging**. Start from clean `main`; record the exact source commit. `--skip-build` cannot establish that an old binary matches a new version.
 3. Build and inspect a native package, without cross-target/output-directory overrides; the builder expects `target/release/rustymusicsheets`. `SOURCE_DATE_EPOCH` fixes package metadata timestamps, not all compiler/dependency inputs; this is not a bit-for-bit reproducibility claim.
 
 ```bash
-VERSION=0.3.2  # example next version; must match the committed Cargo version
+VERSION=0.4.1  # example next version; must match the committed Cargo version
 REVISION=1
 TAG="v$VERSION"
 REPO=ripleyeldridge/rustymusicsheets
@@ -419,6 +522,8 @@ cmp "$ASSET_DIR/SHA256SUMS" "$VERIFY_DIR/SHA256SUMS"
 Only after download verification and notes review, publish with `gh release edit "$TAG" --repo "$REPO" --draft=false --prerelease --latest=false`. Promoting a preview to stable/latest is a separate deliberate decision. For an existing release, verify replacement uploads before deleting superseded assets and refresh both notes and checksums.
 
 Android assets are optional and **not part of the Linux `.deb` build**. Follow `android/README.txt`, `android/TESTING.txt` and `android/CI.txt`; verify APK version, exact source commit, signature, ABI, manifest and ZIP/ELF alignment, and include a clearly labelled build record. Static checks are not device execution or a production signer. A CI/local debug key may not update a previous APK in place; never uninstall a valuable library just to bypass signing. List every distributable asset in `SHA256SUMS` except that checksum file itself, and never upload signing material, SDKs or private smoke evidence.
+
+GitHub release assets use flat filenames. If local artifacts use subdirectories such as `experimental/`, prepare a separate flat upload directory, update its build-record asset paths and generate its checksum manifest there; do not alter the original build artifacts. Download that complete upload set to a fresh directory, verify checksums and compare bytes before publishing. For v0.4.0 this flat set contains the `.deb`, experimental APK, license, third-party notices archive, build record and `SHA256SUMS`.
 
 ## Author and license
 Created by **[Ripley Eldridge](https://github.com/ripleyeldridge)**, 2026.

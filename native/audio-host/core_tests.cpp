@@ -36,6 +36,15 @@ struct Fake final : rms::Instrument {
     bool active = false, nonfinite = false;
     uint8_t volume = 0, program = 0;
     unsigned silences = 0;
+    struct Context { double seconds, bpm, quarters; uint64_t continuous; };
+    std::array<Context,32> contexts{};
+    size_t context_count = 0;
+    bool record_context = false;
+    void transport(double seconds,double bpm,bool,double quarters,uint64_t continuous) noexcept override {
+        if (!record_context) return;
+        if (context_count == contexts.size()) std::abort();
+        contexts[context_count++] = {seconds,bpm,quarters,continuous};
+    }
     void note_on(uint8_t p, uint8_t) noexcept override {
         if (count >= events.size()) std::abort();
         events[count++] = {frame, true, p}; active = true;
@@ -101,6 +110,24 @@ void timing() {
             }
         }
     }
+}
+void musical_context() {
+    auto score = plan();
+    score.duration_ticks = 960;
+    score.tempos = {{0,120},{480,240}};
+    score.parts[0].notes = {{0,960,60,100}};
+    Fake f; f.record_context = true;
+    rms::Engine engine(score,8000,1024,{&f});
+    engine.tempo(2); engine.play(); process(engine,1024);
+    check(f.context_count == 2,"split process at tempo even without a note event");
+    near(f.contexts[0].bpm,240,1e-12,"scaled initial tempo");
+    near(f.contexts[1].bpm,480,1e-12,"scaled new tempo");
+    near(f.contexts[1].quarters,.5,1e-12,"musical quarter at tempo boundary");
+    near(f.contexts[1].seconds,.125,1e-12,"sample project position uses scaled seconds");
+    check(f.contexts[1].continuous == 1000,"continuous clock does not round each event independently");
+    engine.tempo(.5); process(engine,64);
+    near(f.contexts[2].quarters,.524,1e-10,"fractional musical position is not quantized to ticks");
+    check(f.contexts[2].continuous == 1024,"continuous clock survives live tempo changes");
 }
 void transport() {
     auto p = plan(32);
@@ -317,7 +344,7 @@ void history_capacity_and_gain() {
 }
 int main() {
     try {
-        timing(); transport(); latency_and_safety(); validation();
+        timing(); musical_context(); transport(); latency_and_safety(); validation();
         control_history(); history_capacity_and_gain();
         std::puts("core: timing (3 rates x 4 blocks x 3 scales), 32 parts, transport/chase, ten-second sparse latency/control holds, bounded history, CC7/master, safety, validation passed");
     } catch (const std::exception& e) {

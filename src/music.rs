@@ -1,7 +1,7 @@
 use crate::{
     app::expand_path,
     model::{Paths, Score},
-    notation::{self, Composition, MidiOptions},
+    notation::{self, Composition, MidiOptions, PartGroup},
     omr::{RecognitionArtifacts, RecognitionJob, RecognitionUpdate, Settings},
     playback::{State, Transport},
     text_input::TextEditFocusExt,
@@ -10,7 +10,10 @@ use anyhow::{bail, Context, Result};
 use crossbeam_channel::{bounded, Receiver};
 use eframe::egui::{self, Color32};
 use serde::{Deserialize, Serialize};
+mod combine;
 mod paths;
+#[cfg(target_os = "linux")]
+mod plugins;
 pub(crate) use paths::{PathField, PathRequest};
 use std::{
     collections::BTreeMap,
@@ -19,6 +22,37 @@ use std::{
 };
 
 const MAX_EXPORT: u64 = 64 * 1024 * 1024;
+const MAX_MIX: u64 = 1024 * 1024;
+
+// Rename is the commit point. A later directory sync failure cannot truthfully
+// be reported as a rolled-back save: keep memory consistent with the new file.
+fn sync_committed_mix_directory(parent: &Path) {
+    #[cfg(target_os = "linux")]
+    if let Err(error) = std::fs::File::open(parent).and_then(|directory| directory.sync_all()) {
+        eprintln!("Audio mix committed, but directory durability is uncertain: {error}");
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = parent;
+}
+
+fn write_mix(output: &mut impl Write, mix: &SavedMix) -> Result<()> {
+    struct Bounded<'a, W>(&'a mut W, usize);
+    impl<W: Write> Write for Bounded<'_, W> {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if bytes.len() > self.1 {
+                return Err(std::io::Error::other("Saved audio mix exceeds 1 MiB"));
+            }
+            let count = self.0.write(bytes)?;
+            self.1 -= count;
+            Ok(count)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.0.flush()
+        }
+    }
+    serde_json::to_writer(Bounded(output, MAX_MIX as usize), mix)?;
+    Ok(())
+}
 
 #[derive(Serialize, Deserialize)]
 struct SavedResults {
@@ -38,8 +72,18 @@ fn full_volume() -> u8 {
     100
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct SavedMix {
+    #[serde(default)]
+    version: u32,
+    #[serde(default)]
+    score_hash: Option<String>,
+    #[serde(default)]
+    music_hash: Option<String>,
+    #[serde(default)]
+    sources: BTreeMap<String, crate::audio::plugins::Source>,
+    #[serde(default)]
+    groups: Vec<PartGroup>,
     selected: BTreeMap<String, bool>,
     programs: BTreeMap<String, u8>,
     volumes: BTreeMap<String, u8>,
@@ -81,18 +125,51 @@ pub struct Music {
     source_stamp: Option<SourceStamp>,
     job: Option<RecognitionJob>,
     loading: Option<Receiver<Result<Loaded, String>>>,
+    deferred_load: Option<(PathBuf, bool)>,
     playback: Option<Transport>,
     synth_settings: Option<(String, String)>,
     audio_settings: crate::audio::Settings,
     composition: Option<Composition>,
+    original_composition: Option<Composition>,
+    part_groups: Vec<PartGroup>,
+    combine_editor: combine::Editor,
+    combine_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     xml: Option<PathBuf>,
     movements: Vec<PathBuf>,
     movement: usize,
     selected: BTreeMap<String, bool>,
+    sources: BTreeMap<String, crate::audio::plugins::Source>,
+    discovery_bundle: String,
+    preset_paths: BTreeMap<String, String>,
+    generation: u64,
+    music_hash: Option<String>,
+    checkpoint_id: u64,
+    plugin_unsaved: bool,
+    plugin_edits_lost: bool,
+    #[cfg(target_os = "linux")]
+    shutdown_error: Option<String>,
+    #[cfg(target_os = "linux")]
+    catalogue: crate::audio::discovery::Catalogue,
+    #[cfg(target_os = "linux")]
+    catalogue_path: Option<PathBuf>,
+    #[cfg(target_os = "linux")]
+    plugin_task: Option<plugins::Task>,
+    #[cfg(target_os = "linux")]
+    helper_caps: Option<Vec<String>>,
+    #[cfg(target_os = "linux")]
+    discovery_notice: String,
+    #[cfg(target_os = "linux")]
+    discovery_error: Option<String>,
+    #[cfg(target_os = "linux")]
+    retiring: Vec<Receiver<Result<(), String>>>,
+    manifest_guard: std::sync::Arc<std::sync::Mutex<()>>,
     programs: BTreeMap<String, u8>,
     volumes: BTreeMap<String, u8>,
     mix_path: Option<PathBuf>,
+    legacy_mix_path: Option<PathBuf>,
+    v2_mix_path: Option<PathBuf>,
     mix_dirty: Option<std::time::Instant>,
+    mix_rejected: bool,
     pub controls_active: bool,
     tempo_scale: f64,
     master_volume: u8,
@@ -114,12 +191,18 @@ impl Music {
             let active = self.playback.is_some();
             self.stop();
             self.audio_settings = settings.clone();
+            #[cfg(target_os = "linux")]
+            {
+                self.helper_caps = None;
+                self.plugin_task.take();
+            }
             if active {
                 self.notice =
                     "Audio backend changed. Press Play to start the selected engine.".into();
             }
         }
     }
+
     pub fn open_for(&mut self, score: &Score, source: &Path, paths: &Paths, ctx: &egui::Context) {
         self.open = true;
         self.prepare_for(score, source, paths, ctx);
@@ -237,6 +320,7 @@ impl Music {
     }
 
     fn reset(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
         let _ = self.save_mix();
         self.stop();
         self.source = None;
@@ -245,14 +329,26 @@ impl Music {
         self.follow_pages = false;
         self.job.take();
         self.loading.take();
+        self.deferred_load = None;
         self.composition = None;
+        self.original_composition = None;
+        self.part_groups.clear();
+        self.combine_editor = combine::Editor::default();
         self.xml = None;
         self.movements.clear();
         self.movement = 0;
         self.selected.clear();
+        self.sources.clear();
+        self.preset_paths.clear();
+        self.music_hash = None;
+        self.plugin_unsaved = false;
+        self.plugin_edits_lost = false;
+        self.mix_rejected = false;
         self.programs.clear();
         self.volumes.clear();
         self.mix_path = None;
+        self.legacy_mix_path = None;
+        self.v2_mix_path = None;
         self.mix_dirty = None;
         self.controls_active = false;
         self.notice.clear();
@@ -269,14 +365,40 @@ impl Music {
     }
 
     pub fn stop(&mut self) {
-        self.playback.take();
+        if self
+            .playback
+            .as_ref()
+            .is_some_and(|p| !p.snapshot().plugins.dirty_parts.is_empty())
+        {
+            self.notice = "Stopped with unsaved plugin edits. Last valid saved checkpoint retained; Save while paused before closing to preserve edits.".into();
+        }
+        if let Some(transport) = self.playback.take() {
+            #[cfg(target_os = "linux")]
+            self.retire_transport(transport);
+        }
+        self.checkpoint_id = 0;
         self.synth_settings = None;
     }
 
     pub fn poll(&mut self, paths: &Paths, ctx: &egui::Context) {
+        #[cfg(target_os = "linux")]
+        self.poll_plugins(paths);
+        #[cfg(target_os = "linux")]
+        if self.retiring.is_empty() {
+            self.combine_cancel = None;
+            if let Some((path, copy)) = self.deferred_load.take() {
+                self.start_load(path, copy, paths, ctx);
+            }
+        }
+        #[cfg(target_os = "linux")]
+        let saving_plugins = !self.retiring.is_empty();
+        #[cfg(not(target_os = "linux"))]
+        let saving_plugins = false;
         if self
             .mix_dirty
             .is_some_and(|at| at.elapsed() >= std::time::Duration::from_millis(250))
+            && !saving_plugins
+            && !self.mix_rejected
         {
             if let Err(error) = self.save_mix() {
                 self.error = Some(format!("Saving part mix: {error:#}"));
@@ -286,8 +408,12 @@ impl Music {
             if source_stamp(source).ok().as_ref() != Some(stamp) {
                 self.stop();
                 self.composition = None;
+                self.original_composition = None;
+                self.part_groups.clear();
+                self.combine_editor = combine::Editor::default();
                 self.xml = None;
                 self.source_stamp = None;
+                self.generation = self.generation.wrapping_add(1);
                 self.error = Some("The backing score changed or is unavailable. Rescan and reopen Music / OMR before using these results.".into());
             }
         }
@@ -342,12 +468,18 @@ impl Music {
                         .iter()
                         .map(|part| (part.id.clone(), 100))
                         .collect();
-                    self.mix_path = self.binding.as_ref().map(|(_, hash)| {
+                    self.legacy_mix_path = self.binding.as_ref().map(|(_, hash)| {
                         paths
                             .data
                             .join("omr-mix")
                             .join(hash)
                             .join(format!("{}.json", loaded.music_hash))
+                    });
+                    self.v2_mix_path = self.legacy_mix_path.as_ref().map(|path| {
+                        path.with_file_name(format!("{}.audio-v2.json", loaded.music_hash))
+                    });
+                    self.mix_path = self.legacy_mix_path.as_ref().map(|path| {
+                        path.with_file_name(format!("{}.audio-v3.json", loaded.music_hash))
                     });
                     self.programs = loaded
                         .composition
@@ -356,6 +488,20 @@ impl Music {
                         .map(|part| (part.id.clone(), part.program))
                         .collect();
                     self.error = None;
+                    self.sources.clear();
+                    self.plugin_unsaved = false;
+                    self.plugin_edits_lost = false;
+                    self.mix_rejected = false;
+                    #[cfg(target_os = "linux")]
+                    {
+                        self.shutdown_error = None;
+                    }
+                    self.preset_paths.clear();
+                    self.music_hash = Some(loaded.music_hash.clone());
+                    self.original_composition = Some(loaded.composition.clone());
+                    self.composition = Some(loaded.composition);
+                    self.part_groups.clear();
+                    self.combine_editor = combine::Editor::default();
                     if let Err(error) = self.load_mix() {
                         self.error = Some(format!("Saved part mix ignored: {error:#}"));
                     }
@@ -371,7 +517,6 @@ impl Music {
                         .display()
                         .to_string();
                     self.xml = Some(loaded.path);
-                    self.composition = Some(loaded.composition);
                     if !self.page_follow_available() {
                         self.follow_pages = false;
                     }
@@ -394,11 +539,28 @@ impl Music {
         if self.loading.is_some() {
             return;
         }
-        if let Err(error) = self.save_mix() {
-            self.error = Some(format!("Saving previous movement's mix: {error:#}"));
+        #[cfg(target_os = "linux")]
+        if !self.retiring.is_empty() {
+            self.deferred_load = Some((path, copy));
+            self.notice =
+                "Waiting for the previous instrument save before loading the movement.".into();
             return;
         }
+        if !self.mix_rejected {
+            if let Err(error) = self.save_mix() {
+                self.error = Some(format!("Saving previous movement's mix: {error:#}"));
+                return;
+            }
+        }
         self.stop();
+        #[cfg(target_os = "linux")]
+        if !self.retiring.is_empty() {
+            self.deferred_load = Some((path, copy));
+            self.notice =
+                "Saving and unloading the previous instruments before loading the movement.".into();
+            return;
+        }
+        self.generation = self.generation.wrapping_add(1);
         let root = paths.data.join("omr-corrected");
         let Some((_, hash)) = &self.binding else {
             return;
@@ -477,19 +639,45 @@ impl Music {
         self.notice = "Loading musical notation…".into();
     }
 
+    fn is_effective(&self, id: &str) -> bool {
+        self.composition
+            .as_ref()
+            .is_some_and(|c| c.parts.iter().any(|p| p.id == id))
+    }
+
+    fn effective_sources(&self) -> BTreeMap<String, crate::audio::plugins::Source> {
+        self.sources
+            .iter()
+            .filter(|(id, _)| self.is_effective(id))
+            .map(|(id, source)| (id.clone(), source.clone()))
+            .collect()
+    }
+
+    fn has_selected_effective(&self) -> bool {
+        self.selected
+            .iter()
+            .any(|(id, on)| *on && self.is_effective(id))
+    }
+
     fn options(&self) -> MidiOptions {
         MidiOptions {
             selected_parts: Some(
                 self.selected
                     .iter()
-                    .filter(|(_, on)| **on)
+                    .filter(|(id, on)| **on && self.is_effective(id))
                     .map(|(id, _)| id.clone())
                     .collect(),
             ),
-            programs: self.programs.clone(),
+            programs: self
+                .programs
+                .iter()
+                .filter(|(id, _)| self.is_effective(id))
+                .map(|(id, value)| (id.clone(), *value))
+                .collect(),
             volumes: self
                 .volumes
                 .iter()
+                .filter(|(id, _)| self.is_effective(id))
                 .map(|(id, percent)| (id.clone(), midi_volume(*percent)))
                 .collect(),
             tempo_scale: self.tempo_scale,
@@ -509,39 +697,118 @@ impl Music {
         if self.mix_dirty.is_none() {
             return Ok(());
         }
-        let Some(path) = &self.mix_path else {
+        if self.mix_path.is_none() {
             return Ok(());
-        };
-        std::fs::create_dir_all(path.parent().context("Missing mix directory")?)?;
-        let mut file = tempfile::NamedTempFile::new_in(path.parent().unwrap())?;
-        serde_json::to_writer(
-            &mut file,
-            &SavedMix {
-                selected: self.selected.clone(),
-                programs: self.programs.clone(),
-                volumes: self.volumes.clone(),
-                tempo_scale: self.tempo_scale,
-                master_volume: self.master_volume,
-                follow_pages: self.follow_pages,
-                turn_lead_measures: self.turn_lead_measures,
-            },
-        )?;
-        file.as_file().sync_all()?;
-        file.persist(path)?;
+        }
+        self.persist_mix(&self.saved_mix())?;
         self.mix_dirty = None;
         Ok(())
     }
 
+    fn saved_mix(&self) -> SavedMix {
+        SavedMix {
+            version: 3,
+            score_hash: self.binding.as_ref().map(|(_, hash)| hash.clone()),
+            music_hash: self.music_hash.clone(),
+            groups: self.part_groups.clone(),
+            sources: self.sources.clone(),
+            selected: self.selected.clone(),
+            programs: self.programs.clone(),
+            volumes: self.volumes.clone(),
+            tempo_scale: self.tempo_scale,
+            master_volume: self.master_volume,
+            follow_pages: self.follow_pages,
+            turn_lead_measures: self.turn_lead_measures,
+        }
+    }
+
+    fn persist_mix(&self, mix: &SavedMix) -> Result<()> {
+        anyhow::ensure!(
+            !self.mix_rejected,
+            "Saved mix was rejected; explicitly recover it before saving changes"
+        );
+        let path = self.mix_path.as_ref().context("No movement sidecar")?;
+        #[cfg(target_os = "linux")]
+        anyhow::ensure!(
+            self.retiring.is_empty(),
+            "A previous plugin session is saving; retry after it completes"
+        );
+        let guard = self.manifest_guard.clone();
+        let _guard = guard.try_lock().map_err(|_| {
+            anyhow::anyhow!("A shutdown checkpoint is committing this movement; retry Save")
+        })?;
+        std::fs::create_dir_all(path.parent().context("Missing mix directory")?)?;
+        let mut file = tempfile::NamedTempFile::new_in(path.parent().unwrap())?;
+        write_mix(&mut file, mix)?;
+        file.as_file().sync_all()?;
+        file.persist(path)?;
+        sync_committed_mix_directory(path.parent().unwrap());
+        Ok(())
+    }
+
     fn load_mix(&mut self) -> Result<()> {
+        let result = self.load_mix_inner();
+        self.mix_rejected = result.is_err();
+        result
+    }
+
+    fn load_mix_inner(&mut self) -> Result<()> {
         let Some(path) = &self.mix_path else {
             return Ok(());
         };
-        if !path.exists() {
+        let Some(path) = [
+            Some(path),
+            self.v2_mix_path.as_ref(),
+            self.legacy_mix_path.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|path| path.exists()) else {
             return Ok(());
-        }
+        };
         let file = std::fs::File::open(path)?;
-        anyhow::ensure!(file.metadata()?.len() <= 64 * 1024, "Oversized saved mix");
-        let mix: SavedMix = serde_json::from_reader(file)?;
+        anyhow::ensure!(file.metadata()?.len() <= MAX_MIX, "Oversized saved mix");
+        let mix: SavedMix = serde_json::from_reader(file.take(MAX_MIX + 1))?;
+        anyhow::ensure!(
+            mix.version <= 3 && mix.sources.len() <= 128,
+            "Unsupported saved mix version or too many assignments"
+        );
+        if mix.version == 3 || !mix.sources.is_empty() || !mix.groups.is_empty() {
+            anyhow::ensure!(
+                (2..=3).contains(&mix.version)
+                    && mix.score_hash == self.binding.as_ref().map(|(_, h)| h.clone())
+                    && mix.music_hash == self.music_hash,
+                "Plugin assignments belong to different score/MusicXML; reconcile explicitly"
+            );
+            anyhow::ensure!(
+                mix.sources.keys().all(|id| self.selected.contains_key(id)),
+                "Plugin assignment references an unknown part; reconcile explicitly"
+            );
+            for source in mix.sources.values() {
+                source.validate()?;
+            }
+        }
+        anyhow::ensure!(
+            mix.version == 3 || mix.groups.is_empty(),
+            "Groups require a v3 mix"
+        );
+        let restored = if let Some(original) = &self.original_composition {
+            Some(notation::apply_part_groups(original, &mix.groups)?)
+        } else {
+            anyhow::ensure!(mix.groups.is_empty(), "Groups require original notation");
+            None
+        };
+        if mix.version == 3 {
+            anyhow::ensure!(
+                mix.selected
+                    .keys()
+                    .chain(mix.programs.keys())
+                    .chain(mix.volumes.keys())
+                    .chain(mix.sources.keys())
+                    .all(|id| self.selected.contains_key(id)),
+                "Saved mix references unknown original parts; reconcile explicitly"
+            );
+        }
         anyhow::ensure!(
             mix.selected.len() <= 128
                 && mix.programs.len() <= 128
@@ -573,6 +840,11 @@ impl Music {
         self.master_volume = mix.master_volume;
         self.follow_pages = mix.follow_pages;
         self.turn_lead_measures = mix.turn_lead_measures;
+        self.sources = mix.sources;
+        self.part_groups = mix.groups;
+        if let Some(restored) = restored {
+            self.composition = Some(restored);
+        }
         Ok(())
     }
 
@@ -608,22 +880,51 @@ impl Music {
         }
     }
 
+    fn cancel_plugin_operation(&mut self) {
+        self.plugin_edits_lost = true;
+        drop(self.playback.take());
+        self.checkpoint_id = 0;
+        self.synth_settings = None;
+        self.notice = "Plugin operation cancelled. Last valid saved checkpoint retained; unsaved edits may be lost.".into();
+    }
+
     fn start_transport(&mut self, settings: &Settings) -> Result<()> {
         self.start_transport_mode(settings, true)
     }
     fn start_transport_mode(&mut self, settings: &Settings, play: bool) -> Result<()> {
+        anyhow::ensure!(
+            !self.plugin_edits_lost,
+            "Reload the movement after cancelling an instrument operation"
+        );
+        anyhow::ensure!(
+            !self.mix_rejected && self.deferred_load.is_none(),
+            "Recover the saved mix or finish loading before starting instruments"
+        );
+        anyhow::ensure!(
+            !self.combine_editor.open,
+            "Close Combine parts before loading instruments"
+        );
+        #[cfg(target_os = "linux")]
+        {
+            anyhow::ensure!(
+                self.retiring.is_empty(),
+                "Finishing previous plugin checkpoint; retry Play when saving completes"
+            );
+            self.refresh_saved_plugin_states()?;
+        }
         let score = self
             .composition
             .as_ref()
             .context("Recognize or load music first")?
             .clone();
-        self.playback = Some(Transport::start_with_backend(
+        self.playback = Some(Transport::start_with_sources(
             settings.clone(),
             self.audio_settings.clone(),
             score,
             self.options(),
             play,
             self.master_volume,
+            self.effective_sources(),
         )?);
         self.synth_settings = Some((
             settings.fluidsynth_executable.clone(),
@@ -646,9 +947,14 @@ impl Music {
         }
         let snapshot = self.playback.as_ref().map(Transport::snapshot);
         let state = snapshot.as_ref().map(|s| s.state);
-        let ready = self.composition.is_some() && self.loading.is_none() && self.job.is_none();
-        let seekable =
-            ready && state != Some(State::Starting) && self.selected.values().any(|on| *on);
+        let ready = self.composition.is_some()
+            && !self.mix_rejected
+            && self.deferred_load.is_none()
+            && !self.combine_editor.open
+            && self.loading.is_none()
+            && self.job.is_none()
+            && !snapshot.as_ref().is_some_and(|s| s.plugins.busy);
+        let seekable = ready && state != Some(State::Starting) && self.has_selected_effective();
         ui.horizontal_wrapped(|ui| {
             if ui
                 .add_enabled(seekable, egui::Button::new("Rewind 5s"))
@@ -658,6 +964,14 @@ impl Music {
                 self.command_result(result);
             }
             let playing = state == Some(State::Playing);
+            if ready
+                && self.effective_sources().values().any(|s| s.is_plugin())
+                && self.playback.is_none()
+                && ui.button("Load instruments paused").clicked()
+            {
+                let result = self.start_transport_mode(settings, false);
+                self.command_result(result);
+            }
             let label = if playing {
                 "Pause"
             } else if compact {
@@ -669,7 +983,7 @@ impl Music {
                 .add_enabled(
                     ready
                         && state != Some(State::Starting)
-                        && (playing || self.selected.values().any(|on| *on)),
+                        && (playing || self.has_selected_effective()),
                     egui::Button::new(label),
                 )
                 .clicked()
@@ -702,7 +1016,9 @@ impl Music {
                 )
                 .clicked()
             {
-                if state == Some(State::Starting) {
+                if snapshot.as_ref().is_some_and(|s| s.plugins.busy) {
+                    self.cancel_plugin_operation();
+                } else if state == Some(State::Starting) {
                     self.stop();
                 } else {
                     let result = self.playback.as_ref().unwrap().stop();
@@ -727,6 +1043,8 @@ impl Music {
             }
         });
         self.master_volume_ui(ui, ready);
+        #[cfg(target_os = "linux")]
+        self.plugin_save_ui(ui);
         self.page_follow_ui(ui);
     }
 
@@ -751,6 +1069,19 @@ impl Music {
     }
 
     fn mixer_ui(&mut self, ui: &mut egui::Ui) {
+        if ui
+            .add_enabled(
+                self.composition.is_some() && !self.combine_editor.open,
+                egui::Button::new("Combine parts…"),
+            )
+            .clicked()
+        {
+            self.open_combine();
+        }
+        ui.add_enabled_ui(!self.combine_editor.open, |ui| self.mixer_rows_ui(ui));
+    }
+
+    fn mixer_rows_ui(&mut self, ui: &mut egui::Ui) {
         let parts: Vec<_> = self
             .composition
             .as_ref()
@@ -769,7 +1100,7 @@ impl Music {
                     .collect()
             })
             .unwrap_or_default();
-        for (id, name, staves, notes, default_program) in parts {
+        for (index, (id, name, staves, notes, default_program)) in parts.into_iter().enumerate() {
             let mut changed = false;
             ui.push_id(&id, |ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -778,39 +1109,50 @@ impl Music {
                         .changed();
                     ui.label(format!("{staves} staff/staves · {notes} notes"));
                 });
-                changed |= ui
-                    .add(
-                        egui::Slider::new(self.volumes.entry(id.clone()).or_insert(100), 0..=100)
-                            .text("Volume %"),
-                    )
-                    .changed();
-                let program = self.programs.entry(id.clone()).or_insert(default_program);
-                ui.horizontal_wrapped(|ui| {
-                    let mut display = u16::from(*program) + 1;
-                    ui.label("GM instrument:");
-                    if ui
-                        .add(egui::DragValue::new(&mut display).range(1..=128))
-                        .changed()
-                    {
-                        *program = (display - 1) as u8;
-                        changed = true;
-                    }
-                    egui::ComboBox::from_id_salt("instrument")
-                        .selected_text(program_label(*program))
-                        .show_ui(ui, |ui| {
-                            for (value, name) in [
-                                (0, "Piano"),
-                                (40, "Violin"),
-                                (41, "Viola"),
-                                (42, "Cello"),
-                                (43, "Contrabass"),
-                                (48, "Strings"),
-                                (73, "Flute"),
-                            ] {
-                                changed |= ui.selectable_value(program, value, name).changed();
+                #[cfg(target_os = "linux")]
+                self.plugin_part_ui(ui, &id, index as u32);
+                ui.add_enabled_ui(
+                    !self.sources.get(&id).is_some_and(|s| s.is_plugin()),
+                    |ui| {
+                        changed |= ui
+                            .add(
+                                egui::Slider::new(
+                                    self.volumes.entry(id.clone()).or_insert(100),
+                                    0..=100,
+                                )
+                                .text("Volume %"),
+                            )
+                            .changed();
+                        let program = self.programs.entry(id.clone()).or_insert(default_program);
+                        ui.horizontal_wrapped(|ui| {
+                            let mut display = u16::from(*program) + 1;
+                            ui.label("GM instrument:");
+                            if ui
+                                .add(egui::DragValue::new(&mut display).range(1..=128))
+                                .changed()
+                            {
+                                *program = (display - 1) as u8;
+                                changed = true;
                             }
+                            egui::ComboBox::from_id_salt("instrument")
+                                .selected_text(program_label(*program))
+                                .show_ui(ui, |ui| {
+                                    for (value, name) in [
+                                        (0, "Piano"),
+                                        (40, "Violin"),
+                                        (41, "Viola"),
+                                        (42, "Cello"),
+                                        (43, "Contrabass"),
+                                        (48, "Strings"),
+                                        (73, "Flute"),
+                                    ] {
+                                        changed |=
+                                            ui.selectable_value(program, value, name).changed();
+                                    }
+                                });
                         });
-                });
+                    },
+                );
             });
             if changed {
                 self.mix_dirty = Some(std::time::Instant::now());
@@ -928,6 +1270,7 @@ impl Music {
         library_busy: bool,
     ) -> bool {
         self.configure_audio(audio_settings);
+        self.combine_ui(ctx);
         if !self.open {
             return false;
         }
@@ -951,14 +1294,16 @@ impl Music {
                 };
                 ui.heading(&score.title);
                 ui.colored_label(Color32::YELLOW, "OMR output is unverified. Review notes, rhythm, repeats, and part grouping.");
-                ui.label("Original scores and library metadata are never rewritten. Legacy FluidSynth remains the default; the optional audio-host preview currently supports SoundFonts, not VST plugins.");
+                ui.label("Original scores and library metadata are never rewritten. Legacy FluidSynth remains the default; VST3 instruments require an SDK-enabled audio-host helper.");
                 ui.collapsing("Engine settings", |ui| {
                     if let Some(field)=settings_ui(ui, settings, self.path_picker_active) {
                         self.browse_settings(field,settings);
                     }
-                    if audio_settings_ui(ui, audio_settings, self.path_picker_active) {
-                        self.browse_audio_host(audio_settings);
+                    if let Some(field) = audio_settings_ui(ui, audio_settings, self.path_picker_active) {
+                        self.browse_audio_setting(field, audio_settings);
                     }
+                    #[cfg(target_os = "linux")]
+                    self.plugin_discovery_ui(ui, audio_settings);
                     save_settings = ui.button("Save music settings").clicked();
                 });
                 self.configure_audio(audio_settings);
@@ -1035,7 +1380,7 @@ impl Music {
                     for warning in &composition.warnings {
                         ui.colored_label(Color32::YELLOW, warning);
                     }
-                    ui.label("Pause/resume, ±5-second seeking and optional Follow score pages are available below. Page following needs consistent original-page metadata. No microphone-based score tracking, metronome, or VST hosting. MusicXML preserves notation; synth playback is an approximation.");
+                    ui.label("Pause/resume, ±5-second seeking and optional Follow score pages are available below. Page following needs consistent original-page metadata. No microphone-based score tracking or metronome. Plugin state excludes external sample libraries and licenses. MusicXML preserves notation; synth playback is an approximation.");
                 });
                 self.mixer_ui(ui);
                 self.transport_ui(ui,settings,false);
@@ -1046,7 +1391,8 @@ impl Music {
                 if paths::entry(ui,target,&mut self.xml_destination,idle) {
                     self.request_path(target,&self.xml_destination.clone());
                 }
-                if ui.add_enabled(idle, egui::Button::new("Export MusicXML")).clicked() {
+                ui.small("Part combinations affect playback and MIDI only. MusicXML retains the original parts.");
+                if ui.add_enabled(idle, egui::Button::new("Export original MusicXML")).clicked() {
                     let result = self.xml.as_ref().context("No recognized MusicXML").and_then(|source| {
                         let destination = expand_path(self.xml_destination.trim());
                         let compressed = source.extension().is_some_and(|e| e.eq_ignore_ascii_case("mxl"));
@@ -1121,7 +1467,7 @@ pub(crate) fn audio_settings_ui(
     ui: &mut egui::Ui,
     settings: &mut crate::audio::Settings,
     busy: bool,
-) -> bool {
+) -> Option<PathField> {
     use crate::audio::Backend;
     ui.separator();
     ui.label("Playback backend (Linux):");
@@ -1139,8 +1485,33 @@ pub(crate) fn audio_settings_ui(
         &mut settings.host_executable,
         !busy,
     );
-    ui.small("Preview requires a separately built rms-audio-host and an existing PipeWire-JACK/native JACK output. No automatic fallback or Wine changes. SoundFonts only; VST3 hosting follows separately.");
-    browse
+    let mut selected = browse.then_some(PathField::AudioHost);
+    ui.small("VST3 needs an SDK-enabled rms-audio-host, not jackd, yabridgectl or Wine. Probe helper capabilities below; the reply must include vst3.");
+    ui.small("Use native JACK for an already-running JACK server. PipeWire/JACK instead launches the helper through pw-jack.");
+    for (field, label, value) in [
+        (
+            PathField::BridgeTool,
+            "Existing yabridgectl executable (read-only diagnostics):",
+            &mut settings.yabridge.tool,
+        ),
+        (
+            PathField::BridgeRoot,
+            "Existing generated Linux wrapper root:",
+            &mut settings.yabridge.wrapper_root,
+        ),
+        (
+            PathField::WineLoader,
+            "Wine loader executable (helper-scoped, no WINEPREFIX override):",
+            &mut settings.yabridge.wine_loader,
+        ),
+    ] {
+        ui.label(label);
+        if paths::entry(ui, field, value, !busy) {
+            selected = Some(field);
+        }
+    }
+    ui.small("Requires a separately built rms-audio-host and existing PipeWire-JACK/native JACK output. No automatic fallback, plugin installation or Wine changes.");
+    selected
 }
 
 fn program_label(program: u8) -> String {
@@ -1223,7 +1594,7 @@ fn read_results(paths: &Paths, hash: &str) -> Result<Option<Vec<PathBuf>>> {
     }
     let file = std::fs::File::open(path)?;
     anyhow::ensure!(
-        file.metadata()?.len() <= 64 * 1024,
+        file.metadata()?.len() <= MAX_MIX,
         "Result index exceeds size limit"
     );
     let saved: SavedResults = serde_json::from_reader(file)?;
@@ -1280,6 +1651,29 @@ mod tests {
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
+    }
+
+    #[test]
+    fn vst3_movement_load_does_not_inherit_unsaved_plugin_edits() {
+        let (root, paths, score, source) = fixture();
+        let xml = root.path().join("first.musicxml");
+        let second = root.path().join("second.musicxml");
+        std::fs::write(&xml, XML).unwrap();
+        std::fs::write(&second, XML.replace("<step>C</step>", "<step>D</step>")).unwrap();
+        let ctx = egui::Context::default();
+        let mut music = Music::default();
+        music.open_for(&score, &source, &paths, &ctx);
+        music.start_load(xml, true, &paths, &ctx);
+        finish_load(&mut music, &paths, &ctx);
+        assert!(music.error.is_none(), "{:?}", music.error);
+        music.plugin_unsaved = true;
+        music.start_load(second, true, &paths, &ctx);
+        finish_load(&mut music, &paths, &ctx);
+        assert!(music.error.is_none(), "{:?}", music.error);
+        assert!(
+            !music.plugin_unsaved,
+            "Previous movement edits must not block selecting a VST3 in the new movement"
+        );
     }
 
     #[test]
@@ -1536,7 +1930,7 @@ mod tests {
             "Recognize with Audiveris",
             "Play selected parts",
             "Stop audio",
-            "Export MusicXML",
+            "Export original MusicXML",
             "Export selected MIDI",
         ] {
             assert!(
@@ -1578,6 +1972,7 @@ mod tests {
             source_page: Some(1),
             score_tick: 1920,
             audio: None,
+            plugins: Default::default(),
         };
         assert_eq!(music.follow_page_at(&score, &snapshot), None);
         music.follow_pages = true;
@@ -1676,5 +2071,186 @@ mod tests {
         )
         .unwrap();
         assert!(read_results(&paths, &hash).is_err());
+    }
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn plugin_shutdown_checkpoint_does_not_wait_on_ui_and_updates_the_sidecar() {
+        use crate::audio::plugins::{Request, Source};
+        let (root, paths, score, source) = fixture();
+        let xml = root.path().join("corrected.musicxml");
+        std::fs::write(&xml, XML).unwrap();
+        let ctx = egui::Context::default();
+        let mut music = Music::default();
+        music.prepare_for(&score, &source, &paths, &ctx);
+        music.start_load(xml, true, &paths, &ctx);
+        finish_load(&mut music, &paths, &ctx);
+        let (transport, sources, _) =
+            crate::audio::supervisor::tests::plugin_session(root.path(), "normal");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while transport.snapshot().state != State::Stopped {
+            assert_ne!(transport.snapshot().state, State::Failed);
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        transport
+            .plugin(Request::Parameter {
+                part_id: "P2".into(),
+                param_id: 0,
+                value: 0.77,
+            })
+            .unwrap();
+        music.sources = sources;
+        music.playback = Some(transport);
+        music.mix_dirty = Some(std::time::Instant::now());
+        music.save_mix().unwrap();
+        let at = std::time::Instant::now();
+        music.begin_shutdown();
+        assert!(
+            at.elapsed() < std::time::Duration::from_millis(100),
+            "Shutdown must not join helper on egui"
+        );
+        assert!(music.playback.is_none());
+        while music.shutdown_pending() {
+            music.poll(&paths, &ctx);
+            assert!(std::time::Instant::now() < deadline, "{:?}", music.error);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(music.shutdown_error().is_none(), "{:?}", music.error);
+        assert!(
+            matches!(
+                &music.sources["P2"],
+                Source::Vst3 {
+                    component_state: Some(_),
+                    ..
+                }
+            ),
+            "Completed retirement must refresh in-memory chunks before another manifest save"
+        );
+        music.sources.clear();
+        music.load_mix().unwrap();
+        let Source::Vst3 {
+            component_state: Some(component),
+            controller_state: Some(controller),
+            ..
+        } = &music.sources["P2"]
+        else {
+            panic!("Both state chunks must be persisted")
+        };
+        assert_ne!(component.path, controller.path);
+        let bytes = std::fs::read(&component.path).unwrap();
+        let state: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(state["value"], 0.77);
+        assert!(music
+            .mix_path
+            .as_ref()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .ends_with(".audio-v3.json"));
+    }
+
+    #[test]
+    fn mix_loader_accepts_valid_metadata_above_old_256k_limit() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("movement.audio-v2.json");
+        let mut bytes = br#"{"selected":{},"programs":{},"volumes":{},"tempo_scale":1.0}"#.to_vec();
+        bytes.resize(300 * 1024, b' ');
+        std::fs::write(&path, bytes).unwrap();
+        let mut music = Music {
+            mix_path: Some(path),
+            ..Default::default()
+        };
+        music.load_mix().unwrap();
+    }
+
+    #[test]
+    fn two_plugin_assignments_reload_without_losing_gm_or_guessing_changed_identity() {
+        use crate::audio::plugins::Source;
+        let (root, paths, score, source) = fixture();
+        let xml = root.path().join("corrected.musicxml");
+        std::fs::write(&xml, XML).unwrap();
+        let ctx = egui::Context::default();
+        let mut music = Music::default();
+        music.prepare_for(&score, &source, &paths, &ctx);
+        music.start_load(xml.clone(), true, &paths, &ctx);
+        finish_load(&mut music, &paths, &ctx);
+        let legacy = music.legacy_mix_path.clone().unwrap();
+        let original = br#"{"selected":{},"programs":{"P1":40},"volumes":{},"tempo_scale":1.0}"#;
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, original).unwrap();
+        music.load_mix().unwrap();
+        assert_eq!(music.programs["P1"], 40);
+        assert_ne!(music.mix_path.as_ref(), Some(&legacy));
+        for (id, gain, class) in [("P1", 0.2, "A"), ("P2", 0.8, "B")] {
+            music.sources.insert(
+                id.into(),
+                Source::Vst3 {
+                    path: PathBuf::from("/missing but retained.vst3"),
+                    class_id: class.repeat(32),
+                    module_sha256: "a".repeat(64),
+                    gain,
+                    component_state: None,
+                    controller_state: None,
+                },
+            );
+        }
+        music.programs.insert("P1".into(), 42);
+        music.mix_dirty = Some(std::time::Instant::now());
+        music.save_mix().unwrap();
+        let saved = music.sources.clone();
+        music.sources.clear();
+        music.load_mix().unwrap();
+        assert_eq!(music.sources, saved);
+        assert_eq!(music.programs["P1"], 42);
+        assert_eq!(music.composition.as_ref().unwrap().parts[1].staves, 2);
+        assert!(music
+            .start_transport_mode(&Settings::default(), false)
+            .unwrap_err()
+            .to_string()
+            .contains("require the audio-host"));
+        assert!(music.midi().is_ok(), "MIDI remains an explicit GM export");
+        music.sources.insert("P1".into(), Source::Soundfont);
+        music.sources.insert("P2".into(), Source::Soundfont);
+        music.mix_dirty = Some(std::time::Instant::now());
+        music.save_mix().unwrap();
+        music.sources = saved.clone();
+        music.load_mix().unwrap();
+        assert!(
+            music.sources.values().all(|s| !s.is_plugin()),
+            "Explicit SoundFont fallback must not resurrect a plugin from older manifests"
+        );
+        assert_eq!(std::fs::read(&legacy).unwrap(), original);
+        let fallback = music.sources.clone();
+        music.sources.insert(
+            "oversized".into(),
+            Source::Vst3 {
+                path: PathBuf::from(format!("/{}.vst3", "x".repeat(MAX_MIX as usize))),
+                class_id: "A".repeat(32),
+                module_sha256: "a".repeat(64),
+                gain: 0.5,
+                component_state: None,
+                controller_state: None,
+            },
+        );
+        let previous = std::fs::read(music.mix_path.as_ref().unwrap()).unwrap();
+        music.mix_dirty = Some(std::time::Instant::now());
+        assert!(music.save_mix().is_err());
+        assert_eq!(
+            std::fs::read(music.mix_path.as_ref().unwrap()).unwrap(),
+            previous
+        );
+        music.sources = fallback.clone();
+        music.music_hash = Some("changed MusicXML".into());
+        assert!(music
+            .load_mix()
+            .unwrap_err()
+            .to_string()
+            .contains("reconcile"));
+        assert_eq!(
+            music.sources, fallback,
+            "Rejected manifests must not overwrite assignments"
+        );
     }
 }
